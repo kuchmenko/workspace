@@ -23,6 +23,19 @@ func NewRootCmd() *cobra.Command {
 				return nil
 			}
 
+			// Setup bootstraps its own workspace — use cwd, create if needed
+			if cmd.Name() == "setup" {
+				var err error
+				if wsRoot == "" {
+					wsRoot, err = os.Getwd()
+					if err != nil {
+						return err
+					}
+				}
+				ws, err = config.LoadOrCreate(wsRoot)
+				return err
+			}
+
 			var err error
 			if wsRoot == "" {
 				wsRoot, err = config.FindRoot()
@@ -51,6 +64,7 @@ func NewRootCmd() *cobra.Command {
 		newCleanCmd(),
 		newListCmd(),
 		newGroupCmd(),
+		newSetupCmd(),
 	)
 
 	return root
