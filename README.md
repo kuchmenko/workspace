@@ -121,18 +121,26 @@ Done: 4 cloned, 0 pulled, 0 skipped, 0 failed
 ## Commands
 
 ```
-ws setup              Interactive onboarding — select repos, assign groups
-ws sync               Clone missing active repos, pull existing ones
-ws add <url>          Register and clone a new project
-ws archive <name>     Archive (personal→tar, work→remove)
-ws restore <name>     Re-clone or untar archived project
-ws status             Show all projects with branch, last commit, staleness
-ws scan               Find git repos not registered in workspace.toml
-ws clean [name|--all] Remove node_modules, target/, .venv, etc.
-ws list [--status X]  Filtered project list
-ws group add <name>   Create a group
-ws group list         List groups with project counts
-ws group show <name>  Show projects in a group
+ws setup                Interactive onboarding — select repos, assign groups
+ws sync                 Clone missing active repos, pull existing ones
+ws add <url>            Register and clone a new project
+ws archive <name>       Archive (personal→tar, work→remove)
+ws restore <name>       Re-clone or untar archived project
+ws status               Show all projects with branch, last commit, staleness
+ws scan                 Find git repos not registered in workspace.toml
+ws clean [name|--all]   Remove node_modules, target/, .venv, etc.
+ws list [--status X]    Filtered project list
+ws group add <name>     Create a group
+ws group list           List groups with project counts
+ws group show <name>    Show projects in a group
+ws auth login [--pat]   Authenticate with GitHub (device flow or PAT)
+ws auth logout          Remove stored token
+ws auth status          Show authentication state
+ws daemon start         Start background daemon
+ws daemon stop          Stop daemon
+ws daemon status        Show daemon state and registered workspaces
+ws daemon register      Register workspace with daemon
+ws daemon install-service  Install systemd user service
 ```
 
 ## How it works
@@ -142,16 +150,46 @@ ws group show <name>  Show projects in a group
 - Groups are directories — fully customizable hierarchy
 - Category (`personal`/`work`) is auto-detected from GitHub org ownership
 
-## Multi-machine sync
+## Authentication
 
 ```sh
-# Machine A
-ws archive old-project
-git add workspace.toml && git commit -m "archive old-project" && git push
-
-# Machine B
-git pull && ws sync    # skips archived, clones new active repos
+ws auth login          # GitHub device flow — opens browser, authorize, done
+ws auth login --pat    # paste a Personal Access Token instead
+ws auth status         # show current auth state
 ```
+
+No `gh` CLI required. Token stored at `~/.config/ws/token`.
+
+## Multi-machine sync
+
+The daemon handles sync automatically. No manual git commands needed.
+
+```sh
+# Machine A — one-time setup
+ws daemon register ~/dev
+ws daemon start
+
+# Now any ws add/archive/restore automatically:
+# 1. Updates workspace.toml
+# 2. Daemon commits + pushes to git
+
+# Machine B — one-time setup
+ws daemon register ~/dev
+ws daemon start
+
+# Daemon polls git remote, detects changes, pulls + clones missing repos
+```
+
+The daemon also watches for new git repos created manually (e.g. `cargo init`)
+and logs their discovery.
+
+```sh
+ws daemon status              # check daemon health
+ws daemon install-service     # auto-start on boot (systemd)
+```
+
+workspace.toml can live in your dotfiles repo (symlinked). The daemon resolves
+symlinks and commits to the correct repository.
 
 ## Archival
 
