@@ -18,12 +18,11 @@ cd workspace
 just install
 ```
 
-Requires [gh](https://cli.github.com/) CLI (authenticated) for `ws setup`.
-
 ## Quick start
 
 ```sh
 mkdir ~/dev && cd ~/dev
+ws auth login
 ws setup
 ws sync
 ```
