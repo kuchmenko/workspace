@@ -98,6 +98,21 @@ func Load(root string) (*Workspace, error) {
 	return &ws, nil
 }
 
+// LoadOrCreate loads workspace.toml if it exists, otherwise creates a default one.
+func LoadOrCreate(root string) (*Workspace, error) {
+	path := filepath.Join(root, "workspace.toml")
+	if _, err := os.Stat(path); err == nil {
+		return Load(root)
+	}
+	ws := &Workspace{
+		Meta:     Meta{Version: 1, Root: root},
+		Daemon:   Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
+		Groups:   make(map[string]Group),
+		Projects: make(map[string]Project),
+	}
+	return ws, nil
+}
+
 func Save(root string, ws *Workspace) error {
 	path := filepath.Join(root, "workspace.toml")
 	f, err := os.Create(path)
