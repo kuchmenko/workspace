@@ -84,6 +84,42 @@ func LastCommitMessage(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func HasRemote(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "remote")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+func Add(repoPath, file string) error {
+	cmd := exec.Command("git", "-C", repoPath, "add", file)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git add in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func Commit(repoPath, message string) error {
+	cmd := exec.Command("git", "-C", repoPath, "commit", "-m", message)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git commit in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func Push(repoPath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "push")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ParseRepoName extracts repo name from a git remote URL.
 // e.g. "git@github.com:user/repo.git" → "repo"
 func ParseRepoName(remote string) string {

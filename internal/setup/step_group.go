@@ -104,7 +104,25 @@ func (m groupModel) groupRepoToFlat(gi, ri int) int {
 }
 
 func (m groupModel) flatCursor() int {
+	m.clampCursor()
 	return m.groupRepoToFlat(m.cursor, m.repoCursor)
+}
+
+func (m *groupModel) clampCursor() {
+	if len(m.groups) == 0 {
+		m.cursor = 0
+		m.repoCursor = -1
+		return
+	}
+	if m.cursor >= len(m.groups) {
+		m.cursor = len(m.groups) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.repoCursor >= len(m.groups[m.cursor].Repos) {
+		m.repoCursor = len(m.groups[m.cursor].Repos) - 1
+	}
 }
 
 func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
@@ -220,6 +238,7 @@ func (m groupModel) updateMoving(msg tea.Msg) (groupModel, tea.Cmd) {
 			}
 			m.moving = false
 			m.repoCursor = -1
+			m.clampCursor()
 		}
 	}
 	return m, nil
