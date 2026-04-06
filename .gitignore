@@ -1,0 +1,23 @@
+# Cloned projects
+personal/
+work/
+playground/
+researches/
+
+# Archived projects
+/archive/
+
+# Built binary
+/ws
+
+# Go
+bin/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Claude / Sisyphus
+.claude/
+.sisyphus/
