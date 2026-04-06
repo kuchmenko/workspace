@@ -15,7 +15,7 @@ import (
 // ClientID for the ws GitHub OAuth App.
 // This is NOT a secret — it identifies the app, not the user.
 // Register at: https://github.com/settings/applications/new
-const ClientID = "REPLACE_WITH_YOUR_CLIENT_ID"
+const ClientID = "Iv23liLjbULITnvRegRh"
 
 const (
 	deviceCodeURL = "https://github.com/login/device/code"
@@ -41,10 +41,6 @@ type tokenResponse struct {
 // DeviceFlow runs the GitHub OAuth Device Authorization flow.
 // It prints a user code, opens the browser, and polls for authorization.
 func DeviceFlow() (Token, error) {
-	if ClientID == "REPLACE_WITH_YOUR_CLIENT_ID" {
-		return Token{}, fmt.Errorf("OAuth App not configured. Use 'ws auth login --pat' instead, or set up a GitHub OAuth App and rebuild")
-	}
-
 	// Step 1: Request device code
 	dc, err := requestDeviceCode()
 	if err != nil {
