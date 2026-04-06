@@ -1,6 +1,8 @@
 package setup
 
 import (
+	"time"
+
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,7 +47,7 @@ type Model struct {
 	err           error
 	result        Result
 	username      string
-	stepJustChanged bool // debounce key events on step transitions
+	stepChangedAt time.Time // debounce key events on step transitions
 
 	selectModel  selectModel
 	groupModel   groupModel
@@ -86,9 +88,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Consume first key event after step transition to prevent phantom inputs
-		if m.stepJustChanged {
-			m.stepJustChanged = false
+		// Ignore key events within 100ms of a step transition to prevent phantom inputs
+		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
 		switch msg.String() {
@@ -122,7 +123,7 @@ func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.username = msg.username
 		m.selectModel = newSelectModel(msg.repos, msg.username, m.width, m.height)
 		m.step = stepSelect
-		m.stepJustChanged = true
+		m.stepChangedAt = time.Now()
 		return m, m.selectModel.search.Focus()
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -140,7 +141,7 @@ func (m Model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.groupModel = newGroupModel(selected, m.username, m.width, m.height)
 		m.step = stepGroup
-		m.stepJustChanged = true
+		m.stepChangedAt = time.Now()
 		return m, nil
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "escape" {
@@ -160,7 +161,7 @@ func (m Model) updateGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.groupModel.editing {
 				m.confirmModel = newConfirmModel(m.groupModel.groups, m.username, m.width, m.height)
 				m.step = stepConfirm
-				m.stepJustChanged = true
+				m.stepChangedAt = time.Now()
 				return m, nil
 			}
 		case "escape":
@@ -170,7 +171,7 @@ func (m Model) updateGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Go back to select
 			m.step = stepSelect
-			m.stepJustChanged = true
+			m.stepChangedAt = time.Now()
 			return m, m.selectModel.search.Focus()
 		}
 	}
@@ -195,7 +196,7 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "escape":
 			m.step = stepGroup
-			m.stepJustChanged = true
+			m.stepChangedAt = time.Now()
 			return m, nil
 		}
 	}
