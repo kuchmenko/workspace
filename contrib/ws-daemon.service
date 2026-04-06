@@ -1,0 +1,12 @@
+[Unit]
+Description=ws workspace manager daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/ws daemon run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
