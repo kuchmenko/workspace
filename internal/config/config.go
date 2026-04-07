@@ -53,7 +53,7 @@ type Workspace struct {
 	Daemon   Daemon             `toml:"daemon"`
 	Groups   map[string]Group   `toml:"groups"`
 	Projects map[string]Project `toml:"projects"`
-	Aliases  map[string]string  `toml:"aliases"`
+	Aliases  map[string]string  `toml:"aliases,omitempty"`
 }
 
 // FindRoot walks up from cwd (or uses WS_ROOT env) to find workspace.toml.
