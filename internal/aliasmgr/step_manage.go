@@ -2,6 +2,7 @@ package aliasmgr
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -9,30 +10,159 @@ import (
 	"github.com/kuchmenko/workspace/internal/alias"
 )
 
-func (m Model) filtered() []int {
-	q := strings.ToLower(m.search.Value())
-	var idx []int
+// treeRow is one rendered line of the tree: a reference to an item plus
+// the indent/branch prefix to print before it. The cursor and offset
+// operate over the slice of treeRows produced by buildTree.
+type treeRow struct {
+	itemIdx int
+	prefix  string // branch art (e.g. "├── " / "│   └── ")
+}
+
+// itemIndex builds a map keyed by (kind,name) so we can find the slice
+// position of a given project/group/root item quickly.
+func (m Model) itemIndex() map[string]int {
+	out := make(map[string]int, len(m.items))
 	for i, it := range m.items {
-		if m.tabFilter == 1 && it.kind != kindProject {
-			continue
-		}
-		if m.tabFilter == 2 && it.kind != kindGroup {
-			continue
-		}
-		if m.tabFilter != 0 && it.kind == kindRoot {
-			// Root row only shown in the "all" tab.
-			continue
-		}
-		if q != "" && !strings.Contains(strings.ToLower(it.name), q) {
-			continue
-		}
-		idx = append(idx, i)
+		out[itemKey(it.kind, it.name)] = i
 	}
-	return idx
+	return out
+}
+
+func itemKey(k itemKind, name string) string {
+	return fmt.Sprintf("%d/%s", k, name)
+}
+
+// buildTree returns the ordered list of tree rows to render, applying the
+// current search filter. The structure is:
+//
+//	(workspace root)
+//	├── group-a
+//	│   ├── project-1
+//	│   └── project-2
+//	├── group-b
+//	│   └── project-3
+//	├── ungrouped-project-1
+//	└── ungrouped-project-2
+func (m Model) buildTree() []treeRow {
+	idx := m.itemIndex()
+	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
+
+	// Group projects by their group name; collect ungrouped separately.
+	grouped := make(map[string][]string)
+	var ungrouped []string
+	for name, p := range m.ws.Projects {
+		if p.Group != "" {
+			if _, ok := m.ws.Groups[p.Group]; ok {
+				grouped[p.Group] = append(grouped[p.Group], name)
+				continue
+			}
+		}
+		ungrouped = append(ungrouped, name)
+	}
+	for _, list := range grouped {
+		sort.Strings(list)
+	}
+	sort.Strings(ungrouped)
+
+	// Group names ordered alphabetically.
+	groupNames := make([]string, 0, len(m.ws.Groups))
+	for g := range m.ws.Groups {
+		groupNames = append(groupNames, g)
+	}
+	sort.Strings(groupNames)
+
+	matches := func(name string) bool {
+		if q == "" {
+			return true
+		}
+		return strings.Contains(strings.ToLower(name), q)
+	}
+
+	var rows []treeRow
+	rootIdx, hasRoot := idx[itemKey(kindRoot, alias.RootTarget)]
+	if hasRoot {
+		rows = append(rows, treeRow{itemIdx: rootIdx, prefix: ""})
+	}
+
+	// Filter groups: keep group if its name matches OR any project under it matches.
+	type visibleGroup struct {
+		name     string
+		projects []string
+	}
+	var visGroups []visibleGroup
+	for _, g := range groupNames {
+		groupMatches := matches(g)
+		var keep []string
+		for _, p := range grouped[g] {
+			if groupMatches || matches(p) {
+				keep = append(keep, p)
+			}
+		}
+		if groupMatches || len(keep) > 0 {
+			// If group itself matches but no project filter, show all of its projects.
+			if groupMatches && q != "" && len(keep) == 0 {
+				keep = append([]string{}, grouped[g]...)
+			}
+			if q == "" {
+				keep = append([]string{}, grouped[g]...)
+			}
+			visGroups = append(visGroups, visibleGroup{name: g, projects: keep})
+		}
+	}
+
+	var visUngrouped []string
+	for _, p := range ungrouped {
+		if matches(p) {
+			visUngrouped = append(visUngrouped, p)
+		}
+	}
+
+	// Render tree under root.
+	totalTop := len(visGroups) + len(visUngrouped)
+	pos := 0
+	for _, vg := range visGroups {
+		isLastTop := pos == totalTop-1
+		branch := "├── "
+		if isLastTop {
+			branch = "└── "
+		}
+		if gi, ok := idx[itemKey(kindGroup, vg.name)]; ok {
+			rows = append(rows, treeRow{itemIdx: gi, prefix: branch})
+		}
+		// Children
+		childIndent := "│   "
+		if isLastTop {
+			childIndent = "    "
+		}
+		for j, p := range vg.projects {
+			isLastChild := j == len(vg.projects)-1
+			childBranch := childIndent + "├── "
+			if isLastChild {
+				childBranch = childIndent + "└── "
+			}
+			if pi, ok := idx[itemKey(kindProject, p)]; ok {
+				rows = append(rows, treeRow{itemIdx: pi, prefix: childBranch})
+			}
+		}
+		pos++
+	}
+	for _, p := range visUngrouped {
+		isLastTop := pos == totalTop-1
+		branch := "├── "
+		if isLastTop {
+			branch = "└── "
+		}
+		if pi, ok := idx[itemKey(kindProject, p)]; ok {
+			rows = append(rows, treeRow{itemIdx: pi, prefix: branch})
+		}
+		pos++
+	}
+
+	return rows
 }
 
 func (m Model) maxVisible() int {
-	h := m.height - 9
+	h := m.height - 8
 	if h < 5 {
 		h = 5
 	}
@@ -45,7 +175,7 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok {
-		filtered := m.filtered()
+		rows := m.buildTree()
 		switch key.String() {
 		case "esc":
 			m.result = Result{Cancelled: true}
@@ -63,7 +193,7 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "down", "ctrl+n":
-			if m.cursor < len(filtered)-1 {
+			if m.cursor < len(rows)-1 {
 				m.cursor++
 				if m.cursor >= m.offset+m.maxVisible() {
 					m.offset = m.cursor - m.maxVisible() + 1
@@ -71,8 +201,8 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case " ":
-			if len(filtered) > 0 && m.cursor < len(filtered) {
-				idx := filtered[m.cursor]
+			if len(rows) > 0 && m.cursor < len(rows) {
+				idx := rows[m.cursor].itemIdx
 				m.items[idx].checked = !m.items[idx].checked
 				if !m.items[idx].checked {
 					m.items[idx].alias = ""
@@ -80,24 +210,19 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "e":
-			if len(filtered) > 0 && m.cursor < len(filtered) {
-				idx := filtered[m.cursor]
+			if len(rows) > 0 && m.cursor < len(rows) {
+				idx := rows[m.cursor].itemIdx
 				m.editTarget = idx
 				m.editing = true
 				cur := m.items[idx].alias
 				if cur == "" {
 					taken := m.takenNames(idx)
-					cur = alias.Generate(m.items[idx].name, taken)
+					cur = alias.Generate(m.items[idx].generationSeed(), taken)
 				}
 				m.editInput.SetValue(cur)
 				m.editInput.CursorEnd()
 				return m, m.editInput.Focus()
 			}
-			return m, nil
-		case "tab":
-			m.tabFilter = (m.tabFilter + 1) % 3
-			m.cursor = 0
-			m.offset = 0
 			return m, nil
 		}
 	}
@@ -151,44 +276,29 @@ func (m Model) viewManage() string {
 	b.WriteString(titleStyle.Render(" ws alias "))
 	b.WriteString("  Manage aliases\n\n")
 
-	b.WriteString("  " + m.search.View() + "\n")
+	b.WriteString("  " + m.search.View() + "\n\n")
 
-	b.WriteString("  ")
-	tabs := []string{"all", "projects", "groups"}
-	for i, t := range tabs {
-		if i > 0 {
-			b.WriteString(" ")
-		}
-		if i == m.tabFilter {
-			b.WriteString(activeTab.Render(t))
-		} else {
-			b.WriteString(inactiveTab.Render(t))
-		}
-	}
-	b.WriteString(dimStyle.Render("  (tab)"))
-	b.WriteString("\n\n")
-
-	filtered := m.filtered()
-	if len(filtered) == 0 {
+	rows := m.buildTree()
+	if len(rows) == 0 {
 		b.WriteString("  " + dimStyle.Render("no items match") + "\n")
 	}
 	maxV := m.maxVisible()
 	end := m.offset + maxV
-	if end > len(filtered) {
-		end = len(filtered)
+	if end > len(rows) {
+		end = len(rows)
 	}
 
 	const aliasW = 14
-	const nameW = 30
 
 	for vi := m.offset; vi < end; vi++ {
-		idx := filtered[vi]
+		row := rows[vi]
+		idx := row.itemIdx
 		it := m.items[idx]
 		isCursor := vi == m.cursor
 
-		prefix := "  "
+		cursor := "  "
 		if isCursor {
-			prefix = cursorStyle.Render("> ")
+			cursor = cursorStyle.Render("> ")
 		}
 		check := uncheckStyle.Render("○")
 		if it.checked {
@@ -217,21 +327,26 @@ func (m Model) viewManage() string {
 			nameRaw = "(workspace root)"
 		}
 		var nameStyled string
-		if isCursor {
-			nameStyled = padRight(selectedStyle.Render(nameRaw), nameW, len(nameRaw))
-		} else {
-			nameStyled = padRight(nameRaw, nameW, len(nameRaw))
+		switch {
+		case isCursor:
+			nameStyled = selectedStyle.Render(nameRaw)
+		case it.kind == kindGroup:
+			nameStyled = groupNameStyle.Render(nameRaw)
+		case it.kind == kindRoot:
+			nameStyled = rootNameStyle.Render(nameRaw)
+		default:
+			nameStyled = nameRaw
 		}
 
-		kindLabel := dimStyle.Render(kindString(it.kind))
+		branch := dimStyle.Render(row.prefix)
 
-		b.WriteString(fmt.Sprintf("%s%s  %s  →  %s  %s\n",
-			prefix, check, aliasStyled, nameStyled, kindLabel))
+		b.WriteString(fmt.Sprintf("%s%s  %s  %s%s\n",
+			cursor, check, aliasStyled, branch, nameStyled))
 	}
 
-	if len(filtered) > maxV {
+	if len(rows) > maxV {
 		above := m.offset
-		below := len(filtered) - end
+		below := len(rows) - end
 		if above > 0 {
 			b.WriteString(dimStyle.Render(fmt.Sprintf("  ↑ %d more\n", above)))
 		}
@@ -241,7 +356,7 @@ func (m Model) viewManage() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  ↑↓ navigate  space toggle  e edit alias  tab filter  enter next  esc cancel"))
+	b.WriteString(helpStyle.Render("  ↑↓ navigate  space toggle  e edit alias  enter next  esc cancel"))
 	return b.String()
 }
 
