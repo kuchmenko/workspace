@@ -2,7 +2,9 @@ package git
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -118,6 +120,131 @@ func Push(repoPath string) error {
 		return fmt.Errorf("git push in %s: %s", repoPath, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// PushBranch pushes a single named branch to origin, setting upstream if
+// it does not already track a remote branch.
+func PushBranch(repoPath, branch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "push", "--set-upstream", "origin", branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push %s in %s: %s", branch, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Fetch runs `git fetch --all --prune --tags` against repoPath. Used by the
+// reconciler to refresh remote refs without touching any working tree.
+func Fetch(repoPath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "fetch", "--all", "--prune", "--tags")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git fetch in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RevParse resolves a ref to its full SHA. Returns "" on failure rather than
+// erroring — callers typically want to treat "ref does not exist" as a normal
+// state, not an exceptional one.
+func RevParse(repoPath, ref string) string {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", ref)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// AheadBehind returns how many commits `branch` is ahead of and behind its
+// upstream. Returns (0, 0, false) if the branch has no upstream configured.
+func AheadBehind(repoPath, branch string) (ahead, behind int, hasUpstream bool) {
+	upstream := branch + "@{u}"
+	if RevParse(repoPath, upstream) == "" {
+		return 0, 0, false
+	}
+	cmd := exec.Command("git", "-C", repoPath, "rev-list", "--left-right", "--count", upstream+"..."+branch)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	parts := strings.Fields(strings.TrimSpace(string(out)))
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	fmt.Sscanf(parts[0], "%d", &behind)
+	fmt.Sscanf(parts[1], "%d", &ahead)
+	return ahead, behind, true
+}
+
+// IsDirty reports whether repoPath has uncommitted changes (tracked or
+// untracked, excluding ignored). Reconciler uses this to skip ff-pull when
+// the user is mid-edit.
+func IsDirty(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		// On error, err on the side of "looks dirty" so we don't accidentally
+		// pull-and-overwrite a working tree we couldn't inspect.
+		return true
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+// HasIndexLock reports whether .git/index.lock is present, indicating
+// another git process is currently mid-write. Reconciler skips operations
+// on the worktree when this is true to avoid colliding with an editor or
+// interactive shell command.
+func HasIndexLock(repoPath string) bool {
+	gitDir := RevParse(repoPath, "--git-dir")
+	if gitDir == "" {
+		return false
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoPath, gitDir)
+	}
+	_, err := os.Stat(filepath.Join(gitDir, "index.lock"))
+	return err == nil
+}
+
+// HasUpstream reports whether the named branch has an upstream tracking
+// branch configured.
+func HasUpstream(repoPath, branch string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
+	return cmd.Run() == nil
+}
+
+// SetUpstream binds a local branch to an origin/<branch> upstream.
+func SetUpstream(repoPath, branch, upstream string) error {
+	cmd := exec.Command("git", "-C", repoPath, "branch", "--set-upstream-to="+upstream, branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("set upstream %s for %s in %s: %s", upstream, branch, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// HasStash reports whether `git stash list` has any entries. ws migrate
+// uses this as a pre-flight check — stash is bound to the working .git and
+// would be lost when we replace it with a worktree.
+func HasStash(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "stash", "list")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+// SymbolicRef resolves a symbolic ref like refs/remotes/origin/HEAD to its
+// target (e.g. "main"). Returns "" if the ref does not exist or is not symbolic.
+func SymbolicRef(repoPath, ref string) string {
+	cmd := exec.Command("git", "-C", repoPath, "symbolic-ref", "--short", ref)
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // ParseRepoName extracts repo name from a git remote URL.

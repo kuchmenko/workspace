@@ -24,12 +24,25 @@ const (
 )
 
 type Project struct {
-	Remote   string   `toml:"remote"`
-	Path     string   `toml:"path"`
-	Status   Status   `toml:"status"`
-	Category Category `toml:"category"`
-	Group    string   `toml:"group,omitempty"`
-	Branches []string `toml:"branches,omitempty"`
+	Remote        string   `toml:"remote"`
+	Path          string   `toml:"path"`
+	Status        Status   `toml:"status"`
+	Category      Category `toml:"category"`
+	Group         string   `toml:"group,omitempty"`
+	Branches      []string `toml:"branches,omitempty"`
+	DefaultBranch string   `toml:"default_branch,omitempty"`
+	// AutoSync controls per-project sync behavior. nil = inherit (default true).
+	// Pointer so we can distinguish "unset" from "explicitly false" in TOML.
+	AutoSync *bool `toml:"auto_sync,omitempty"`
+}
+
+// SyncEnabled reports whether the reconciler should push/pull this project.
+// Defaults to true when the field is unset.
+func (p Project) SyncEnabled() bool {
+	if p.AutoSync == nil {
+		return true
+	}
+	return *p.AutoSync
 }
 
 type Group struct {
