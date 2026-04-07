@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 type Daemon struct {
@@ -20,9 +21,8 @@ type Daemon struct {
 	quit     chan struct{}
 	wg       sync.WaitGroup
 
-	syncers map[string]*Syncer
-	pollers map[string]*Poller
-	watcher *Watcher
+	reconcilers map[string]*Reconciler
+	watcher     *Watcher
 }
 
 // Run starts the daemon in the foreground (blocking).
@@ -55,12 +55,11 @@ func Run() error {
 	}
 
 	d := &Daemon{
-		config:   cfg,
-		listener: ln,
-		logger:   logger,
-		quit:     make(chan struct{}),
-		syncers:  make(map[string]*Syncer),
-		pollers:  make(map[string]*Poller),
+		config:      cfg,
+		listener:    ln,
+		logger:      logger,
+		quit:        make(chan struct{}),
+		reconcilers: make(map[string]*Reconciler),
 	}
 
 	// Write PID file
@@ -125,20 +124,19 @@ func Run() error {
 func (d *Daemon) startWorkspace(ws WorkspaceEntry) {
 	d.logger.Printf("workspace: %s (auto_sync=%v)", ws.Root, ws.AutoSync)
 
-	syncer := NewSyncer(ws.Root, d.logger)
-	d.syncers[ws.Root] = syncer
-
-	interval := ws.PollInterval
-	if interval == "" {
-		interval = "5m"
+	intervalStr := ws.PollInterval
+	if intervalStr == "" {
+		intervalStr = "5m"
 	}
-	poller := NewPoller(ws.Root, interval, d.logger)
-	d.pollers[ws.Root] = poller
+	interval := parseInterval(intervalStr)
+
+	r := NewReconciler(ws.Root, interval, d.logger)
+	d.reconcilers[ws.Root] = r
 
 	d.wg.Add(1)
 	go func() {
 		defer d.wg.Done()
-		poller.Run(d.quit)
+		r.Run(d.quit)
 	}()
 }
 
@@ -146,10 +144,21 @@ func (d *Daemon) handleNotify(workspace, event string) {
 	d.logger.Printf("notify: workspace=%s event=%s", workspace, event)
 	switch event {
 	case "config_changed":
-		if syncer, ok := d.syncers[workspace]; ok {
-			syncer.SyncNow()
+		if r, ok := d.reconcilers[workspace]; ok {
+			// Run async so the IPC handler returns immediately.
+			go r.Tick()
 		}
 	}
+}
+
+// parseInterval parses a duration string like "5m" or "1h30m". Falls back
+// to 5 minutes on parse error.
+func parseInterval(s string) time.Duration {
+	d, err := time.ParseDuration(s)
+	if err != nil || d < time.Minute {
+		return 5 * time.Minute
+	}
+	return d
 }
 
 func (d *Daemon) Shutdown() {
