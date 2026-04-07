@@ -40,3 +40,23 @@ ws list [--filter]   # filtered project list
 - Scripts must be idempotent — safe to re-run
 - No secrets in this repo
 - workspace.toml is the only file that changes during normal operation
+
+## Commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+- `feat:` — new feature (bumps minor pre-1.0, would be minor post-1.0)
+- `fix:` — bug fix (bumps patch)
+- `feat!:` or `fix!:` with `BREAKING CHANGE:` footer — breaking change (bumps minor pre-1.0, major post-1.0)
+- `chore:`, `docs:`, `refactor:`, `test:`, `ci:`, `style:`, `perf:` — no release
+
+Scope is optional: `feat(alias): ...`, `fix(sync): ...`.
+
+Never add `Co-Authored-By` or attribution footers.
+
+## Release process
+
+Automated via [release-please](https://github.com/googleapis/release-please).
+
+**Flow:** conventional commits land on `main` → release-please opens/updates a Release PR with bumped version + CHANGELOG → merge the PR → tag `vX.Y.Z` is pushed → existing `release.yml` builds binaries and publishes the GitHub Release.
+
+**Do NOT** manually edit `CHANGELOG.md`, bump versions, or create `vX.Y.Z` tags by hand — release-please owns all of it.
