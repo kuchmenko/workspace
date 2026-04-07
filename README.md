@@ -141,7 +141,68 @@ ws daemon stop          Stop daemon
 ws daemon status        Show daemon state and registered workspaces
 ws daemon register      Register workspace with daemon
 ws daemon install-service  Install systemd user service
+ws alias                Manage shell aliases (TUI)
+ws alias list           Show configured aliases
+ws alias add <n> <t>    Add alias for project, group, or "." (workspace root)
+ws alias rm <name>      Remove alias
+ws alias init [zsh]     Print shell snippet to eval
+ws alias install        Install sourcing line in ~/.zshrc (idempotent)
 ```
+
+## Shell aliases
+
+`ws alias` generates short shell aliases that `cd` into any project, group,
+or the workspace root. Aliases live in `workspace.toml` and sync between
+machines via git.
+
+```
+ ws alias   Manage aliases
+
+  type to search...
+
+> ●  ws              (workspace root)
+  ●  acme            ├── acme-corp
+  ●  api             │   ├── api-gateway
+  ●  web             │   ├── web-dashboard
+  ○  (auto)          │   └── legacy-service
+  ○  (auto)          ├── other-org
+  ○  (auto)          │   └── shared-lib
+  ●  prs             └── personal
+  ●  dot                 ├── dotfiles
+  ●  cli                 ├── cli-tools
+  ○  (auto)              └── old-experiment
+
+  ↑↓ navigate  space toggle  e edit alias  enter next  esc cancel
+```
+
+Each entry is one of:
+- a **project** (cd into the project directory)
+- a **group** (cd into the group directory)
+- the **workspace root** itself
+
+Auto-generated names follow simple rules — short two-part names join
+(`mm-eh` → `mmeh`), longer multi-part names use first letters
+(`api-gateway` → `ag`), single words use consonants (`dotfiles` → `dtfls`).
+Press `e` to override.
+
+### Install into your shell
+
+One-time setup:
+
+```sh
+ws alias install                # adds a sourcing line to ~/.zshrc
+exec zsh                        # reload shell
+```
+
+After that, every `ws alias` save, `ws alias add`, `ws alias rm`, or project
+archive automatically regenerates the aliases file at
+`$XDG_STATE_HOME/ws/aliases.zsh` (default `~/.local/state/ws/aliases.zsh`).
+Open a new shell or `source` that file to pick up the changes — `.zshrc`
+itself is never touched again.
+
+Archived projects have their aliases removed automatically.
+
+Currently only zsh is supported.
 
 ## How it works
 
