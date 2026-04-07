@@ -2,7 +2,7 @@ binary := "ws"
 
 # Build the ws binary
 build:
-    go build -o {{binary}} ./cmd/ws
+    GOTOOLCHAIN=auto go build -o {{binary}} ./cmd/ws
 
 # Build and install to ~/.local/bin
 install: build

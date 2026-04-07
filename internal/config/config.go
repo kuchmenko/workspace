@@ -53,6 +53,7 @@ type Workspace struct {
 	Daemon   Daemon             `toml:"daemon"`
 	Groups   map[string]Group   `toml:"groups"`
 	Projects map[string]Project `toml:"projects"`
+	Aliases  map[string]string  `toml:"aliases"`
 }
 
 // FindRoot walks up from cwd (or uses WS_ROOT env) to find workspace.toml.
@@ -95,6 +96,9 @@ func Load(root string) (*Workspace, error) {
 	if ws.Groups == nil {
 		ws.Groups = make(map[string]Group)
 	}
+	if ws.Aliases == nil {
+		ws.Aliases = make(map[string]string)
+	}
 	return &ws, nil
 }
 
@@ -109,6 +113,7 @@ func LoadOrCreate(root string) (*Workspace, error) {
 		Daemon:   Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
 		Groups:   make(map[string]Group),
 		Projects: make(map[string]Project),
+		Aliases:  make(map[string]string),
 	}
 	return ws, nil
 }
