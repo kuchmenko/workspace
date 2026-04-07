@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/archive"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/spf13/cobra"
@@ -33,6 +34,9 @@ func newArchiveCmd() *cobra.Command {
 				// Not cloned locally, just update status
 				proj.Status = config.StatusArchived
 				ws.Projects[name] = proj
+				if removed := alias.RemoveForTarget(ws, name); len(removed) > 0 {
+					fmt.Printf("  aliases  removed: %v\n", removed)
+				}
 				if err := saveWorkspace(); err != nil {
 					return err
 				}
@@ -66,6 +70,9 @@ func newArchiveCmd() *cobra.Command {
 
 			proj.Status = config.StatusArchived
 			ws.Projects[name] = proj
+			if removed := alias.RemoveForTarget(ws, name); len(removed) > 0 {
+				fmt.Printf("  aliases  removed: %v\n", removed)
+			}
 			if err := saveWorkspace(); err != nil {
 				return err
 			}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/spf13/cobra"
@@ -75,6 +76,7 @@ func NewRootCmd() *cobra.Command {
 		newSetupCmd(),
 		newAuthCmd(),
 		newDaemonCmd(),
+		newAliasCmd(),
 	)
 
 	return root
@@ -89,6 +91,10 @@ func Execute() {
 func saveWorkspace() error {
 	if err := config.Save(wsRoot, ws); err != nil {
 		return fmt.Errorf("saving workspace.toml: %w", err)
+	}
+	// Regenerate alias state file so shells stay in sync. Best-effort.
+	if err := alias.WriteStateFile(ws, wsRoot); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not update alias state file: %v\n", err)
 	}
 	// Best-effort daemon notification
 	if client, err := daemon.Dial(); err == nil {
