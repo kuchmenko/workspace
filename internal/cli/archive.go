@@ -8,6 +8,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/archive"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +30,14 @@ func newArchiveCmd() *cobra.Command {
 
 			absPath := filepath.Join(wsRoot, proj.Path)
 			archiveDir := filepath.Join(wsRoot, "archive")
+
+			// Migrated projects use a bare+worktree layout that the legacy
+			// tar code does not understand. Refusing here is intentional and
+			// safer than producing a half-broken archive — full worktree-aware
+			// archive support is tracked as a follow-up.
+			if _, err := os.Stat(layout.BarePath(absPath)); err == nil {
+				return fmt.Errorf("project %q uses the worktree layout; archive of migrated projects is not yet supported", name)
+			}
 
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
 				// Not cloned locally, just update status

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "PROJECT\tGROUP\tSTATUS\tBRANCH\tLAST COMMIT\tLOCAL")
+			fmt.Fprintln(w, "PROJECT\tGROUP\tSTATUS\tBRANCH\tLAST COMMIT\tLAYOUT")
 
 			// Sort projects by name
 			names := make([]string, 0, len(ws.Projects))
@@ -39,10 +40,10 @@ func newStatusCmd() *cobra.Command {
 
 				branch := "-"
 				lastCommit := "-"
-				local := "no"
+				layoutInfo := "missing"
 
 				if info, err := os.Stat(absPath); err == nil && info.IsDir() {
-					local = "yes"
+					layoutInfo = "plain"
 					if git.IsRepo(absPath) {
 						if b, err := git.CurrentBranch(absPath); err == nil {
 							branch = b
@@ -52,6 +53,15 @@ func newStatusCmd() *cobra.Command {
 						}
 					}
 				}
+				if _, err := os.Stat(layout.BarePath(absPath)); err == nil {
+					// Migrated. Count extra worktrees by enumerating siblings.
+					n := countExtraWorktrees(absPath)
+					if n > 0 {
+						layoutInfo = fmt.Sprintf("worktree+%d", n)
+					} else {
+						layoutInfo = "worktree"
+					}
+				}
 
 				groupDisplay := proj.Group
 				if groupDisplay == "" {
@@ -59,12 +69,30 @@ func newStatusCmd() *cobra.Command {
 				}
 
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-					name, groupDisplay, proj.Status, branch, lastCommit, local)
+					name, groupDisplay, proj.Status, branch, lastCommit, layoutInfo)
 			}
 
 			return w.Flush()
 		},
 	}
+}
+
+// countExtraWorktrees counts sibling directories of mainPath that match the
+// "<base>-wt-*" naming convention. Cheap O(N) scan of the parent directory.
+func countExtraWorktrees(mainPath string) int {
+	parent := filepath.Dir(mainPath)
+	base := filepath.Base(mainPath) + "-wt-"
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), base) {
+			n++
+		}
+	}
+	return n
 }
 
 func humanizeTime(t time.Time) string {

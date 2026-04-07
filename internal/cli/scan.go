@@ -56,6 +56,12 @@ func scanDir(absDir, root, category string, knownPaths map[string]bool, found *i
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
+		// Worktree-layout siblings of registered projects must not be flagged
+		// as orphans. The .bare suffix marks the bare repo backing a project,
+		// and "<base>-wt-*" names mark extra worktrees created by ws worktree.
+		if strings.HasSuffix(entry.Name(), ".bare") || strings.Contains(entry.Name(), "-wt-") {
+			continue
+		}
 
 		entryPath := filepath.Join(absDir, entry.Name())
 
@@ -76,6 +82,9 @@ func scanDir(absDir, root, category string, knownPaths map[string]bool, found *i
 			}
 			for _, sub := range subEntries {
 				if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
+					continue
+				}
+				if strings.HasSuffix(sub.Name(), ".bare") || strings.Contains(sub.Name(), "-wt-") {
 					continue
 				}
 				subPath := filepath.Join(entryPath, sub.Name())
