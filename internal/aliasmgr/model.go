@@ -48,7 +48,6 @@ type Model struct {
 	width         int
 	height        int
 	items         []item
-	tabFilter     int // 0=all, 1=projects, 2=groups
 	cursor        int
 	offset        int
 	search        textinput.Model
@@ -225,8 +224,7 @@ var (
 	uncheckStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	activeTab     = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).Padding(0, 1)
-	inactiveTab = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
+	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	groupNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
+	rootNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
 )
