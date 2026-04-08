@@ -81,6 +81,7 @@ func NewRootCmd() *cobra.Command {
 		newWorktreeCmd(),
 		newBootstrapCmd(),
 		newPulseCmd(),
+		newWhereCmd(),
 	)
 
 	return root
