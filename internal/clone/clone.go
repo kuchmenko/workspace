@@ -155,6 +155,17 @@ func CloneIntoLayout(wsRoot, name string, proj *config.Project, opts Options) (*
 		return nil, fmt.Errorf("verification failed: %s is not a git repo after worktree add", mainPath)
 	}
 
+	// Wire up upstream tracking for the default branch so plain `git push`
+	// and `git pull` work in the new main worktree without arguments. We
+	// can't use `branch --set-upstream-to=origin/<branch>` here because
+	// `clone --bare` uses the mirror refspec and there's no
+	// `refs/remotes/origin/*` ref to point at. SetBranchUpstream writes
+	// the two underlying config keys directly. Best-effort: if this fails
+	// the clone is still usable, just ergonomically annoying.
+	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
+		opts.logf("clone %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
+	}
+
 	proj.DefaultBranch = defaultBranch
 
 	return &Result{

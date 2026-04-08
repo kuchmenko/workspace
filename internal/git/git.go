@@ -214,6 +214,34 @@ func HasUpstream(repoPath, branch string) bool {
 	return cmd.Run() == nil
 }
 
+// SetBranchUpstream wires up branch.<branch>.remote and
+// branch.<branch>.merge in the repo's config so plain `git push` and
+// `git pull` work without arguments. Used by both clone (after worktree
+// add) and migrate (after bare clone), where the older `branch
+// --set-upstream-to=origin/<branch>` approach fails because bare repos
+// don't have refs/remotes/origin/* refs to point at.
+//
+// repoPath can be either the bare or any of its worktrees — branch config
+// is shared across them through the bare's config file.
+func SetBranchUpstream(repoPath, branch, remote string) error {
+	if branch == "" || remote == "" {
+		return fmt.Errorf("SetBranchUpstream: empty branch or remote")
+	}
+	if err := setConfig(repoPath, "branch."+branch+".remote", remote); err != nil {
+		return err
+	}
+	return setConfig(repoPath, "branch."+branch+".merge", "refs/heads/"+branch)
+}
+
+func setConfig(repoPath, key, value string) error {
+	cmd := exec.Command("git", "-C", repoPath, "config", key, value)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git config %s=%s in %s: %s", key, value, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // HasStash reports whether `git stash list` has any entries. ws migrate
 // uses this as a pre-flight check — stash is bound to the working .git and
 // would be lost when we replace it with a worktree, unless we first

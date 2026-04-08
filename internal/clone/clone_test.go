@@ -47,6 +47,20 @@ func TestCloneIntoLayout_HappyPath(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(main, "README.md")); err != nil {
 		t.Errorf("README.md missing in main worktree: %v", err)
 	}
+
+	// Upstream tracking on the default branch must be configured so plain
+	// `git push` works. SetBranchUpstream writes both keys via git config;
+	// verify both made it to the bare's config file.
+	wantRemote := "origin"
+	wantMerge := "refs/heads/main"
+	gotRemote := testutil.RunGit(t, bare, "config", "branch.main.remote")
+	if gotRemote != wantRemote {
+		t.Errorf("branch.main.remote = %q, want %q", gotRemote, wantRemote)
+	}
+	gotMerge := testutil.RunGit(t, bare, "config", "branch.main.merge")
+	if gotMerge != wantMerge {
+		t.Errorf("branch.main.merge = %q, want %q", gotMerge, wantMerge)
+	}
 }
 
 // TestCloneIntoLayout_AlreadyCloned verifies that a second call returns
