@@ -357,8 +357,16 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 			continue
 		}
 
-		// Branches we own → push if ahead.
-		if machine != "" && strings.HasPrefix(wt.Branch, layout.BranchPrefix(machine)) {
+		// Branches we own → push if ahead. Two ways to be "owned":
+		//   1. wt/<this-machine>/* prefix (the default sync convention).
+		//   2. Explicit opt-in via project.autopush.branches in
+		//      workspace.toml, populated by `ws worktree new --auto-push`
+		//      and `ws worktree promote`. Lets repository-native branch
+		//      names (e.g. feat/fix-login) participate in auto-sync
+		//      after they have been promoted out of the wt/* namespace.
+		ownedByPrefix := machine != "" && strings.HasPrefix(wt.Branch, layout.BranchPrefix(machine))
+		ownedByAutopush := proj.AutopushAllows(wt.Branch)
+		if ownedByPrefix || ownedByAutopush {
 			ahead, behind, has := git.AheadBehind(wt.Path, wt.Branch)
 			if !has {
 				// First push for this branch.

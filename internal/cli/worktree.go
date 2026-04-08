@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -20,7 +21,7 @@ func newWorktreeCmd() *cobra.Command {
 		Aliases: []string{"wt"},
 		Short:   "Manage per-project worktrees (wt/<machine>/<topic>)",
 	}
-	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeRmCmd())
+	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeRmCmd(), newWorktreePromoteCmd())
 	return cmd
 }
 
@@ -41,11 +42,20 @@ func resolveProject(name string) (config.Project, string, string, error) {
 }
 
 func newWorktreeNewCmd() *cobra.Command {
-	var fromBase string
+	var (
+		fromBase     string
+		customBranch string
+		autoPush     bool
+	)
 	cmd := &cobra.Command{
 		Use:   "new <project> <topic>",
 		Short: "Create a new worktree on branch wt/<machine>/<topic>",
-		Args:  cobra.ExactArgs(2),
+		Long: `Create a new worktree. By default the branch is named
+wt/<machine>/<topic> and is auto-pushed by the daemon. Pass --branch to use
+a custom, repository-native branch name (e.g. feat/fix-login); such branches
+are NOT auto-pushed unless you also pass --auto-push, which opts the branch
+into the project's autopush list in workspace.toml.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, topic := args[0], args[1]
 			topic = strings.TrimSpace(topic)
@@ -63,14 +73,28 @@ func newWorktreeNewCmd() *cobra.Command {
 				return err
 			}
 
-			branch := layout.BranchName(machine, topic)
+			customBranch = strings.TrimSpace(customBranch)
+			if autoPush && customBranch == "" {
+				return errors.New("--auto-push requires --branch; wt/<machine>/* branches are always auto-pushed")
+			}
+
+			var branch string
+			if customBranch != "" {
+				branch = customBranch
+			} else {
+				branch = layout.BranchName(machine, topic)
+			}
+			// Worktree directory is always derived from <machine>+<topic>
+			// so extra worktrees for one project never collide on disk,
+			// even if another machine used the same topic name. The
+			// directory layout is independent of the branch name.
 			wtPath := layout.WorktreePath(mainPath, machine, topic)
 
 			if _, err := os.Stat(wtPath); err == nil {
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
 			if git.HasBranch(barePath, branch) {
-				return fmt.Errorf("branch %s already exists; pick a different topic or remove it first", branch)
+				return fmt.Errorf("branch %s already exists; pick a different name or remove it first", branch)
 			}
 
 			base := fromBase
@@ -84,11 +108,29 @@ func newWorktreeNewCmd() *cobra.Command {
 			if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
 				return err
 			}
-			fmt.Printf("created worktree %s\n  branch: %s\n  base:   %s\n", wtPath, branch, base)
+
+			autopushNote := ""
+			if autoPush {
+				p := ws.Projects[projectName]
+				if p.AddAutopushBranch(branch) {
+					ws.Projects[projectName] = p
+					if err := saveWorkspace(); err != nil {
+						return fmt.Errorf("worktree created but failed to record autopush opt-in: %w", err)
+					}
+				}
+				autopushNote = " (auto-push enabled)"
+			}
+
+			fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
+			if customBranch != "" && !autoPush {
+				fmt.Println("  note:   branch is outside wt/<machine>/* — daemon will not auto-push it; add --auto-push to opt in")
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&fromBase, "from", "", "base ref to branch from (default: project default_branch)")
+	cmd.Flags().StringVar(&customBranch, "branch", "", "custom branch name (bypasses wt/<machine>/<topic>; excluded from auto-push unless --auto-push is also set)")
+	cmd.Flags().BoolVar(&autoPush, "auto-push", false, "opt the custom --branch into the project's daemon auto-push whitelist")
 	return cmd
 }
 
@@ -222,5 +264,153 @@ func newWorktreeRmCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "remove even if dirty or has unpushed commits")
+	return cmd
+}
+
+// newWorktreePromoteCmd implements `ws worktree promote`. It renames a
+// wt/<machine>/<topic> WIP branch into its final, repository-native name
+// (resolved from project.branch_naming.pattern with {topic} substitution,
+// or supplied via --name), moves the worktree directory to match the new
+// name, deletes the stale remote ref that the daemon already pushed, and
+// updates project.autopush so the daemon keeps pushing under the new name.
+func newWorktreePromoteCmd() *cobra.Command {
+	var (
+		newName  string
+		noPush   bool
+		noRemote bool
+	)
+	cmd := &cobra.Command{
+		Use:   "promote <project> <topic>",
+		Short: "Rename wt/<machine>/<topic> to its final branch name (e.g. feat/<topic>)",
+		Long: `Promote a WIP worktree to its final, repository-native branch
+name before opening a PR. The final name is taken from --name if given,
+otherwise from project.branch_naming.pattern (with {topic} substituted).
+The branch is renamed, the worktree directory is moved to match, the stale
+wt/<machine>/<topic> ref on origin is deleted (if present), and the new
+name is opted into the project's autopush list so the daemon keeps pushing
+it under the new name.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			projectName, topic := args[0], args[1]
+			topic = strings.TrimSpace(topic)
+			if topic == "" {
+				return errors.New("topic must not be empty")
+			}
+
+			machine, err := ensureMachineName()
+			if err != nil {
+				return err
+			}
+
+			proj, mainPath, barePath, err := resolveProject(projectName)
+			if err != nil {
+				return err
+			}
+
+			oldBranch := layout.BranchName(machine, topic)
+			oldPath := layout.WorktreePath(mainPath, machine, topic)
+
+			if _, err := os.Stat(oldPath); err != nil {
+				return fmt.Errorf("worktree not found: %s (expected for topic %q)", oldPath, topic)
+			}
+			if !git.HasBranch(barePath, oldBranch) {
+				return fmt.Errorf("branch %s does not exist in %s", oldBranch, barePath)
+			}
+
+			// Resolve the final branch name.
+			finalName := strings.TrimSpace(newName)
+			if finalName == "" {
+				if proj.BranchNaming == nil || proj.BranchNaming.Pattern == "" {
+					return fmt.Errorf("project %s has no branch_naming.pattern; pass --name <new-branch> explicitly", projectName)
+				}
+				finalName = strings.ReplaceAll(proj.BranchNaming.Pattern, "{topic}", topic)
+			}
+			if finalName == oldBranch {
+				return fmt.Errorf("resolved branch name %q is identical to current %q — nothing to promote", finalName, oldBranch)
+			}
+			// Optional regex validation.
+			if proj.BranchNaming != nil && proj.BranchNaming.Validate != "" {
+				re, err := regexp.Compile(proj.BranchNaming.Validate)
+				if err != nil {
+					return fmt.Errorf("invalid branch_naming.validate regex for project %s: %w", projectName, err)
+				}
+				if !re.MatchString(finalName) {
+					return fmt.Errorf("branch name %q does not match project pattern %s", finalName, proj.BranchNaming.Validate)
+				}
+			}
+			if git.HasBranch(barePath, finalName) {
+				return fmt.Errorf("branch %s already exists; pick a different --name", finalName)
+			}
+
+			// Safety: refuse if the worktree is mid-edit or dirty. The
+			// user can commit/stash first; we never move a dirty tree.
+			if git.HasIndexLock(oldPath) {
+				return fmt.Errorf("worktree %s has an active index.lock; close editors/git processes and retry", oldPath)
+			}
+			if git.IsDirty(oldPath) {
+				return fmt.Errorf("worktree %s is dirty; commit or stash before promoting", oldPath)
+			}
+
+			// Compute new path. We reuse WorktreeDirName but with the
+			// final branch name as the "topic" component, so the dir
+			// name reflects the new branch instead of the old wt topic.
+			// Slashes in finalName are flattened by WorktreeDirName.
+			newPath := filepath.Join(filepath.Dir(mainPath),
+				layout.WorktreeDirName(filepath.Base(mainPath), machine, finalName))
+			if _, err := os.Stat(newPath); err == nil {
+				return fmt.Errorf("target worktree path already exists: %s", newPath)
+			}
+
+			// Step 1: move the worktree directory. Git updates its
+			// worktrees/<name>/gitdir pointer atomically.
+			if err := git.WorktreeMove(barePath, oldPath, newPath); err != nil {
+				return fmt.Errorf("move worktree: %w", err)
+			}
+
+			// Step 2: rename the branch. On failure, roll back the move
+			// so the user's filesystem state matches the branch state.
+			if err := git.BranchRename(newPath, oldBranch, finalName); err != nil {
+				if rbErr := git.WorktreeMove(barePath, newPath, oldPath); rbErr != nil {
+					return fmt.Errorf("branch rename failed (%v); rollback also failed (%v) — worktree now at %s on branch %s", err, rbErr, newPath, oldBranch)
+				}
+				return fmt.Errorf("branch rename: %w", err)
+			}
+
+			// Step 3: update workspace.toml — remove old wt/* autopush
+			// entry if it was somehow there, add new name.
+			p := ws.Projects[projectName]
+			p.RemoveAutopushBranch(oldBranch)
+			p.AddAutopushBranch(finalName)
+			ws.Projects[projectName] = p
+			if err := saveWorkspace(); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: branch renamed and worktree moved, but workspace.toml update failed: %v\n", err)
+			}
+
+			// Step 4: delete the stale remote ref. Best-effort — not
+			// fatal if the daemon never got around to pushing it.
+			if !noRemote {
+				if err := git.DeleteRemoteBranch(barePath, oldBranch); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not delete remote ref %s: %v\n", oldBranch, err)
+				}
+			}
+
+			// Step 5: push the renamed branch so reviewers can find it.
+			// The daemon would eventually do this anyway via the new
+			// autopush entry, but doing it inline gives the user a
+			// synchronous confirmation and a predictable PR-ready state.
+			if !noPush {
+				if err := git.PushBranch(newPath, finalName); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: push of %s failed: %v (daemon will retry)\n", finalName, err)
+				}
+			}
+
+			fmt.Printf("promoted worktree\n  branch: %s → %s\n  path:   %s → %s\n",
+				oldBranch, finalName, oldPath, newPath)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&newName, "name", "", "explicit final branch name (overrides project.branch_naming.pattern)")
+	cmd.Flags().BoolVar(&noPush, "no-push", false, "skip pushing the renamed branch (daemon will still pick it up)")
+	cmd.Flags().BoolVar(&noRemote, "no-remote-delete", false, "skip deleting the stale wt/<machine>/<topic> ref on origin")
 	return cmd
 }
