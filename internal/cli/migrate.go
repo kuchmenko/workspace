@@ -75,6 +75,9 @@ worktree after the migration.`,
 
 			anyMigrated := false
 			anyFailed := false
+			migratedCount := 0
+			skippedMissing := 0
+			skippedAlready := 0
 			for _, name := range targets {
 				proj, ok := ws.Projects[name]
 				if !ok {
@@ -85,10 +88,29 @@ worktree after the migration.`,
 					fmt.Printf("  skip   %s: status=%s\n", name, proj.Status)
 					continue
 				}
+				// Pre-check state. For --all we want missing projects to be a
+				// soft skip (the registry travels between machines, so it's
+				// normal for some projects to not exist locally yet).
+				if all {
+					switch migrate.Check(wsRoot, name, proj).State {
+					case "missing":
+						fmt.Printf("  skip   %s: not cloned on this machine\n", name)
+						skippedMissing++
+						continue
+					case "migrated":
+						fmt.Printf("  skip   %s: already migrated\n", name)
+						skippedAlready++
+						continue
+					case "not-a-repo":
+						fmt.Printf("  skip   %s: path exists but is not a git repo\n", name)
+						continue
+					}
+				}
 				res, err := migrate.MigrateProject(wsRoot, name, &proj, opts)
 				if err != nil {
 					if errors.Is(err, migrate.ErrAlreadyMigrated) {
 						fmt.Printf("  skip   %s: already migrated\n", name)
+						skippedAlready++
 						continue
 					}
 					fmt.Printf("  error  %s: %v\n", name, err)
@@ -97,6 +119,7 @@ worktree after the migration.`,
 				}
 				ws.Projects[name] = proj // proj.DefaultBranch was filled in
 				anyMigrated = true
+				migratedCount++
 				fmt.Printf("  done   %s → %s (%d branches preserved", name, res.BarePath, res.BranchesPushed)
 				if len(res.HooksMigrated) > 0 {
 					fmt.Printf(", %d hooks", len(res.HooksMigrated))
@@ -110,6 +133,17 @@ worktree after the migration.`,
 			if anyMigrated {
 				if err := saveWorkspace(); err != nil {
 					return err
+				}
+			}
+			if all {
+				if migratedCount == 0 && !anyFailed {
+					if skippedMissing > 0 || skippedAlready > 0 {
+						fmt.Printf("Nothing to migrate (%d already migrated, %d not cloned on this machine).\n", skippedAlready, skippedMissing)
+					} else {
+						fmt.Println("No active projects to migrate.")
+					}
+				} else {
+					fmt.Printf("Migrated %d project(s); skipped %d already migrated, %d not cloned locally.\n", migratedCount, skippedAlready, skippedMissing)
 				}
 			}
 			if anyFailed {
@@ -132,6 +166,10 @@ func runMigrateCheck(args []string) error {
 			names = append(names, n)
 		}
 		sort.Strings(names)
+	}
+	if len(names) == 0 {
+		fmt.Println("No projects registered in workspace.toml.")
+		return nil
 	}
 	for _, name := range names {
 		proj, ok := ws.Projects[name]

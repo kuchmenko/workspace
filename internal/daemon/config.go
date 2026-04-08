@@ -13,6 +13,19 @@ type WorkspaceEntry struct {
 	Root         string `toml:"root"`
 	AutoSync     bool   `toml:"auto_sync"`
 	PollInterval string `toml:"poll_interval,omitempty"`
+	// AutoBootstrap controls whether the daemon clones missing projects on
+	// each tick. Pointer so we can distinguish "unset" (default true) from
+	// an explicit false written to daemon.toml.
+	AutoBootstrap *bool `toml:"auto_bootstrap,omitempty"`
+}
+
+// AutoBootstrapEnabled reports whether auto-clone of missing projects is on.
+// Defaults to true when the field is unset.
+func (w WorkspaceEntry) AutoBootstrapEnabled() bool {
+	if w.AutoBootstrap == nil {
+		return true
+	}
+	return *w.AutoBootstrap
 }
 
 type DaemonSettings struct {

@@ -79,6 +79,15 @@ personal/
 old split Syncer/Poller pair. On each tick (immediate at startup, then on
 the configured interval, plus on `config_changed` IPC notifications) it:
 
+0. **Bootstrap pre-check.** Before any work, the reconciler checks for a
+   bootstrap sidecar at `~/.local/state/ws/bootstrap/<sha>.toml`. If the
+   sidecar exists and its recorded pid is alive, the entire tick is skipped
+   for that workspace — both Phase 1 and Phase 2. This prevents the daemon
+   from pushing half-bootstrapped `workspace.toml` upstream and from racing
+   `ws bootstrap` on git operations. Other registered workspaces (each with
+   their own reconciler goroutine) are unaffected. Stale sidecars (pid dead)
+   are logged and ignored, and the tick proceeds normally.
+
 1. **Phase 1 — `syncTOML`.** Commits any local changes to `workspace.toml`
    under a `ws: auto-sync workspace.toml from <machine>` message, fetches,
    handles every combination of `local_dirty`/`local_ahead`/`remote_ahead`
@@ -87,6 +96,18 @@ the configured interval, plus on `config_changed` IPC notifications) it:
    conflicts when even rebase fails.
 
 2. **Phase 2 — `reconcileProjects`.** For every active project:
+   - If neither `<path>.bare` nor `<path>` exist (project registered in
+     `workspace.toml` but nothing on disk), and `daemon.auto_bootstrap` is
+     enabled (default `true`) and `auto_sync != false`, attempt
+     `clone.CloneIntoLayout` non-interactively. Sequential by construction:
+     one project per tick. Errors map to:
+       - `ErrNeedsBootstrap` → conflict `needs-bootstrap` (default branch
+         ambiguous, user must run `ws bootstrap <name>`)
+       - `ErrPathBlocked` → conflict `path-blocked`
+       - network/auth → existing per-project exponential backoff +
+         `clone-failed` conflict
+     On success, `default_branch` is persisted back into `workspace.toml`
+     so other machines pick it up via the next Phase 1 sync.
    - If `<path>.bare` is missing but `<path>` exists, record a
      `needs-migration` conflict and skip. Plain checkouts are never
      auto-migrated — the user runs `ws migrate` explicitly.
@@ -192,6 +213,7 @@ group          = "..."              # optional grouping
 | Command | Purpose |
 |---|---|
 | `ws add <remote-url>` | Register and clone a new repo into `workspace.toml`. |
+| `ws bootstrap [name]` | Interactive TUI: clone projects listed in `workspace.toml` that are missing on this machine, directly into the bare+worktree layout. Crash-safe via a sidecar at `~/.local/state/ws/bootstrap/`. While running, the daemon pauses all sync for this workspace. `--dry-run` shows the plan without cloning. |
 | `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, push owned `wt/<machine>/*` branches). Same work as a daemon tick. |
 | `ws sync resolve` | Inspect and act on unresolved conflicts from `~/.local/state/ws/conflicts.json`. Prompt-based; never auto-merges. |
 | `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
@@ -262,6 +284,7 @@ group          = "..."              # optional grouping
 - `~/.config/ws/daemon.toml` — list of workspaces watched by the daemon plus socket path.
 - `~/.config/ws/daemon.{sock,pid,log}` — daemon runtime files.
 - `~/.local/state/ws/conflicts.json` — unresolved sync conflicts. Honors `$XDG_STATE_HOME`.
+- `~/.local/state/ws/bootstrap/<sha>.toml` — per-workspace bootstrap progress sidecar. Created by `ws bootstrap`, deleted on success. While present with a live pid, the daemon skips its tick for that workspace. Honors `$XDG_STATE_HOME`.
 
 ## Conventions
 
@@ -310,7 +333,10 @@ for future work:
   for migrated projects. Need to tar bare + main + extra worktrees and run
   `git worktree repair` on restore.
 - **`ws add` should clone as bare + worktree** instead of plain. Today it
-  still clones plain and `ws migrate` is required afterwards.
+  still clones plain and `ws migrate` is required afterwards. Bootstrap
+  covers the existing-record case (project already in `workspace.toml` but
+  not yet on this machine); `ws add` handles new-record creation and is
+  still pending the same bare+worktree treatment via `clone.CloneIntoLayout`.
 - **`ws worktree gc`** to clean up old WIP branches and orphaned worktrees.
 - **fsnotify on `workspace.toml`** to remove the dependency on IPC
   notifications from CLI commands.
