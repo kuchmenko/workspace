@@ -214,26 +214,27 @@ func HasUpstream(repoPath, branch string) bool {
 	return cmd.Run() == nil
 }
 
-// SetUpstream binds a local branch to an origin/<branch> upstream.
-func SetUpstream(repoPath, branch, upstream string) error {
-	cmd := exec.Command("git", "-C", repoPath, "branch", "--set-upstream-to="+upstream, branch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("set upstream %s for %s in %s: %s", upstream, branch, repoPath, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 // HasStash reports whether `git stash list` has any entries. ws migrate
 // uses this as a pre-flight check — stash is bound to the working .git and
-// would be lost when we replace it with a worktree.
+// would be lost when we replace it with a worktree, unless we first
+// convert each stash entry to a side branch via `git stash branch`.
 func HasStash(repoPath string) bool {
+	return StashCount(repoPath) > 0
+}
+
+// StashCount returns the number of entries in `git stash list`. Used by
+// migrate to walk N stashes and convert each into a side branch.
+func StashCount(repoPath string) int {
 	cmd := exec.Command("git", "-C", repoPath, "stash", "list")
 	out, err := cmd.Output()
 	if err != nil {
-		return false
+		return 0
 	}
-	return strings.TrimSpace(string(out)) != ""
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 // SymbolicRef resolves a symbolic ref like refs/remotes/origin/HEAD to its

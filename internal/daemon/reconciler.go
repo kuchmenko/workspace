@@ -25,12 +25,12 @@ import (
 
 	"errors"
 
-	"github.com/kuchmenko/workspace/internal/bootstrap"
 	"github.com/kuchmenko/workspace/internal/clone"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 // Reconciler manages one workspace.
@@ -109,13 +109,13 @@ func (r *Reconciler) Tick() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Bootstrap coordination: if `ws bootstrap` is running against this
-	// workspace, pause both phases entirely. The sidecar's existence + a
-	// live pid is the lock; daemon never writes to that file. Other
-	// workspaces in daemon.toml have their own reconcilers and are
-	// unaffected (each has its own r.mu).
-	if sc, _ := bootstrap.Load(r.root); sc != nil && bootstrap.IsAlive(sc) {
-		r.logger.Printf("reconciler: bootstrap in progress for %s (pid %d), skipping tick", r.root, sc.Meta.PID)
+	// Interactive-command coordination: if any sidecar exists for this
+	// workspace with a live pid (currently bootstrap or migrate), pause
+	// both phases entirely. Sidecar existence + live pid is the lock;
+	// daemon never writes to those files. Other workspaces in daemon.toml
+	// have their own reconcilers and are unaffected (each has its own r.mu).
+	if sc := sidecar.AnyActive(r.root); sc != nil {
+		r.logger.Printf("reconciler: %s in progress for %s (pid %d), skipping tick", sc.Meta.Kind, r.root, sc.Meta.PID)
 		return
 	}
 
