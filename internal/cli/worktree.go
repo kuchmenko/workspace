@@ -46,6 +46,7 @@ func newWorktreeNewCmd() *cobra.Command {
 		fromBase     string
 		customBranch string
 		autoPush     bool
+		reclaim      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "new <project> <topic>",
@@ -112,13 +113,17 @@ into the project's autopush list in workspace.toml.`,
 			autopushNote := ""
 			if autoPush {
 				p := ws.Projects[projectName]
-				if p.AddAutopushBranch(branch) {
+				changed, err := p.ClaimAutopushBranch(branch, machine, reclaim)
+				if err != nil {
+					return fmt.Errorf("worktree created but autopush claim failed: %w", err)
+				}
+				if changed {
 					ws.Projects[projectName] = p
 					if err := saveWorkspace(); err != nil {
 						return fmt.Errorf("worktree created but failed to record autopush opt-in: %w", err)
 					}
 				}
-				autopushNote = " (auto-push enabled)"
+				autopushNote = fmt.Sprintf(" (auto-push enabled, owner: %s)", machine)
 			}
 
 			fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
@@ -131,6 +136,7 @@ into the project's autopush list in workspace.toml.`,
 	cmd.Flags().StringVar(&fromBase, "from", "", "base ref to branch from (default: project default_branch)")
 	cmd.Flags().StringVar(&customBranch, "branch", "", "custom branch name (bypasses wt/<machine>/<topic>; excluded from auto-push unless --auto-push is also set)")
 	cmd.Flags().BoolVar(&autoPush, "auto-push", false, "opt the custom --branch into the project's daemon auto-push whitelist")
+	cmd.Flags().BoolVar(&reclaim, "reclaim", false, "with --auto-push, take ownership even if another machine already owns the branch")
 	return cmd
 }
 
@@ -278,6 +284,7 @@ func newWorktreePromoteCmd() *cobra.Command {
 		newName  string
 		noPush   bool
 		noRemote bool
+		reclaim  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "promote <project> <topic>",
@@ -376,11 +383,20 @@ it under the new name.`,
 				return fmt.Errorf("branch rename: %w", err)
 			}
 
-			// Step 3: update workspace.toml — remove old wt/* autopush
-			// entry if it was somehow there, add new name.
+			// Step 3: update workspace.toml — release any stale entry
+			// for the old wt/* name and claim ownership of the new
+			// branch on this machine. Reclaim handles the rare case
+			// where another machine had already claimed the same
+			// final name (e.g. parallel promotes that haven't synced).
 			p := ws.Projects[projectName]
-			p.RemoveAutopushBranch(oldBranch)
-			p.AddAutopushBranch(finalName)
+			p.ReleaseAutopushBranch(oldBranch)
+			if _, err := p.ClaimAutopushBranch(finalName, machine, reclaim); err != nil {
+				// Roll back filesystem + branch rename so the user
+				// can retry with --reclaim cleanly.
+				_ = git.BranchRename(newPath, finalName, oldBranch)
+				_ = git.WorktreeMove(barePath, newPath, oldPath)
+				return err
+			}
 			ws.Projects[projectName] = p
 			if err := saveWorkspace(); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: branch renamed and worktree moved, but workspace.toml update failed: %v\n", err)
@@ -412,5 +428,6 @@ it under the new name.`,
 	cmd.Flags().StringVar(&newName, "name", "", "explicit final branch name (overrides project.branch_naming.pattern)")
 	cmd.Flags().BoolVar(&noPush, "no-push", false, "skip pushing the renamed branch (daemon will still pick it up)")
 	cmd.Flags().BoolVar(&noRemote, "no-remote-delete", false, "skip deleting the stale wt/<machine>/<topic> ref on origin")
+	cmd.Flags().BoolVar(&reclaim, "reclaim", false, "take ownership of the final branch even if another machine already owns it")
 	return cmd
 }
