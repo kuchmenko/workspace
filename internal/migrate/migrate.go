@@ -311,17 +311,24 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		_ = git.SetRemoteHead(barePath, defaultBranch)
 	}
 
-	// Step 9: (removed) bare-repo upstream tracking
+	// Step 9: upstream tracking for the default branch.
 	//
-	// We used to call git.SetUpstream for every local branch here. That
-	// always failed in bare repos because `clone --bare` uses the mirror
-	// refspec `+refs/heads/*:refs/heads/*`, so refs/remotes/origin/* never
-	// gets populated and `branch --set-upstream-to=origin/X` has nothing
-	// to point at. Suppressing the warnings doesn't help — the worktree
-	// layout doesn't need branch.<name>.merge anyway: the reconciler only
-	// pushes branches under the wt/<machine>/* convention, and ordinary
-	// `git pull` in a worktree resolves the upstream lazily on first use.
-	// So this whole step is gone.
+	// We don't try to restore upstream for every local branch (the old
+	// approach failed because bare repos don't have refs/remotes/origin/*
+	// to point at, and the worktree layout doesn't need it anyway: the
+	// reconciler only pushes wt/<machine>/* and ordinary `git pull`
+	// resolves upstream lazily). But the default branch DOES need it, so
+	// the user can run plain `git push` and `git pull` in the main
+	// worktree without arguments.
+	//
+	// SetBranchUpstream writes branch.<default>.remote and
+	// branch.<default>.merge directly via `git config`, bypassing
+	// `branch --set-upstream-to=origin/<X>` which would need a non-existent
+	// refs/remotes/origin/X ref. Best-effort: a failure here doesn't
+	// abort migration, just logs.
+	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
+		opts.logf("migrate %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
+	}
 
 	// Step 10: migrate hooks
 	migratedHooks, err := copyHooks(hooksDir, filepath.Join(barePath, "hooks"), activeHooks)

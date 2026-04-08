@@ -124,6 +124,19 @@ func TestMigrateProject_HappyPath(t *testing.T) {
 	if !foundClean {
 		t.Errorf("admin dir %s missing under %s/worktrees (entries: %v)", wantAdmin, barePath, adminEntries)
 	}
+
+	// 11. Upstream tracking on the default branch is set so plain
+	// `git push` works in the migrated main worktree. We write the
+	// underlying config keys directly because bare repos don't have
+	// refs/remotes/origin/* refs that `branch --set-upstream-to` needs.
+	gotRemote := testutil.RunGit(t, barePath, "config", "branch.main.remote")
+	if gotRemote != "origin" {
+		t.Errorf("branch.main.remote = %q, want origin", gotRemote)
+	}
+	gotMerge := testutil.RunGit(t, barePath, "config", "branch.main.merge")
+	if gotMerge != "refs/heads/main" {
+		t.Errorf("branch.main.merge = %q, want refs/heads/main", gotMerge)
+	}
 }
 
 // TestMigrateProject_DirtyAbortsWithoutWIP exercises the pre-flight: dirty
