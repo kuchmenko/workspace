@@ -79,6 +79,7 @@ func NewRootCmd() *cobra.Command {
 		newAliasCmd(),
 		newMigrateCmd(),
 		newWorktreeCmd(),
+		newBootstrapCmd(),
 	)
 
 	return root

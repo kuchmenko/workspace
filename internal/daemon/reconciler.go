@@ -23,6 +23,10 @@ import (
 	"sync"
 	"time"
 
+	"errors"
+
+	"github.com/kuchmenko/workspace/internal/bootstrap"
+	"github.com/kuchmenko/workspace/internal/clone"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -42,6 +46,10 @@ type Reconciler struct {
 
 	interval    time.Duration
 	maxInterval time.Duration
+
+	// autoBootstrap controls whether the daemon clones missing projects on
+	// each tick. Default true; set false via daemon.toml to disable.
+	autoBootstrap bool
 }
 
 type backoffState struct {
@@ -61,13 +69,20 @@ func NewReconciler(root string, interval time.Duration, logger *log.Logger) *Rec
 		logger.Printf("reconciler: cannot open conflicts store: %v", err)
 	}
 	return &Reconciler{
-		root:        root,
-		logger:      logger,
-		store:       store,
-		backoff:     make(map[string]*backoffState),
-		interval:    interval,
-		maxInterval: time.Hour,
+		root:          root,
+		logger:        logger,
+		store:         store,
+		backoff:       make(map[string]*backoffState),
+		interval:      interval,
+		maxInterval:   time.Hour,
+		autoBootstrap: true,
 	}
+}
+
+// SetAutoBootstrap toggles auto-cloning of missing projects. Wired from
+// daemon.toml during workspace registration.
+func (r *Reconciler) SetAutoBootstrap(v bool) {
+	r.autoBootstrap = v
 }
 
 // Run starts the reconciler loop. It performs an immediate tick at startup
@@ -93,6 +108,16 @@ func (r *Reconciler) Run(quit <-chan struct{}) {
 func (r *Reconciler) Tick() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// Bootstrap coordination: if `ws bootstrap` is running against this
+	// workspace, pause both phases entirely. The sidecar's existence + a
+	// live pid is the lock; daemon never writes to that file. Other
+	// workspaces in daemon.toml have their own reconcilers and are
+	// unaffected (each has its own r.mu).
+	if sc, _ := bootstrap.Load(r.root); sc != nil && bootstrap.IsAlive(sc) {
+		r.logger.Printf("reconciler: bootstrap in progress for %s (pid %d), skipping tick", r.root, sc.Meta.PID)
+		return
+	}
 
 	// Phase 1: workspace.toml sync
 	tomlChanged, err := r.syncTOML()
@@ -274,12 +299,32 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 	mainPath := filepath.Join(r.root, proj.Path)
 	barePath := layout.BarePath(mainPath)
 
-	// Layout check: if not migrated yet, record drift and bail.
+	// Layout check: classify on-disk state and route accordingly.
+	bareMissing := false
+	mainMissing := false
 	if _, err := os.Stat(barePath); os.IsNotExist(err) {
-		if _, err := os.Stat(mainPath); err == nil {
-			r.recordProjectConflict(name, "", conflict.KindNeedsMigration, fmt.Sprintf("plain checkout at %s", mainPath))
+		bareMissing = true
+	}
+	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
+		mainMissing = true
+	}
+
+	if bareMissing && mainMissing {
+		// Project is registered in workspace.toml but nothing exists on
+		// disk. Auto-clone if enabled. Sequential semantics happen for
+		// free: this clone is the only filesystem op for this project on
+		// this tick, the next project's loop iteration runs after, and
+		// the next tick reuses the now-present bare branch.
+		if !r.autoBootstrap || !proj.SyncEnabled() {
+			return nil
 		}
-		return nil // not an error per se, just nothing to sync
+		return r.autoCloneMissing(name, proj)
+	}
+
+	if bareMissing {
+		// mainPath exists, no bare → plain checkout drift, needs migrate.
+		r.recordProjectConflict(name, "", conflict.KindNeedsMigration, fmt.Sprintf("plain checkout at %s", mainPath))
+		return nil
 	}
 
 	if err := git.Fetch(barePath); err != nil {
@@ -361,6 +406,79 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 
 		// Other people's wt/<host>/* branches: nothing to do; the fetch
 		// already updated their refs in bare.
+	}
+	return nil
+}
+
+// autoCloneMissing handles the "registered in workspace.toml but nothing on
+// disk" case. Called from syncProject when both <path>.bare and <path> are
+// absent and AutoBootstrap is enabled. Sequential by construction: one clone
+// happens per project per tick, after which the project takes the existing-
+// bare branch on subsequent ticks.
+//
+// Error mapping:
+//   - ErrNeedsBootstrap → conflict 'needs-bootstrap' (default branch ambiguous)
+//   - ErrPathBlocked    → conflict 'path-blocked'    (shouldn't really happen here, but defensive)
+//   - any other error   → returned to caller, which feeds it into per-project
+//     exponential backoff (network/auth flakes are the common case)
+//
+// On success, proj.DefaultBranch may have been filled in by CloneIntoLayout;
+// we persist workspace.toml in place so the next tick (and the rest of the
+// fleet via the workspace.toml sync) sees the new value.
+func (r *Reconciler) autoCloneMissing(name string, proj config.Project) error {
+	r.logger.Printf("reconciler: auto-clone %s from %s", name, proj.Remote)
+
+	res, err := clone.CloneIntoLayout(r.root, name, &proj, clone.Options{
+		Logf: r.logger.Printf,
+		// Non-interactive: PromptDefaultBranch nil → ErrNeedsBootstrap if
+		// the branch can't be auto-detected.
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, clone.ErrNeedsBootstrap):
+			r.recordProjectConflict(name, "", conflict.KindNeedsBootstrap,
+				"default branch could not be auto-detected — run `ws bootstrap "+name+"`")
+			return nil
+		case errors.Is(err, clone.ErrPathBlocked):
+			r.recordProjectConflict(name, "", conflict.KindPathBlocked,
+				"non-repo files at project path — clean up manually and re-run")
+			return nil
+		case errors.Is(err, clone.ErrNeedsMigration), errors.Is(err, clone.ErrAlreadyCloned):
+			// Both indicate disk state changed under us between the stat
+			// and the clone. Treat as a no-op; the next tick will route
+			// the project through the normal sync path.
+			return nil
+		default:
+			r.recordProjectConflict(name, "", conflict.KindCloneFailed, err.Error())
+			return err
+		}
+	}
+
+	r.logger.Printf("reconciler: cloned %s → %s (default_branch=%s)", name, res.BarePath, res.DefaultBranch)
+	// Clear any previously recorded clone failure for this project.
+	_ = r.clearProjectConflict(name, "", conflict.KindCloneFailed)
+	_ = r.clearProjectConflict(name, "", conflict.KindNeedsBootstrap)
+
+	// Persist default_branch back into workspace.toml. We re-load from disk
+	// to avoid trampling unrelated edits the user (or another reconciler
+	// for a different workspace) may have made between Phase 1 and now.
+	if proj.DefaultBranch != "" {
+		fresh, err := config.Load(r.root)
+		if err != nil {
+			r.logger.Printf("reconciler: reload workspace.toml after clone: %v", err)
+			return nil
+		}
+		stored, ok := fresh.Projects[name]
+		if !ok {
+			return nil // project was removed from registry mid-tick; nothing to update
+		}
+		if stored.DefaultBranch == "" {
+			stored.DefaultBranch = proj.DefaultBranch
+			fresh.Projects[name] = stored
+			if err := config.Save(r.root, fresh); err != nil {
+				r.logger.Printf("reconciler: save workspace.toml after clone: %v", err)
+			}
+		}
 	}
 	return nil
 }

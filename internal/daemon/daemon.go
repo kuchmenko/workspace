@@ -122,7 +122,7 @@ func Run() error {
 }
 
 func (d *Daemon) startWorkspace(ws WorkspaceEntry) {
-	d.logger.Printf("workspace: %s (auto_sync=%v)", ws.Root, ws.AutoSync)
+	d.logger.Printf("workspace: %s (auto_sync=%v auto_bootstrap=%v)", ws.Root, ws.AutoSync, ws.AutoBootstrapEnabled())
 
 	intervalStr := ws.PollInterval
 	if intervalStr == "" {
@@ -131,6 +131,7 @@ func (d *Daemon) startWorkspace(ws WorkspaceEntry) {
 	interval := parseInterval(intervalStr)
 
 	r := NewReconciler(ws.Root, interval, d.logger)
+	r.SetAutoBootstrap(ws.AutoBootstrapEnabled())
 	d.reconcilers[ws.Root] = r
 
 	d.wg.Add(1)

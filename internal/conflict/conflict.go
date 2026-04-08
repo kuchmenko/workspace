@@ -29,6 +29,9 @@ const (
 	KindBranchDivergence Kind = "branch-divergence" // a wt/<machine>/* branch diverged from origin
 	KindMainDivergence   Kind = "main-divergence"   // main worktree cannot fast-forward
 	KindNeedsMigration   Kind = "needs-migration"   // project on disk is plain checkout, not yet migrated
+	KindNeedsBootstrap   Kind = "needs-bootstrap"   // missing project couldn't be auto-cloned (default branch ambiguous)
+	KindPathBlocked      Kind = "path-blocked"      // non-repo files at project path; can't bootstrap
+	KindCloneFailed      Kind = "clone-failed"      // git clone of a missing project failed (network/auth/etc)
 )
 
 // Conflict is one row in the persisted store.
