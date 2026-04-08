@@ -1,0 +1,45 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure git for tests
+        # Tests use real git in t.TempDir(); they pass GIT_AUTHOR_*/EMAIL via
+        # env so identity isn't strictly required, but some recent git
+        # versions still complain on `git init` without a global config.
+        # Setting a throwaway identity here covers any edge case.
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "ws-ci"
+          git config --global init.defaultBranch main
+
+      - name: Tidy check
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (race)
+        run: go test -race -timeout 5m ./...

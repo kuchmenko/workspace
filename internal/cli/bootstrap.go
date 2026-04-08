@@ -75,7 +75,10 @@ func runBootstrap(args []string, dryRun bool) error {
 		_, _ = fmt.Scanln(&ans)
 		switch strings.ToLower(strings.TrimSpace(ans)) {
 		case "", "y", "yes":
-			resumeFrom = existing.Done
+			resumeFrom, err = existing.DoneEntries()
+			if err != nil {
+				return fmt.Errorf("read sidecar entries: %w", err)
+			}
 		case "d", "discard":
 			if err := bootstrap.Delete(wsRoot); err != nil {
 				return err
@@ -174,7 +177,11 @@ func commitBootstrap(sc *bootstrap.Sidecar) error {
 	if err != nil {
 		return err
 	}
-	for name, entry := range sc.Done {
+	entries, err := sc.DoneEntries()
+	if err != nil {
+		return err
+	}
+	for name, entry := range entries {
 		proj, ok := freshWS.Projects[name]
 		if !ok {
 			continue
@@ -288,7 +295,7 @@ func newBootstrapModel(plan *bootstrap.Plan, toClone []bootstrap.PlanItem, resum
 	// successful clone, so a Ctrl+C on the plan screen leaves no trace).
 	sc := bootstrap.New(wsRoot)
 	for k, v := range resume {
-		sc.Done[k] = v
+		_ = sc.Set(k, v)
 	}
 
 	return bootstrapModel{
@@ -437,10 +444,7 @@ func (m bootstrapModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.successes = append(m.successes, msg.project)
 			// Persist progress immediately so a crash doesn't lose work.
 			if msg.res != nil {
-				m.sidecar.Done[msg.project] = bootstrap.DoneEntry{
-					DefaultBranch: msg.res.DefaultBranch,
-					ClonedAt:      time.Now().UTC(),
-				}
+				_ = m.sidecar.MarkDone(msg.project, msg.res.DefaultBranch)
 				_ = bootstrap.Save(m.sidecar)
 			}
 		}

@@ -79,14 +79,16 @@ personal/
 old split Syncer/Poller pair. On each tick (immediate at startup, then on
 the configured interval, plus on `config_changed` IPC notifications) it:
 
-0. **Bootstrap pre-check.** Before any work, the reconciler checks for a
-   bootstrap sidecar at `~/.local/state/ws/bootstrap/<sha>.toml`. If the
-   sidecar exists and its recorded pid is alive, the entire tick is skipped
-   for that workspace — both Phase 1 and Phase 2. This prevents the daemon
-   from pushing half-bootstrapped `workspace.toml` upstream and from racing
-   `ws bootstrap` on git operations. Other registered workspaces (each with
-   their own reconciler goroutine) are unaffected. Stale sidecars (pid dead)
-   are logged and ignored, and the tick proceeds normally.
+0. **Sidecar pre-check.** Before any work, the reconciler calls
+   `sidecar.AnyActive(wsRoot)`, which checks every known sidecar kind
+   (currently `bootstrap` and `migrate`) for the workspace at
+   `~/.local/state/ws/<kind>/<sha>.toml`. If any sidecar exists and its
+   recorded pid is alive, the entire tick is skipped for that workspace —
+   both Phase 1 and Phase 2. This prevents the daemon from pushing
+   half-completed state upstream and from racing the interactive command
+   on git operations. Other registered workspaces (each with their own
+   reconciler goroutine) are unaffected. Stale sidecars (pid dead) are
+   ignored, and the tick proceeds normally.
 
 1. **Phase 1 — `syncTOML`.** Commits any local changes to `workspace.toml`
    under a `ws: auto-sync workspace.toml from <machine>` message, fetches,
@@ -142,27 +144,76 @@ than reversible** — there is no `ws unmigrate`, but every step before the
 irreversible final swap preserves the original `.git` so the user can
 recover by hand.
 
-Key invariants:
+Default UX is the **interactive bubbletea TUI** (`internal/cli/migrate_tui.go`):
+scan → plan summary → per-project decision for any project that needs one
+(`dirty / stash / detached`) → progress → done. CLI flags (`--all`,
+`--check`, `--wip`, `--no-tui`) skip the TUI and run the legacy text flow,
+which is also what happens when stdout is not a TTY (pipes, CI).
 
-- **Stash entries always abort.** Stash is bound to the soon-to-be-deleted
-  `.git` and would be lost. The user must pop or drop first.
-- **Detached HEAD always aborts.**
-- **Dirty working trees abort by default.** With `--wip`, the dirty state
-  is committed to a fresh `wt/<machine>/migration-wip-<ts>` branch and
-  attached as a sibling worktree. The main worktree is then switched
-  back to the original branch so the user lands where they left off.
+Pre-flight handling, in order. Each path that doesn't simply abort
+creates an extra side branch that becomes part of the bare clone:
+
+- **Detached HEAD.** Default: abort. Interactive `[c]` (or
+  non-interactive `Options.CheckoutDefault=true`): if the current commit
+  is reachable from any local branch, just `checkout default_branch`. If
+  it's not reachable, first preserve it on a fresh
+  `wt/<machine>/migration-detached-<ts>` branch so the orphaned commits
+  survive into the bare clone.
+- **Stash entries.** Default: abort (stash refs are not copied by
+  `clone --bare`, so they would silently disappear). Interactive `[b]`
+  (or `Options.StashBranch=true`): walk every entry via
+  `git stash branch wt/<machine>/migration-stash-<ts>-N`, commit the
+  popped state, and return to the original branch. The new branches are
+  preserved into the bare like any other local branch.
+- **Dirty working tree.** Default: abort. Interactive `[w]` (or
+  `--wip` / `Options.WIP=true`): commit the dirty state to
+  `wt/<machine>/migration-wip-<ts>`, then check out the original branch
+  again so the post-migration main worktree matches the user's
+  expectation. The WIP branch is attached as a sibling worktree after
+  migration completes.
+
+Other invariants:
+
 - **All local branches are preserved into the bare** via `clone --bare
   --no-local` plus belt-and-suspenders `git fetch <main> <branch>` for
-  any branch that the clone missed.
+  any branch the clone missed.
 - **Hooks are migrated.** Files in `.git/hooks/` that are not `*.sample`
   and have an executable bit get copied to `<bare>/hooks/`.
-- **The final swap uses `mv .git .git.migrating-<ts>`** (not `rm`) so the
-  original is recoverable until verification passes. Verification checks
-  that the new worktree is a valid git repo and that HEAD still points
-  at the same commit. Only then is the moved-aside `.git` deleted.
+- **No upstream tracking is restored.** Bare repos clone with the mirror
+  refspec `+refs/heads/*:refs/heads/*` and have no `refs/remotes/origin/*`
+  refs at all, so `branch --set-upstream-to=origin/X` always fails. The
+  worktree layout doesn't need it: the reconciler only auto-pushes
+  `wt/<machine>/*` branches, and ordinary `git pull` in a worktree
+  resolves its upstream lazily.
+- **Worktree attach via --no-checkout + pointer swap.** `git worktree
+  add --force <existing-non-empty-dir>` does NOT attach to a directory
+  that already has files — `--force` only relaxes the
+  "branch-already-checked-out" and "registered-but-missing" checks, not
+  the path-existence check. Migrate's working strategy:
+    1. Move existing `.git` aside to `.git.migrating-<ts>` (recoverable).
+    2. `git worktree add --no-checkout <main>.wt-tmp <branch>` — git
+       writes the worktree's `.git` pointer file to the tmp dir but no
+       working-tree files.
+    3. `mv <main>.wt-tmp/.git <main>/.git` — pointer file lands in the
+       existing main path, on top of the user's untouched files.
+    4. `rm -rf <main>.wt-tmp` (now empty).
+    5. `git worktree repair <main>` so the bare's `worktrees/<name>/gitdir`
+       points at `<main>` instead of the tmp location.
+    6. Verify HEAD didn't shift.
+  Any failure between steps 2–5 restores `.git.migrating-<ts>` and tears
+  down the bare. Step 6 is the last point a rollback is feasible.
 
 `ws migrate --check` reports state without changing anything. `ws migrate
---all` walks every active project, skipping already-migrated ones.
+--all` walks every active project, skipping already-migrated ones and
+projects that are not cloned on this machine.
+
+The migration process is coordinated with the daemon via a sidecar at
+`~/.local/state/ws/migrate/<sha>.toml`. While migrate is running with a
+live pid, the reconciler skips its tick entirely for the affected
+workspace — both Phase 1 (workspace.toml git sync) and Phase 2 (project
+reconcile) — preventing races on git operations and half-migrated state
+being pushed upstream. Stale sidecars (crashed run) trigger a resume
+prompt on the next `ws migrate` invocation.
 
 ### Conflict store and `ws sync resolve`
 
@@ -214,6 +265,7 @@ group          = "..."              # optional grouping
 |---|---|
 | `ws add <remote-url>` | Register and clone a new repo into `workspace.toml`. |
 | `ws bootstrap [name]` | Interactive TUI: clone projects listed in `workspace.toml` that are missing on this machine, directly into the bare+worktree layout. Crash-safe via a sidecar at `~/.local/state/ws/bootstrap/`. While running, the daemon pauses all sync for this workspace. `--dry-run` shows the plan without cloning. |
+| `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. Default: interactive TUI with per-project decisions for `dirty / stash / detached HEAD`. Pass any flag (`--all`, `--check`, `--wip`, `--no-tui`) or run without a TTY to switch to non-interactive mode. Crash-safe via a sidecar at `~/.local/state/ws/migrate/`; daemon pauses while running. See "Migration" below for the worktree-attach strategy. |
 | `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, push owned `wt/<machine>/*` branches). Same work as a daemon tick. |
 | `ws sync resolve` | Inspect and act on unresolved conflicts from `~/.local/state/ws/conflicts.json`. Prompt-based; never auto-merges. |
 | `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
@@ -285,6 +337,7 @@ group          = "..."              # optional grouping
 - `~/.config/ws/daemon.{sock,pid,log}` — daemon runtime files.
 - `~/.local/state/ws/conflicts.json` — unresolved sync conflicts. Honors `$XDG_STATE_HOME`.
 - `~/.local/state/ws/bootstrap/<sha>.toml` — per-workspace bootstrap progress sidecar. Created by `ws bootstrap`, deleted on success. While present with a live pid, the daemon skips its tick for that workspace. Honors `$XDG_STATE_HOME`.
+- `~/.local/state/ws/migrate/<sha>.toml` — per-workspace migrate progress sidecar. Created by `ws migrate`, deleted on success. Same daemon-skip semantics. Honors `$XDG_STATE_HOME`. Both sidecar kinds share `internal/sidecar` which centralizes file/lock/pid mechanics; command-specific value types (`bootstrap.DoneEntry`, `migrate.DoneEntry`) live in their own packages and round-trip through `json.RawMessage`.
 
 ## Conventions
 
@@ -323,6 +376,46 @@ Release.
 
 **Do NOT** manually edit `CHANGELOG.md`, bump versions, or create `vX.Y.Z`
 tags by hand — release-please owns all of it.
+
+## Tests
+
+The project uses **real git in temp dirs** rather than mocks. Every test
+spins up its own ephemeral git repos under `t.TempDir()` and runs real
+`git` commands. This catches the kinds of bugs (the
+`git worktree add --force` regression that motivated the migrate rewrite,
+for example) that mock-based tests would happily lie about.
+
+`internal/testutil/gitfixture.go` provides the shared helpers:
+
+- `InitFakeRemote(t, name, defaultBranch) string` — creates a bare repo
+  with a seed commit; usable as `proj.Remote` for clone/bootstrap tests.
+- `InitFakePlainCheckout(t, parent, name, branches) string` — creates a
+  non-bare git repo with N branches, each carrying one unique commit.
+  Used as the input for migrate tests.
+- `RunGit(t, dir, args...)` / `RunGitTry` — wraps `exec.Command("git", ...)`
+  with a deterministic env (no global config, no GPG, fixed identity).
+- `AddDirty`, `AddStash` — push the working tree into the dirty/stash
+  states needed by migrate's pre-flight tests.
+
+Test files live next to the code they cover, in `_test` packages:
+
+- `internal/clone/clone_test.go` — happy path, ErrAlreadyCloned,
+  ErrNeedsMigration, ErrPathBlocked, default_branch resolution.
+- `internal/migrate/migrate_test.go` — happy path **(regression test for
+  the worktree-attach bug)**, dirty + WIP, stash + branch conversion,
+  detached HEAD with and without orphan preservation, ErrAlreadyMigrated.
+- `internal/bootstrap/bootstrap_test.go` — `ScanPlan` classification of
+  every project state, only-filter restriction.
+- `internal/sidecar/sidecar_test.go` — Save/Load round-trip,
+  Delete-is-idempotent, IsAlive with self/dead/zero pids, AnyActive
+  finds either kind, AnyActive ignores stale entries.
+
+Run everything: `go test ./...`. CI runs `go test -race -timeout 5m ./...`
+on every push to main and on every PR via `.github/workflows/test.yml`.
+
+When adding new git-touching code: write a real-git test for it. The
+testutil helpers cover ~95% of fixture needs; extend them rather than
+inlining `exec.Command` in tests.
 
 ## Known follow-ups (not yet implemented)
 

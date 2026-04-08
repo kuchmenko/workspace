@@ -11,6 +11,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/migrate"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func newMigrateCmd() *cobra.Command {
@@ -18,6 +19,7 @@ func newMigrateCmd() *cobra.Command {
 		all   bool
 		check bool
 		wip   bool
+		noTUI bool
 	)
 
 	cmd := &cobra.Command{
@@ -26,20 +28,42 @@ func newMigrateCmd() *cobra.Command {
 		Long: `Convert one or all active projects from a plain 'git clone' checkout
 into the worktree layout (bare repo as a sibling, main worktree in place).
 
-Examples:
-  ws migrate myapp           migrate one project
-  ws migrate --all           migrate every active project
-  ws migrate --check         report which projects need migration
-  ws migrate myapp --wip     auto-snapshot dirty changes to a WIP branch
+By default, ws migrate launches an interactive TUI that scans every project,
+shows a plan, and lets you decide per-project how to handle dirty trees,
+stash entries, and detached HEAD. Pass any explicit flag (--all, --check,
+--wip) or run without a TTY to switch to non-interactive mode.
 
-Stash entries and detached HEAD always abort. Dirty working trees abort
-unless --wip is given, in which case the changes are committed to a
-wt/<machine>/migration-wip-<timestamp> branch and exposed as a sibling
-worktree after the migration.`,
+Examples:
+  ws migrate                 interactive TUI on every active project
+  ws migrate myapp           interactive TUI on one project
+  ws migrate --all           non-interactive: migrate every active project
+  ws migrate --check         report which projects need migration (always non-interactive)
+  ws migrate myapp --wip     non-interactive: auto-snapshot dirty changes to a WIP branch
+
+In TUI mode, dirty/stash/detached states are resolved interactively:
+  - dirty   → snapshot to wt/<machine>/migration-wip-<ts> (or skip)
+  - stash   → convert each entry to a wt/<machine>/migration-stash-<ts>-N branch (or skip)
+  - detached → preserve orphaned commits, then checkout default_branch (or skip)
+
+The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
+~/.local/state/ws/migrate/), so daemon never races migrate on git ops.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if check {
 				return runMigrateCheck(args)
 			}
+
+			// Decide: TUI vs non-interactive.
+			//
+			//   - Any explicit flag (--all/--wip/--no-tui) → non-interactive
+			//   - stdout is not a TTY (pipe, CI) → non-interactive
+			//   - otherwise → TUI
+			interactive := !noTUI && !all && !wip && term.IsTerminal(int(os.Stdout.Fd()))
+
+			if interactive {
+				return runMigrateTUI(args)
+			}
+
+			// Non-interactive: existing flow with --all / single-project / --wip semantics.
 			if !all && len(args) != 1 {
 				return errors.New("specify a project name or use --all")
 			}
@@ -153,9 +177,10 @@ worktree after the migration.`,
 		},
 	}
 
-	cmd.Flags().BoolVar(&all, "all", false, "migrate every active project")
-	cmd.Flags().BoolVar(&check, "check", false, "report state without making changes")
-	cmd.Flags().BoolVar(&wip, "wip", false, "snapshot dirty trees to a WIP branch instead of aborting")
+	cmd.Flags().BoolVar(&all, "all", false, "migrate every active project (non-interactive)")
+	cmd.Flags().BoolVar(&check, "check", false, "report state without making changes (always non-interactive)")
+	cmd.Flags().BoolVar(&wip, "wip", false, "snapshot dirty trees to a WIP branch instead of aborting (non-interactive)")
+	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force non-interactive flow even when stdout is a TTY")
 	return cmd
 }
 
