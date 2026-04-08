@@ -339,19 +339,28 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 	//
 	// Working strategy:
 	//   1. Move existing .git aside to .git.migrating-<ts> (recoverable).
-	//   2. Create the worktree at a SIBLING tmp path with --no-checkout.
-	//      git materializes the .git pointer file there but writes no
-	//      working-tree files, so the tmp dir is otherwise empty.
+	//   2. Create the worktree at a sibling tmp path under a hidden parent
+	//      dir, with --no-checkout. The worktree's basename matches
+	//      mainPath's basename so git's admin dir at <bare>/worktrees/<name>
+	//      gets a clean name (not "<name>.wt-tmp" or similar). git
+	//      materializes the .git pointer file there but writes no
+	//      working-tree files (and, importantly for step 6, populates no
+	//      index entries either — see below).
 	//   3. Move that .git pointer file from the tmp dir into mainPath
 	//      (which still contains the user's untouched files).
-	//   4. Remove the now-empty tmp dir.
+	//   4. Remove the now-empty tmp dir AND its hidden parent.
 	//   5. `git worktree repair` so the bare repo's worktrees/<name>/gitdir
 	//      points at mainPath instead of the tmp location.
-	//   6. Verify HEAD didn't shift.
+	//   6. `git reset --mixed HEAD` to populate the index from HEAD.
+	//      `--no-checkout` leaves the index EMPTY (it only sets up the
+	//      worktree's HEAD pointer). Without this step `git status` shows
+	//      every file as both "deleted in index" and "untracked", which
+	//      is technically a working repo but completely broken UX.
+	//   7. Verify HEAD didn't shift and the worktree is clean.
 	//
-	// On any failure between steps 2–5 we restore the original .git from
-	// .git.migrating-<ts> and tear down the bare. Step 6 only runs if
-	// everything succeeded; it's the last point a rollback is feasible.
+	// On any failure between steps 2–6 we restore the original .git from
+	// .git.migrating-<ts> and tear down the bare. Step 7 is the last point
+	// where a rollback is feasible.
 	movedGit := filepath.Join(mainPath, fmt.Sprintf(".git.migrating-%d", ts))
 	if err := os.Rename(filepath.Join(mainPath, ".git"), movedGit); err != nil {
 		rollbackBare(barePath)
@@ -365,42 +374,59 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		rollbackBare(barePath)
 	}
 
-	tmpWT := mainPath + ".wt-tmp"
-	// Defensive: if a stale tmp from a previous crashed run is sitting
-	// around, get rid of it. Empty (--no-checkout left no files).
-	_ = os.RemoveAll(tmpWT)
+	// Sibling hidden parent dir. The tmp worktree lives inside it with the
+	// SAME basename as mainPath, so git's admin dir at
+	// <bare>/worktrees/<basename> gets a sensible name. We rm -rf the
+	// parent at the end, so the user never sees this dir.
+	tmpParent := filepath.Join(filepath.Dir(mainPath), fmt.Sprintf(".ws-migrate-%d", ts))
+	tmpWT := filepath.Join(tmpParent, filepath.Base(mainPath))
+	// Defensive: stale dir from a previous crashed run.
+	_ = os.RemoveAll(tmpParent)
+	if err := os.MkdirAll(tmpParent, 0o755); err != nil {
+		restore()
+		return nil, fmt.Errorf("create tmp parent: %w", err)
+	}
 
 	if err := git.WorktreeAddNoCheckout(barePath, tmpWT, currentBranch); err != nil {
+		_ = os.RemoveAll(tmpParent)
 		restore()
 		return nil, fmt.Errorf("create tmp worktree: %w", err)
 	}
 
-	// Move the .git pointer file (NOT a directory in the worktree case —
-	// `git worktree add` writes a regular file containing `gitdir: ...`)
-	// from the tmp dir into mainPath. The user's working tree files in
-	// mainPath are untouched.
+	// Move the .git pointer file (a regular file containing `gitdir: ...`,
+	// not a directory) from the tmp dir into mainPath. The user's working
+	// tree files in mainPath are untouched.
 	tmpDotGit := filepath.Join(tmpWT, ".git")
 	if err := os.Rename(tmpDotGit, filepath.Join(mainPath, ".git")); err != nil {
-		_ = os.RemoveAll(tmpWT)
+		_ = os.RemoveAll(tmpParent)
 		restore()
 		return nil, fmt.Errorf("move .git pointer from tmp: %w", err)
 	}
 
-	// Tmp dir should be empty now. RemoveAll handles edge cases.
-	if err := os.RemoveAll(tmpWT); err != nil {
-		opts.logf("migrate %s: warning: could not remove %s: %v", name, tmpWT, err)
+	// Tmp parent should be empty (--no-checkout wrote nothing else).
+	if err := os.RemoveAll(tmpParent); err != nil {
+		opts.logf("migrate %s: warning: could not remove %s: %v", name, tmpParent, err)
 	}
 
 	// Tell git to update the worktrees admin dir so gitdir → mainPath, not
 	// the now-removed tmp path.
 	if err := git.WorktreeRepair(mainPath); err != nil {
-		// Repair failed: try our best to clean up so the user isn't left
-		// with a half-broken layout. The .git pointer in mainPath still
-		// references a stale gitdir entry, so undoing it back to the
-		// pre-migrate state is the safest call.
 		_ = os.RemoveAll(filepath.Join(mainPath, ".git"))
 		restore()
 		return nil, fmt.Errorf("worktree repair: %w", err)
+	}
+
+	// Populate the index from HEAD. `git worktree add --no-checkout`
+	// creates the worktree with HEAD set but the index EMPTY — without
+	// this `git status` would show every tracked file as both
+	// "deleted in index" and "untracked on disk". `reset --mixed HEAD`
+	// reads HEAD into the index without touching the working tree, which
+	// is exactly what we need: the existing files match HEAD, so after
+	// the index is populated, status reports clean.
+	if err := runGit(mainPath, "reset", "--mixed", "HEAD"); err != nil {
+		_ = os.RemoveAll(filepath.Join(mainPath, ".git"))
+		restore()
+		return nil, fmt.Errorf("populate index from HEAD: %w", err)
 	}
 
 	// Verify the new worktree is functional and HEAD didn't shift.
