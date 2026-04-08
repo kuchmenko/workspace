@@ -34,6 +34,87 @@ type Project struct {
 	// AutoSync controls per-project sync behavior. nil = inherit (default true).
 	// Pointer so we can distinguish "unset" from "explicitly false" in TOML.
 	AutoSync *bool `toml:"auto_sync,omitempty"`
+
+	// BranchNaming describes the repository-native branch convention used
+	// when promoting a wt/<machine>/<topic> WIP branch into its final form
+	// (e.g. "feat/fix-login") before opening a PR. Optional — when unset,
+	// `ws worktree promote` requires an explicit --name.
+	BranchNaming *BranchNaming `toml:"branch_naming,omitempty"`
+
+	// Autopush lists non-wt/* branches that the daemon is explicitly
+	// allowed to push for this project. Populated by `ws worktree new
+	// --auto-push <name>` and by `ws worktree promote --auto-push`.
+	// The wt/<machine>/* prefix is always pushed regardless of this list.
+	Autopush *Autopush `toml:"autopush,omitempty"`
+}
+
+// BranchNaming holds the per-project branch-name convention used by
+// `ws worktree promote`. Pattern supports a single placeholder: {topic}.
+type BranchNaming struct {
+	// Pattern is the template applied to the worktree's topic when no
+	// explicit --name is given to promote. Example: "feat/{topic}".
+	Pattern string `toml:"pattern,omitempty"`
+	// Validate is an optional regex the final branch name must match.
+	// Only checked at promote time; WIP names (wt/<machine>/*) are never
+	// validated against it.
+	Validate string `toml:"validate,omitempty"`
+}
+
+// Autopush is the opt-in list of non-wt/* branches the daemon may push
+// for a project. Stored in workspace.toml so it syncs across machines.
+type Autopush struct {
+	Branches []string `toml:"branches,omitempty"`
+}
+
+// AddAutopushBranch adds branch to the project's autopush list if not
+// already present. Returns true if the list changed.
+func (p *Project) AddAutopushBranch(branch string) bool {
+	if branch == "" {
+		return false
+	}
+	if p.Autopush == nil {
+		p.Autopush = &Autopush{}
+	}
+	for _, b := range p.Autopush.Branches {
+		if b == branch {
+			return false
+		}
+	}
+	p.Autopush.Branches = append(p.Autopush.Branches, branch)
+	return true
+}
+
+// RemoveAutopushBranch removes branch from the project's autopush list.
+// Returns true if the list changed.
+func (p *Project) RemoveAutopushBranch(branch string) bool {
+	if p.Autopush == nil {
+		return false
+	}
+	for i, b := range p.Autopush.Branches {
+		if b == branch {
+			p.Autopush.Branches = append(p.Autopush.Branches[:i], p.Autopush.Branches[i+1:]...)
+			if len(p.Autopush.Branches) == 0 {
+				p.Autopush = nil
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// AutopushAllows reports whether the reconciler should treat `branch`
+// as explicitly opted in to auto-push. Only matters for branches that
+// do NOT match the wt/<machine>/ prefix — those are always pushed.
+func (p Project) AutopushAllows(branch string) bool {
+	if p.Autopush == nil {
+		return false
+	}
+	for _, b := range p.Autopush.Branches {
+		if b == branch {
+			return true
+		}
+	}
+	return false
 }
 
 // SyncEnabled reports whether the reconciler should push/pull this project.
