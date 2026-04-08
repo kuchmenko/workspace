@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -62,55 +63,141 @@ type BranchNaming struct {
 
 // Autopush is the opt-in list of non-wt/* branches the daemon may push
 // for a project. Stored in workspace.toml so it syncs across machines.
+//
+// Two formats coexist:
+//
+//   - Branches: legacy flat list, no machine attribution. Read by the
+//     daemon for push decisions. New writes go to Owned instead.
+//   - Owned: per-branch ownership records with the machine that
+//     promoted/created the branch. Used both by the daemon (push
+//     decisions) and by `ws pulse` (machine attribution for events
+//     on branches that don't carry the wt/<machine>/* prefix).
 type Autopush struct {
-	Branches []string `toml:"branches,omitempty"`
+	Branches []string       `toml:"branches,omitempty"`
+	Owned    []OwnedBranch  `toml:"owned,omitempty"`
 }
 
-// AddAutopushBranch adds branch to the project's autopush list if not
-// already present. Returns true if the list changed.
-func (p *Project) AddAutopushBranch(branch string) bool {
-	if branch == "" {
-		return false
+// OwnedBranch records that a non-wt/* branch in this project is owned
+// by a specific machine. Created by `ws worktree new --branch X
+// --auto-push` and by `ws worktree promote`. The owning machine is
+// the one whose worktree dir holds the branch's checkout.
+type OwnedBranch struct {
+	Branch  string `toml:"branch"`
+	Machine string `toml:"machine"`
+	// Since is the RFC3339 timestamp of when this machine claimed the
+	// branch. Used by pulse to split events on a single branch across
+	// machines after a `--reclaim`.
+	Since string `toml:"since,omitempty"`
+}
+
+// OwnerOf returns the machine that owns `branch` for this project, or
+// "" if the branch has no recorded owner. Pulse uses this as the
+// fallback machine resolver for branches outside the wt/<machine>/*
+// namespace.
+func (p Project) OwnerOf(branch string) string {
+	if p.Autopush == nil {
+		return ""
+	}
+	for _, o := range p.Autopush.Owned {
+		if o.Branch == branch {
+			return o.Machine
+		}
+	}
+	return ""
+}
+
+// ErrBranchOwnedByOther is returned by ClaimAutopushBranch when the
+// branch already has a recorded owner on a different machine and the
+// caller did not pass reclaim=true. The CLI surfaces this as a
+// suggestion to retry with --reclaim.
+type ErrBranchOwnedByOther struct {
+	Branch    string
+	Owner     string
+	Requested string
+}
+
+func (e *ErrBranchOwnedByOther) Error() string {
+	return fmt.Sprintf("branch %q is already owned by machine %q (this machine: %q); pass --reclaim to take ownership",
+		e.Branch, e.Owner, e.Requested)
+}
+
+// ClaimAutopushBranch records that `machine` owns `branch` for this
+// project. Returns true if the registry actually changed.
+//
+// If the branch already has an owner equal to `machine`, this is a
+// no-op. If the owner is a different machine and reclaim=false, the
+// call returns *ErrBranchOwnedByOther without modifying state. With
+// reclaim=true, the previous owner is overwritten and Since is reset
+// to the current time.
+func (p *Project) ClaimAutopushBranch(branch, machine string, reclaim bool) (bool, error) {
+	if branch == "" || machine == "" {
+		return false, nil
 	}
 	if p.Autopush == nil {
 		p.Autopush = &Autopush{}
 	}
-	for _, b := range p.Autopush.Branches {
-		if b == branch {
-			return false
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i, o := range p.Autopush.Owned {
+		if o.Branch != branch {
+			continue
 		}
+		if o.Machine == machine {
+			return false, nil
+		}
+		if !reclaim {
+			return false, &ErrBranchOwnedByOther{Branch: branch, Owner: o.Machine, Requested: machine}
+		}
+		p.Autopush.Owned[i].Machine = machine
+		p.Autopush.Owned[i].Since = now
+		return true, nil
 	}
-	p.Autopush.Branches = append(p.Autopush.Branches, branch)
-	return true
+	p.Autopush.Owned = append(p.Autopush.Owned, OwnedBranch{Branch: branch, Machine: machine, Since: now})
+	return true, nil
 }
 
-// RemoveAutopushBranch removes branch from the project's autopush list.
-// Returns true if the list changed.
-func (p *Project) RemoveAutopushBranch(branch string) bool {
+// ReleaseAutopushBranch removes any ownership record for branch in
+// this project, plus any legacy entry in Branches. Returns true if
+// anything changed.
+func (p *Project) ReleaseAutopushBranch(branch string) bool {
 	if p.Autopush == nil {
 		return false
+	}
+	changed := false
+	for i, o := range p.Autopush.Owned {
+		if o.Branch == branch {
+			p.Autopush.Owned = append(p.Autopush.Owned[:i], p.Autopush.Owned[i+1:]...)
+			changed = true
+			break
+		}
 	}
 	for i, b := range p.Autopush.Branches {
 		if b == branch {
 			p.Autopush.Branches = append(p.Autopush.Branches[:i], p.Autopush.Branches[i+1:]...)
-			if len(p.Autopush.Branches) == 0 {
-				p.Autopush = nil
-			}
-			return true
+			changed = true
+			break
 		}
 	}
-	return false
+	if changed && len(p.Autopush.Owned) == 0 && len(p.Autopush.Branches) == 0 {
+		p.Autopush = nil
+	}
+	return changed
 }
 
 // AutopushAllows reports whether the reconciler should treat `branch`
 // as explicitly opted in to auto-push. Only matters for branches that
 // do NOT match the wt/<machine>/ prefix — those are always pushed.
+// Reads both the legacy Branches list and the new Owned registry.
 func (p Project) AutopushAllows(branch string) bool {
 	if p.Autopush == nil {
 		return false
 	}
 	for _, b := range p.Autopush.Branches {
 		if b == branch {
+			return true
+		}
+	}
+	for _, o := range p.Autopush.Owned {
+		if o.Branch == branch {
 			return true
 		}
 	}
