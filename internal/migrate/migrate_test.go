@@ -87,9 +87,42 @@ func TestMigrateProject_HappyPath(t *testing.T) {
 			t.Errorf("leftover %s in main worktree", e.Name())
 		}
 	}
-	// 8. .wt-tmp sibling was cleaned up.
-	if _, err := os.Stat(plainPath + ".wt-tmp"); !os.IsNotExist(err) {
-		t.Errorf("leftover .wt-tmp at %s", plainPath+".wt-tmp")
+	// 8. Hidden tmp parent dirs (.ws-migrate-*) were cleaned up.
+	parentEntries, _ := os.ReadDir(filepath.Dir(plainPath))
+	for _, e := range parentEntries {
+		if strings.HasPrefix(e.Name(), ".ws-migrate-") {
+			t.Errorf("leftover %s in parent of main worktree", e.Name())
+		}
+	}
+
+	// 9. REGRESSION: `git status --porcelain` must be empty. Without the
+	// `git reset --mixed HEAD` step after worktree repair, the index is
+	// empty (--no-checkout populates HEAD but not the index) and every
+	// tracked file shows up as both "deleted in index" and "untracked",
+	// which is technically a valid repo but completely broken UX.
+	status := testutil.RunGit(t, plainPath, "status", "--porcelain")
+	if status != "" {
+		t.Errorf("worktree not clean after migrate:\n%s", status)
+	}
+
+	// 10. Admin dir in the bare has a clean basename — not "<name>.wt-tmp"
+	// or anything ts-suffixed.
+	adminEntries, err := os.ReadDir(filepath.Join(barePath, "worktrees"))
+	if err != nil {
+		t.Fatalf("read worktrees admin dir: %v", err)
+	}
+	wantAdmin := filepath.Base(plainPath)
+	foundClean := false
+	for _, e := range adminEntries {
+		if e.Name() == wantAdmin {
+			foundClean = true
+		}
+		if strings.Contains(e.Name(), "wt-tmp") || strings.Contains(e.Name(), "ws-migrate") {
+			t.Errorf("ugly admin dir name: %s", e.Name())
+		}
+	}
+	if !foundClean {
+		t.Errorf("admin dir %s missing under %s/worktrees (entries: %v)", wantAdmin, barePath, adminEntries)
 	}
 }
 
