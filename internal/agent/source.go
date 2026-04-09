@@ -91,6 +91,10 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 			}
 		}
 
+		// Count sessions.
+		sessions := LoadSessions([]string{mainPath})
+		proj.SessionCount = len(sessions)
+
 		ws.Projects = append(ws.Projects, proj)
 	}
 
