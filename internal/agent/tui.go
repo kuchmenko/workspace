@@ -61,6 +61,7 @@ type Model struct {
 	wtTopic      string
 	wtBranch     string // custom branch override (empty = wt/<machine>/<topic>)
 	wtAutoPush   bool
+	wtNoLaunch   bool   // true when "create only", false when "create + launch"
 	wtField      int    // 0=topic, 1=branch, 2=auto-push, 3=confirm
 
 	// Set when the user picks a launch action.
@@ -196,6 +197,14 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.wtAutoPush = false
 				m.wtField = 0
 				return m, nil
+			case "create-wt-only":
+				m.mode = viewNewWorktree
+				m.wtTopic = ""
+				m.wtBranch = ""
+				m.wtAutoPush = false
+				m.wtNoLaunch = true
+				m.wtField = 0
+				return m, nil
 			case "worktree":
 				m.Launch = &LaunchRequest{Cwd: item.cwd}
 				return m, tea.Quit
@@ -204,6 +213,23 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
+	case "d", "D":
+		// Delete worktree (only on worktree items, not main).
+		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
+			item := m.popupItems[m.popupCursor]
+			if item.kind == "worktree" && item.cwd != m.popupProj.Path {
+				err := DeleteWorktree(m.popupProj.Path, item.cwd, false)
+				if err == nil {
+					// Refresh popup.
+					m.openPopup(m.popupProj)
+				}
+			}
+		}
+	case "p", "P":
+		// Promote branch — for wt/* worktrees, rename branch.
+		// TODO: add a text input for new branch name. For now, this
+		// is a stub that needs the full promote flow.
+		_ = m // placeholder
 	}
 	return m, nil
 }
@@ -217,6 +243,7 @@ func (m *Model) openPopup(p *Project) {
 	m.popupItems = []popupItem{
 		{label: "⚡ New claude session", kind: "action", cwd: p.Path},
 		{label: "🌿 New worktree + session", kind: "new-worktree"},
+		{label: "🌿 Create worktree (no launch)", kind: "create-wt-only"},
 	}
 
 	// Worktrees.
@@ -224,10 +251,12 @@ func (m *Model) openPopup(p *Project) {
 	if len(m.popupWorktrees) > 0 {
 		m.popupItems = append(m.popupItems, popupItem{kind: "separator", label: "── worktrees"})
 		for _, wt := range m.popupWorktrees {
-			label := fmt.Sprintf("🌿 %s", wt.Branch)
-			if wt.IsMain {
-				label = "🌿 main"
+			name := worktreeDisplayName(wt)
+			branchInfo := ""
+			if wt.Branch != "" && !wt.IsMain {
+				branchInfo = fmt.Sprintf("  (%s)", wt.Branch)
 			}
+			label := fmt.Sprintf("🌿 %s%s", name, branchInfo)
 			m.popupItems = append(m.popupItems, popupItem{
 				label: label, kind: "worktree", cwd: wt.Path,
 			})
@@ -316,10 +345,26 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 
 	result, err := CreateWorktree(m.popupProj, strings.TrimSpace(m.wtTopic), strings.TrimSpace(m.wtBranch), m.wtAutoPush)
 	if err != nil {
-		// Show error in popup — go back to popup mode with error.
 		m.mode = viewPopup
 		return m, nil
 	}
+
+	// Check if we came from "create-wt-only" — don't launch, just refresh.
+	for _, item := range m.popupItems {
+		if item.kind == "create-wt-only" && m.popupItems[m.popupCursor].kind == "create-wt-only" {
+			// This was triggered from the non-launch variant.
+			// Can't easily distinguish here, so check a flag.
+			break
+		}
+	}
+
+	// If the popup had "create-wt-only" selected, go back to popup.
+	if m.wtNoLaunch {
+		m.wtNoLaunch = false
+		m.openPopup(m.popupProj) // refresh to show new worktree
+		return m, nil
+	}
+
 	m.Launch = &LaunchRequest{Cwd: result.Path}
 	return m, tea.Quit
 }
@@ -508,7 +553,7 @@ func (m *Model) overlayPopup() string {
 	}
 
 	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k  enter  esc"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k enter  d:delete wt  esc:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
