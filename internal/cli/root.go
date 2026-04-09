@@ -7,6 +7,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/daemon"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -25,10 +26,9 @@ func NewRootCmd() *cobra.Command {
 			if cmd.Name() == "help" || cmd.Name() == "completion" {
 				return nil
 			}
-			// Agent TUI uses a hardcoded demo graph in early layers; later
-			// layers load workspace.toml lazily from inside the TUI loop
-			// rather than at command-startup time.
-			if cmd.Name() == "agent" {
+			// Agent TUI loads workspace data lazily from daemon.toml,
+			// not from the working directory's workspace.toml.
+			if cmd.Name() == "agent" || cmd.Name() == "ws" {
 				return nil
 			}
 			if cmd.Parent() != nil && cmd.Parent().Name() == "daemon" {
@@ -63,6 +63,13 @@ func NewRootCmd() *cobra.Command {
 				return err
 			}
 			return nil
+		},
+		// Bare `ws` in a TTY launches the agent TUI. In pipe/CI → help.
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+				return runAgentTUI()
+			}
+			return cmd.Help()
 		},
 		SilenceUsage: true,
 	}
