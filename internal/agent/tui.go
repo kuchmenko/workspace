@@ -16,6 +16,14 @@ const (
 	viewPopup                 // floating action popup over dimmed list
 )
 
+// popupItem is one selectable row in the project action popup.
+type popupItem struct {
+	label    string
+	kind     string // "action", "worktree", "session", "separator"
+	cwd      string // for worktree/session launch
+	resumeID string // for session resume
+}
+
 // listItem is one row in the nested list — either a group header or a project.
 type listItem struct {
 	kind    NodeKind
@@ -42,9 +50,11 @@ type Model struct {
 	scroll     int           // scroll offset for long lists
 
 	// Popup state.
-	popupProj   *Project
-	popupCursor int
-	popupItems  []string
+	popupProj      *Project
+	popupCursor    int
+	popupItems     []popupItem
+	popupWorktrees []Worktree
+	popupSessions  []Session
 
 	// Set when the user picks a launch action.
 	Launch *LaunchRequest
@@ -149,23 +159,34 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "h", "left":
 		m.mode = viewList
 	case "j", "down":
-		if m.popupCursor < len(m.popupItems)-1 {
-			m.popupCursor++
+		for next := m.popupCursor + 1; next < len(m.popupItems); next++ {
+			if m.popupItems[next].kind != "separator" {
+				m.popupCursor = next
+				break
+			}
 		}
 	case "k", "up":
-		if m.popupCursor > 0 {
-			m.popupCursor--
+		for prev := m.popupCursor - 1; prev >= 0; prev-- {
+			if m.popupItems[prev].kind != "separator" {
+				m.popupCursor = prev
+				break
+			}
 		}
 	case "enter", "l", "right":
-		if m.popupCursor < len(m.popupItems) {
-			switch m.popupCursor {
-			case 0: // New claude session in main worktree
+		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
+			item := m.popupItems[m.popupCursor]
+			switch item.kind {
+			case "action":
 				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
 				return m, tea.Quit
-			case 1: // New worktree + session (TODO: prompt for topic name)
-				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
+			case "worktree":
+				m.Launch = &LaunchRequest{Cwd: item.cwd}
+				return m, tea.Quit
+			case "session":
+				m.Launch = &LaunchRequest{Cwd: item.cwd, ResumeID: item.resumeID}
 				return m, tea.Quit
 			}
+			// separator — do nothing
 		}
 	}
 	return m, nil
@@ -175,9 +196,46 @@ func (m *Model) openPopup(p *Project) {
 	m.mode = viewPopup
 	m.popupProj = p
 	m.popupCursor = 0
-	m.popupItems = []string{
-		"New claude session",
-		"New worktree + session",
+
+	// Build popup items: actions, then worktrees, then sessions.
+	m.popupItems = []popupItem{
+		{label: "⚡ New claude session", kind: "action", cwd: p.Path},
+	}
+
+	// Worktrees.
+	m.popupWorktrees = LoadWorktrees(p.Path)
+	if len(m.popupWorktrees) > 0 {
+		m.popupItems = append(m.popupItems, popupItem{kind: "separator", label: "── worktrees"})
+		for _, wt := range m.popupWorktrees {
+			label := fmt.Sprintf("🌿 %s", wt.Branch)
+			if wt.IsMain {
+				label = "🌿 main"
+			}
+			m.popupItems = append(m.popupItems, popupItem{
+				label: label, kind: "worktree", cwd: wt.Path,
+			})
+		}
+	}
+
+	// Sessions.
+	var searchPaths []string
+	searchPaths = append(searchPaths, p.Path)
+	for _, wt := range m.popupWorktrees {
+		searchPaths = append(searchPaths, wt.Path)
+	}
+	m.popupSessions = LoadSessions(searchPaths)
+	if len(m.popupSessions) > 0 {
+		m.popupItems = append(m.popupItems, popupItem{kind: "separator", label: "── sessions"})
+		limit := len(m.popupSessions)
+		if limit > 10 {
+			limit = 10
+		}
+		for _, s := range m.popupSessions[:limit] {
+			label := fmt.Sprintf("💬 %s  %s", TimeAgo(s.Updated), s.Title)
+			m.popupItems = append(m.popupItems, popupItem{
+				label: label, kind: "session", cwd: s.Cwd, resumeID: s.ID,
+			})
+		}
 	}
 }
 
@@ -290,6 +348,9 @@ func (m *Model) viewList() string {
 			if p.WorktreeCount > 1 {
 				badges += fmt.Sprintf(" %dwt", p.WorktreeCount)
 			}
+			if p.SessionCount > 0 {
+				badges += fmt.Sprintf(" %ds", p.SessionCount)
+			}
 			label := fmt.Sprintf(" %s%s %s%s", indent, icon, p.Name, dimStyle.Render(badges))
 			if selected {
 				line = selectedStyle.Width(listW).Render(label)
@@ -340,13 +401,17 @@ func (m *Model) overlayPopup() string {
 	lines = append(lines, popupDimStyle.Width(innerW).Render(info))
 	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
 
-	// Action items.
+	// Items: actions, worktrees, sessions, separators.
 	for i, item := range m.popupItems {
+		if item.kind == "separator" {
+			lines = append(lines, popupDimStyle.Width(innerW).Render(item.label))
+			continue
+		}
 		cursor := "  "
 		if i == m.popupCursor {
 			cursor = "▶ "
 		}
-		label := cursor + strings.TrimSpace(item)
+		label := cursor + strings.TrimSpace(item.label)
 		if i == m.popupCursor {
 			lines = append(lines, popupSelectedStyle.Width(innerW).Render(label))
 		} else {

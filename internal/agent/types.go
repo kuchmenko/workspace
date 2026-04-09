@@ -24,6 +24,7 @@ type Project struct {
 	Path          string
 	DefaultBranch string
 	WorktreeCount int
+	SessionCount  int
 }
 
 // Workspace is the top-level data structure loaded from workspace.toml
