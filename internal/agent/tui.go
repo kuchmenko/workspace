@@ -12,8 +12,9 @@ import (
 type viewMode int
 
 const (
-	viewList  viewMode = iota // nested list of groups + projects
-	viewPopup                 // floating action popup over dimmed list
+	viewList       viewMode = iota // nested list of groups + projects
+	viewPopup                      // floating action popup over dimmed list
+	viewNewWorktree                // worktree creation form
 )
 
 // popupItem is one selectable row in the project action popup.
@@ -56,6 +57,12 @@ type Model struct {
 	popupWorktrees []Worktree
 	popupSessions  []Session
 
+	// Worktree creation form state.
+	wtTopic      string
+	wtBranch     string // custom branch override (empty = wt/<machine>/<topic>)
+	wtAutoPush   bool
+	wtField      int    // 0=topic, 1=branch, 2=auto-push, 3=confirm
+
 	// Set when the user picks a launch action.
 	Launch *LaunchRequest
 
@@ -89,6 +96,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.mode == viewNewWorktree {
+			return m.updateNewWorktree(msg)
+		}
 		if m.mode == viewPopup {
 			return m.updatePopup(msg)
 		}
@@ -179,6 +189,13 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case "action":
 				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
 				return m, tea.Quit
+			case "new-worktree":
+				m.mode = viewNewWorktree
+				m.wtTopic = ""
+				m.wtBranch = ""
+				m.wtAutoPush = false
+				m.wtField = 0
+				return m, nil
 			case "worktree":
 				m.Launch = &LaunchRequest{Cwd: item.cwd}
 				return m, tea.Quit
@@ -186,7 +203,6 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.Launch = &LaunchRequest{Cwd: item.cwd, ResumeID: item.resumeID}
 				return m, tea.Quit
 			}
-			// separator — do nothing
 		}
 	}
 	return m, nil
@@ -200,6 +216,7 @@ func (m *Model) openPopup(p *Project) {
 	// Build popup items: actions, then worktrees, then sessions.
 	m.popupItems = []popupItem{
 		{label: "⚡ New claude session", kind: "action", cwd: p.Path},
+		{label: "🌿 New worktree + session", kind: "new-worktree"},
 	}
 
 	// Worktrees.
@@ -237,6 +254,74 @@ func (m *Model) openPopup(p *Project) {
 			})
 		}
 	}
+}
+
+func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = viewPopup
+		return m, nil
+	case "tab", "down":
+		m.wtField = (m.wtField + 1) % 4
+		return m, nil
+	case "shift+tab", "up":
+		m.wtField = (m.wtField + 3) % 4
+		return m, nil
+	case "enter":
+		if m.wtField == 3 { // confirm
+			return m.executeNewWorktree()
+		}
+		// On other fields, tab forward
+		m.wtField = (m.wtField + 1) % 4
+		return m, nil
+	case " ":
+		if m.wtField == 2 { // auto-push toggle
+			m.wtAutoPush = !m.wtAutoPush
+			return m, nil
+		}
+	case "backspace":
+		switch m.wtField {
+		case 0:
+			if len(m.wtTopic) > 0 {
+				m.wtTopic = m.wtTopic[:len(m.wtTopic)-1]
+			}
+		case 1:
+			if len(m.wtBranch) > 0 {
+				m.wtBranch = m.wtBranch[:len(m.wtBranch)-1]
+			}
+		}
+		return m, nil
+	default:
+		// Type into current text field.
+		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+			switch m.wtField {
+			case 0:
+				m.wtTopic += key
+			case 1:
+				m.wtBranch += key
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(m.wtTopic) == "" {
+		return m, nil // topic required
+	}
+
+	result, err := CreateWorktree(m.popupProj, strings.TrimSpace(m.wtTopic), strings.TrimSpace(m.wtBranch), m.wtAutoPush)
+	if err != nil {
+		// Show error in popup — go back to popup mode with error.
+		m.mode = viewPopup
+		return m, nil
+	}
+	m.Launch = &LaunchRequest{Cwd: result.Path}
+	return m, tea.Quit
 }
 
 func (m *Model) ensureVisible() {
@@ -299,6 +384,9 @@ func (m *Model) rebuildItems() {
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "loading…"
+	}
+	if m.mode == viewNewWorktree {
+		return m.viewNewWorktree()
 	}
 	if m.mode == viewPopup {
 		return m.overlayPopup()
@@ -432,6 +520,92 @@ func (m *Model) overlayPopup() string {
 		popup,
 		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")),
 	)
+}
+
+func (m *Model) viewNewWorktree() string {
+	p := m.popupProj
+	popupW := 50
+	if m.width < 56 {
+		popupW = m.width - 6
+	}
+	innerW := popupW - 6
+
+	var lines []string
+	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("🌿 New worktree for %s", p.Name)))
+	lines = append(lines, "")
+
+	// Field 0: topic (required)
+	topicLabel := "  Topic:"
+	topicVal := m.wtTopic + "█"
+	if m.wtField != 0 {
+		topicVal = m.wtTopic
+		if topicVal == "" {
+			topicVal = "(required)"
+		}
+	}
+	if m.wtField == 0 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(topicLabel))
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+topicVal))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(topicLabel))
+		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+topicVal))
+	}
+	lines = append(lines, "")
+
+	// Field 1: branch override (optional)
+	branchLabel := "  Branch (optional):"
+	branchDefault := fmt.Sprintf("wt/<machine>/%s", m.wtTopic)
+	if m.wtTopic == "" {
+		branchDefault = "wt/<machine>/<topic>"
+	}
+	branchVal := m.wtBranch + "█"
+	if m.wtField != 1 {
+		branchVal = m.wtBranch
+		if branchVal == "" {
+			branchVal = branchDefault
+		}
+	}
+	if m.wtField == 1 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(branchLabel))
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+branchVal))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(branchLabel))
+		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+branchVal))
+	}
+	lines = append(lines, "")
+
+	// Field 2: auto-push toggle
+	pushCheck := "☐"
+	if m.wtAutoPush {
+		pushCheck = "☑"
+	}
+	pushLabel := fmt.Sprintf("  %s Auto-push (daemon pushes this branch)", pushCheck)
+	if m.wtField == 2 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(pushLabel))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(pushLabel))
+	}
+	if m.wtBranch == "" {
+		lines = append(lines, popupDimStyle.Width(innerW).Render("    (wt/* branches auto-push by default)"))
+	}
+	lines = append(lines, "")
+
+	// Field 3: confirm button
+	confirmLabel := "  → Create & launch claude"
+	if m.wtField == 3 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(confirmLabel))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  space:toggle  enter:confirm  esc:back"))
+
+	content := strings.Join(lines, "\n")
+	popup := popupBorderStyle.Render(content)
+
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
 }
 
 func max(a, b int) int {
