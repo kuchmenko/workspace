@@ -2,147 +2,63 @@ package agent
 
 import (
 	"fmt"
-	"time"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// historyEntry tracks one step on the navigation stack. arrivalDir is the
-// direction the user moved INTO this node — used to compute the back
-// slot direction (= opposite of arrivalDir) at the next render.
-type historyEntry struct {
-	nodeID     string
-	arrivalDir Direction
+// View mode: browsing the project list, or floating action popup over it.
+type viewMode int
+
+const (
+	viewList  viewMode = iota // nested list of groups + projects
+	viewPopup                 // floating action popup over dimmed list
+)
+
+// listItem is one row in the nested list — either a group header or a project.
+type listItem struct {
+	kind    NodeKind
+	group   string  // group name (for KindGroup rows)
+	project *Project
+	indent  int
 }
 
-// Model is the bubbletea Model for the cross-renderer agent TUI.
+// Model is the bubbletea model for the agent TUI wizard.
 type Model struct {
-	graph      *Graph
-	history    []historyEntry // top of stack = current focus
-	mode       Mode
-	width      int
-	height     int
-	status     string
-	themeIndex int   // index into themes[]
-	pulseFrame int   // animation frame counter for focused pulse
-	animating  bool  // true while camera pan is in progress
-	animFrom   Grid  // camera start pos for pan
-	animTo     Grid  // camera target pos for pan
-	animStep   int   // current step in pan animation
-	animSteps  int   // total steps for pan animation
+	workspaces []WorkspaceData
+	mode       viewMode
+	items      []listItem   // flattened visible items
+	cursor     int
+	expanded   map[string]bool // group name → expanded
+	scroll     int           // scroll offset for long lists
+
+	// Popup state.
+	popupProj   *Project
+	popupCursor int
+	popupItems  []string
+
+	width, height int
 }
 
-// NewModel constructs a Model rooted at the graph's root node. The
-// initial history has just the root with no arrival direction.
-func NewModel(g *Graph) *Model {
+// NewModel constructs the TUI model from loaded workspace data.
+func NewModel(workspaces []WorkspaceData) *Model {
 	m := &Model{
-		graph: g,
-		history: []historyEntry{
-			{nodeID: g.RootID, arrivalDir: DirNone},
-		},
-		mode:   ModeNormal,
-		status: "hjkl: move · space: actions · q: quit",
+		workspaces: workspaces,
+		mode:       viewList,
+		expanded:   make(map[string]bool),
 	}
+	// Auto-expand all groups initially.
+	for _, ws := range workspaces {
+		for _, g := range ws.Groups {
+			m.expanded[g] = true
+		}
+	}
+	m.rebuildItems()
 	return m
 }
 
-// tickMsg drives animation frames (~30fps).
-type tickMsg struct{}
-
-func tickCmd() tea.Cmd {
-	return tea.Tick(33*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg{} })
-}
-
-func (m *Model) Init() tea.Cmd { return tickCmd() }
-
-func (m *Model) theme() Theme { return themes[m.themeIndex%len(themes)] }
-
-func (m *Model) currentID() string {
-	if len(m.history) == 0 {
-		return ""
-	}
-	return m.history[len(m.history)-1].nodeID
-}
-
-func (m *Model) currentNode() *Node {
-	id := m.currentID()
-	if id == "" {
-		return nil
-	}
-	return m.graph.Nodes[id]
-}
-
-// backDirection returns the cardinal that should hold the "back" slot at
-// the current focus, or DirNone if at root / no history.
-func (m *Model) backDirection() Direction {
-	if len(m.history) < 2 {
-		return DirNone
-	}
-	top := m.history[len(m.history)-1]
-	return top.arrivalDir.Opposite()
-}
-
-// previousID returns the node we'd go back to, or "" if we can't go back.
-func (m *Model) previousID() string {
-	if len(m.history) < 2 {
-		return ""
-	}
-	return m.history[len(m.history)-2].nodeID
-}
-
-func (m *Model) computeSlots() SlotMap {
-	return ComputeSlots(m.graph, m.currentID(), m.backDirection(), m.previousID())
-}
-
-// computeHighlight ranks every node in the graph by visual importance
-// for the current focus. The 4-level hierarchy:
-//
-//   0 (HLFocused)   — current focus
-//   1 (HLNav*)      — top-2 children, back, more (the cross nav targets)
-//   2 (HLOverflow)  — children reachable via the more portal
-//   2 (HLAncestor)  — nodes earlier in the navigation history
-//   3 (HLBackground)— everything else
-//
-// The renderer uses these to dim the background while making the
-// reachable region pop.
-func (m *Model) computeHighlight(slots SlotMap) map[string]HighlightLevel {
-	out := make(map[string]HighlightLevel, len(m.graph.Nodes))
-
-	// Default everyone to background.
-	for id := range m.graph.Nodes {
-		out[id] = HLBackground
-	}
-
-	// Ancestors (history minus current).
-	for i := 0; i < len(m.history)-1; i++ {
-		out[m.history[i].nodeID] = HLAncestor
-	}
-
-	// Slot-based highlights override ancestor.
-	for _, d := range []Direction{DirNorth, DirEast, DirSouth, DirWest} {
-		s := slots[d]
-		switch s.Kind {
-		case SlotChild:
-			out[s.NodeID] = HLNavTop
-		case SlotBack:
-			out[s.NodeID] = HLNavBack
-		case SlotMore:
-			out[s.NodeID] = HLNavMore
-			// Highlight overflow children at level 2 so the user can
-			// see what's "behind" the more portal even before entering.
-			for _, oid := range s.Children {
-				if cur, ok := out[oid]; ok && cur > HLOverflow {
-					out[oid] = HLOverflow
-				}
-			}
-		}
-	}
-
-	// Focused last so it always wins.
-	out[m.currentID()] = HLFocused
-	return out
-}
+func (m *Model) Init() tea.Cmd { return nil }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -151,198 +67,352 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tickMsg:
-		m.pulseFrame++
-		if m.animating {
-			m.animStep++
-			if m.animStep >= m.animSteps {
-				m.animating = false
-			}
-		}
-		return m, tickCmd()
-
 	case tea.KeyMsg:
-		key := msg.String()
-
-		// Action-mode keymap.
-		if m.mode == ModeAction {
-			switch key {
-			case "esc", " ", "space":
-				m.mode = ModeNormal
-				return m, nil
-			case "h", "left":
-				return m, m.fireAction(DirWest)
-			case "j", "down":
-				return m, m.fireAction(DirSouth)
-			case "k", "up":
-				return m, m.fireAction(DirNorth)
-			case "l", "right":
-				return m, m.fireAction(DirEast)
-			case "q", "ctrl+c":
-				return m, tea.Quit
-			}
-			return m, nil
+		if m.mode == viewPopup {
+			return m.updatePopup(msg)
 		}
-
-		// Normal-mode keymap.
-		switch key {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "esc":
-			// Esc at root quits; otherwise it's a back step.
-			if len(m.history) <= 1 {
-				return m, tea.Quit
-			}
-			m.goBack()
-		case "h", "left":
-			m.moveDir(DirWest)
-		case "j", "down":
-			m.moveDir(DirSouth)
-		case "k", "up":
-			m.moveDir(DirNorth)
-		case "l", "right":
-			m.moveDir(DirEast)
-		case " ", "space":
-			if HasActions(m.currentNode()) {
-				m.mode = ModeAction
-			}
-		case "t", "T":
-			m.themeIndex = (m.themeIndex + 1) % len(themes)
-			m.status = fmt.Sprintf("theme: %s", m.theme().Name)
-			rebuildStyles(m.theme())
-		}
+		return m.updateList(msg)
 	}
 	return m, nil
 }
 
-// moveDir resolves the slot in direction d and acts on it. With the
-// cross-aware layout, more portals are real graph nodes — entering one
-// is identical to entering any other child.
-func (m *Model) moveDir(d Direction) {
-	slots := m.computeSlots()
-	slot, ok := slots[d]
-	if !ok || slot.Kind == SlotEmpty {
-		return
+func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.cursor < len(m.items)-1 {
+			m.cursor++
+			m.ensureVisible()
+		}
+	case "k", "up":
+		if m.cursor > 0 {
+			m.cursor--
+			m.ensureVisible()
+		}
+	case "enter", "l", "right":
+		if m.cursor < len(m.items) {
+			item := m.items[m.cursor]
+			switch item.kind {
+			case KindGroup:
+				m.expanded[item.group] = !m.expanded[item.group]
+				m.rebuildItems()
+				m.ensureVisible()
+			case KindProject:
+				m.openPopup(item.project)
+			}
+		}
+	case "h", "left":
+		if m.cursor < len(m.items) {
+			item := m.items[m.cursor]
+			if item.kind == KindProject && item.project.Group != "" {
+				m.expanded[item.project.Group] = false
+				m.rebuildItems()
+				for i, it := range m.items {
+					if it.kind == KindGroup && it.group == item.project.Group {
+						m.cursor = i
+						break
+					}
+				}
+				m.ensureVisible()
+			} else if item.kind == KindGroup && m.expanded[item.group] {
+				m.expanded[item.group] = false
+				m.rebuildItems()
+				m.ensureVisible()
+			}
+		}
+	case "G":
+		m.cursor = len(m.items) - 1
+		m.ensureVisible()
+	case "g":
+		m.cursor = 0
+		m.scroll = 0
 	}
-	switch slot.Kind {
-	case SlotChild, SlotMore:
-		m.enterChild(slot.NodeID, d)
-	case SlotBack:
-		m.goBack()
+	return m, nil
+}
+
+func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "esc", "h", "left":
+		m.mode = viewList
+	case "j", "down":
+		if m.popupCursor < len(m.popupItems)-1 {
+			m.popupCursor++
+		}
+	case "k", "up":
+		if m.popupCursor > 0 {
+			m.popupCursor--
+		}
+	case "enter", "l", "right":
+		// TODO: execute action (Layer 7 launcher)
+	}
+	return m, nil
+}
+
+func (m *Model) openPopup(p *Project) {
+	m.mode = viewPopup
+	m.popupProj = p
+	m.popupCursor = 0
+	m.popupItems = []string{
+		"  New claude session",
+		"  New worktree + session",
+	}
+	// TODO: add worktrees and sessions when Layer 5/6 land.
+}
+
+func (m *Model) ensureVisible() {
+	// Keep cursor pinned to the vertical center of the viewport.
+	// The list scrolls so the selected item is always at screen middle.
+	maxVisible := m.listHeight()
+	m.scroll = m.cursor - maxVisible/2
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > len(m.items)-maxVisible {
+		m.scroll = len(m.items) - maxVisible
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
 	}
 }
 
-// enterChild pushes a new history entry for the given child node.
-// arrivalDir is the direction we moved to get there.
-func (m *Model) enterChild(id string, arrivalDir Direction) {
-	n, ok := m.graph.Nodes[id]
-	if !ok {
-		return
+func (m *Model) listHeight() int {
+	h := m.height - 4 // header + footer + borders
+	if h < 3 {
+		h = 3
 	}
-	// Start camera pan animation from current focused pos to new.
-	cur := m.currentNode()
-	if cur != nil {
-		m.animFrom = cur.Pos
-		m.animTo = n.Pos
-		m.animStep = 0
-		m.animSteps = 5 // ~165ms at 30fps
-		m.animating = true
-	}
-	m.history = append(m.history, historyEntry{nodeID: id, arrivalDir: arrivalDir})
+	return h
 }
 
-// goBack pops the history stack one step.
-func (m *Model) goBack() {
-	if len(m.history) <= 1 {
-		return
+// rebuildItems flattens the workspace tree into a visible list,
+// respecting group expansion state.
+func (m *Model) rebuildItems() {
+	m.items = nil
+	for _, ws := range m.workspaces {
+		// Ungrouped projects first.
+		for i := range ws.Projects {
+			p := &ws.Projects[i]
+			if p.Group == "" {
+				m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 0})
+			}
+		}
+		// Then groups.
+		for _, g := range ws.Groups {
+			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0})
+			if m.expanded[g] {
+				for i := range ws.Projects {
+					p := &ws.Projects[i]
+					if p.Group == g {
+						m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 1})
+					}
+				}
+			}
+		}
 	}
-	m.history = m.history[:len(m.history)-1]
-}
-
-// (enterMore removed: more portals are now baked into the global layout
-// as real KindPortal nodes; entering one is just enterChild.)
-
-func (m *Model) fireAction(d Direction) tea.Cmd {
-	cur := m.currentNode()
-	if cur == nil {
-		m.mode = ModeNormal
-		return nil
+	if m.cursor >= len(m.items) {
+		m.cursor = len(m.items) - 1
 	}
-	actions := ActionsFor(cur)
-	a, ok := actions[d]
-	if !ok || a.Exec == nil {
-		m.mode = ModeNormal
-		m.status = fmt.Sprintf("no action bound to %s yet", d)
-		return nil
+	if m.cursor < 0 {
+		m.cursor = 0
 	}
-	m.mode = ModeNormal
-	if err := a.Exec(); err != nil {
-		m.status = fmt.Sprintf("action error: %v", err)
-	}
-	return nil
 }
 
 func (m *Model) View() string {
 	if m.width == 0 {
-		return "initializing…"
+		return "loading…"
 	}
-	cur := m.currentNode()
-	label := "(none)"
-	if cur != nil {
-		label = cur.Label
+	if m.mode == viewPopup {
+		return m.overlayPopup()
 	}
-	modeTag := "normal"
-	if m.mode == ModeAction {
-		modeTag = "action"
-	}
-	header := m.headerStyle().Render(fmt.Sprintf(" ws agent · %s · %s ", label, modeTag))
+	return m.viewList()
+}
 
-	slots := m.computeSlots()
-	highlight := m.computeHighlight(slots)
-	camera := Grid{}
-	if cur != nil {
-		camera = cur.Pos
+func (m *Model) viewList() string {
+	listW := 60
+	if m.width < 66 {
+		listW = m.width - 6
 	}
-	// Smooth camera pan: interpolate between animFrom and animTo.
-	if m.animating && m.animSteps > 0 {
-		t := float64(m.animStep) / float64(m.animSteps)
-		if t > 1 {
-			t = 1
+
+	var rows []string
+
+	// Header inside the centered panel.
+	rows = append(rows, headerStyle.Width(listW).Render(" ws agent "))
+
+	maxH := m.listHeight()
+	end := m.scroll + maxH
+	if end > len(m.items) {
+		end = len(m.items)
+	}
+
+	for i := m.scroll; i < end; i++ {
+		item := m.items[i]
+		selected := i == m.cursor
+
+		var line string
+		switch item.kind {
+		case KindGroup:
+			arrow := "▶"
+			if m.expanded[item.group] {
+				arrow = "▼"
+			}
+			label := fmt.Sprintf(" %s %s", arrow, item.group)
+			if selected {
+				line = selectedGroupStyle.Width(listW).Render(label)
+			} else {
+				line = groupStyle.Width(listW).Render(label)
+			}
+		case KindProject:
+			p := item.project
+			indent := strings.Repeat("  ", item.indent)
+			icon := "📦"
+			badges := ""
+			if p.WorktreeCount > 1 {
+				badges += fmt.Sprintf(" %dwt", p.WorktreeCount)
+			}
+			label := fmt.Sprintf(" %s%s %s%s", indent, icon, p.Name, dimStyle.Render(badges))
+			if selected {
+				line = selectedStyle.Width(listW).Render(label)
+			} else {
+				line = itemStyle.Width(listW).Render(label)
+			}
 		}
-		camera = Grid{
-			X: m.animFrom.X + int(float64(m.animTo.X-m.animFrom.X)*t),
-			Y: m.animFrom.Y + int(float64(m.animTo.Y-m.animFrom.Y)*t),
+		rows = append(rows, line)
+	}
+
+	// Footer.
+	pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
+	hint := "j/k enter h q"
+	footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
+	rows = append(rows, footer)
+
+	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		panel,
+	)
+}
+
+// overlayPopup renders a floating bordered panel centered on screen.
+// The background is a solid dim fill — no ANSI-over-ANSI issues.
+func (m *Model) overlayPopup() string {
+	p := m.popupProj
+	if p == nil {
+		return m.viewList()
+	}
+
+	popupW := 46
+	if m.width < 54 {
+		popupW = m.width - 8
+	}
+	innerW := popupW - 6 // border + padding
+
+	var lines []string
+
+	// Title.
+	title := fmt.Sprintf("📦 %s", p.Name)
+	lines = append(lines, popupTitleStyle.Width(innerW).Render(title))
+
+	// Info.
+	info := fmt.Sprintf("branch: %s · wt: %d", p.DefaultBranch, p.WorktreeCount)
+	lines = append(lines, popupDimStyle.Width(innerW).Render(info))
+	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
+
+	// Action items.
+	for i, item := range m.popupItems {
+		cursor := "  "
+		if i == m.popupCursor {
+			cursor = "▶ "
+		}
+		label := cursor + strings.TrimSpace(item)
+		if i == m.popupCursor {
+			lines = append(lines, popupSelectedStyle.Width(innerW).Render(label))
+		} else {
+			lines = append(lines, popupItemStyle.Width(innerW).Render(label))
 		}
 	}
-	st := RenderState{
-		Width:      m.width,
-		Height:     m.height - 2,
-		FocusedID:  m.currentID(),
-		Slots:      slots,
-		Mode:       m.mode,
-		Highlight:  highlight,
-		Camera:     camera,
-		PulseFrame: m.pulseFrame,
-		Theme:      m.theme(),
-	}
-	if m.mode == ModeAction && cur != nil {
-		st.Actions = ActionsFor(cur)
-	}
-	canvas := Render(m.graph, st)
 
-	footerText := m.status
-	if m.mode == ModeAction {
-		footerText = "ACTION · h/j/k/l fire · esc/space exit"
-	}
-	footer := m.statusStyle().Render(" " + footerText + " ")
-	return header + "\n" + canvas + "\n" + footer
+	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k  enter  esc"))
+
+	content := strings.Join(lines, "\n")
+	popup := popupBorderStyle.Render(content)
+
+	// Place popup centered on a dim background that fills the viewport.
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")),
+	)
 }
 
-func (m *Model) headerStyle() lipgloss.Style {
-	t := m.theme()
-	return lipgloss.NewStyle().Bold(true).Foreground(t.HeaderFg).Background(t.HeaderBg)
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
-func (m *Model) statusStyle() lipgloss.Style {
-	return lipgloss.NewStyle().Foreground(m.theme().StatusFg)
-}
+// ---- styles ----
+
+var (
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("219")).
+			Background(lipgloss.Color("235"))
+
+	footerStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Background(lipgloss.Color("235"))
+
+	groupStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("141")).
+			Bold(true)
+
+	selectedGroupStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("219")).
+				Background(lipgloss.Color("237")).
+				Bold(true)
+
+	itemStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250"))
+
+	selectedStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("87")).
+			Background(lipgloss.Color("237")).
+			Bold(true)
+
+	dimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("242"))
+
+	separatorStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("237")).
+			SetString("──────────────────────────────────────────")
+
+	popupBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("141")).
+				Padding(1, 1)
+
+	popupTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("219"))
+
+	popupSelectedStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("87")).
+				Background(lipgloss.Color("237"))
+
+	popupItemStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("250"))
+
+	popupDimStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("242"))
+
+	dimOverlayStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("240"))
+)
