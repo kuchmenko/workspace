@@ -29,3 +29,19 @@ func LaunchClaude(cwd string, resumeID string) error {
 
 	return syscall.Exec(bin, args, os.Environ())
 }
+
+// LaunchShell replaces the current process with the user's $SHELL in
+// the given working directory. Used when the user just wants to cd
+// into a project/worktree without launching claude.
+func LaunchShell(cwd string) error {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+
+	if err := os.Chdir(cwd); err != nil {
+		return fmt.Errorf("chdir %s: %w", cwd, err)
+	}
+
+	return syscall.Exec(shell, []string{shell}, os.Environ())
+}

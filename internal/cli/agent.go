@@ -43,6 +43,9 @@ func runAgentTUI() error {
 	// If the user selected a launch action, exec into claude now.
 	// bubbletea has already restored the terminal at this point.
 	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
+		if final.Launch.ShellOnly {
+			return agent.LaunchShell(final.Launch.Cwd)
+		}
 		return agent.LaunchClaude(final.Launch.Cwd, final.Launch.ResumeID)
 	}
 	return nil
