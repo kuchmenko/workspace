@@ -17,6 +17,7 @@ const (
 	viewPopup                       // floating action popup over dimmed list
 	viewNewWorktree                 // worktree creation form
 	viewPromote                     // branch promote form
+	viewFlash                       // flash search with jump labels
 )
 
 // popupItem is one selectable row in the project action popup.
@@ -73,6 +74,11 @@ type Model struct {
 	promoteNewName  string
 	promoteField    int // 0=name, 1=confirm
 
+	// Flash search state.
+	flashQuery   string
+	flashMatches []int    // indices into m.items that match
+	flashLabels  []rune   // one label per match (a, b, c, ...)
+
 	// Set when the user picks a launch action.
 	Launch *LaunchRequest
 
@@ -106,6 +112,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.mode == viewFlash {
+			return m.updateFlash(msg)
+		}
 		if m.mode == viewPromote {
 			return m.updatePromote(msg)
 		}
@@ -174,6 +183,10 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.ensureVisible()
 			}
 		}
+	case "s", "/":
+		m.mode = viewFlash
+		m.flashQuery = ""
+		m.recomputeFlash()
 	case "G":
 		m.cursor = len(m.items) - 1
 		m.ensureVisible()
@@ -526,6 +539,87 @@ func suggestPromoteName(wt Worktree) string {
 	return wt.Branch
 }
 
+// jumpLabels is the alphabet used for flash jump labels.
+const jumpLabels = "asdfghjklqwertyuiopzxcvbnm"
+
+func (m *Model) updateFlash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = viewList
+	case "backspace":
+		if len(m.flashQuery) > 0 {
+			m.flashQuery = m.flashQuery[:len(m.flashQuery)-1]
+			m.recomputeFlash()
+		} else {
+			m.mode = viewList
+		}
+	case "enter":
+		// Jump to first match.
+		if len(m.flashMatches) > 0 {
+			m.cursor = m.flashMatches[0]
+			m.ensureVisible()
+		}
+		m.mode = viewList
+	default:
+		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+			ch := rune(key[0])
+			// Check if this character is a jump label.
+			if m.flashQuery != "" {
+				for i, label := range m.flashLabels {
+					if ch == label && i < len(m.flashMatches) {
+						m.cursor = m.flashMatches[i]
+						m.ensureVisible()
+						m.mode = viewList
+						return m, nil
+					}
+				}
+			}
+			// Otherwise, append to query.
+			m.flashQuery += key
+			m.recomputeFlash()
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) recomputeFlash() {
+	query := strings.ToLower(m.flashQuery)
+	m.flashMatches = nil
+	m.flashLabels = nil
+	for i, item := range m.items {
+		name := ""
+		switch item.kind {
+		case KindGroup:
+			name = item.group
+		case KindProject:
+			name = item.project.Name
+		}
+		if query == "" || strings.Contains(strings.ToLower(name), query) {
+			labelIdx := len(m.flashMatches)
+			m.flashMatches = append(m.flashMatches, i)
+			if labelIdx < len(jumpLabels) {
+				m.flashLabels = append(m.flashLabels, rune(jumpLabels[labelIdx]))
+			} else {
+				m.flashLabels = append(m.flashLabels, ' ')
+			}
+		}
+	}
+}
+
+// flashLabelFor returns the jump label for a list item index, or 0 if
+// the item is not in the current flash match set.
+func (m *Model) flashLabelFor(itemIdx int) rune {
+	for i, idx := range m.flashMatches {
+		if idx == itemIdx {
+			return m.flashLabels[i]
+		}
+	}
+	return 0
+}
+
 func (m *Model) ensureVisible() {
 	// Keep cursor pinned to the vertical center of the viewport.
 	// The list scrolls so the selected item is always at screen middle.
@@ -607,8 +701,14 @@ func (m *Model) viewList() string {
 
 	var rows []string
 
-	// Header inside the centered panel.
-	rows = append(rows, headerStyle.Width(listW).Render(" ws agent "))
+	// Header — show search query in flash mode.
+	inFlash := m.mode == viewFlash
+	if inFlash {
+		searchLine := fmt.Sprintf(" 🔍 %s█", m.flashQuery)
+		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
+	} else {
+		rows = append(rows, headerStyle.Width(listW).Render(" ws agent "))
+	}
 
 	maxH := m.listHeight()
 	end := m.scroll + maxH
@@ -620,6 +720,14 @@ func (m *Model) viewList() string {
 		item := m.items[i]
 		selected := i == m.cursor
 
+		// In flash mode: check if this item matches.
+		flashLabel := rune(0)
+		isMatch := true
+		if inFlash {
+			flashLabel = m.flashLabelFor(i)
+			isMatch = flashLabel != 0
+		}
+
 		var line string
 		switch item.kind {
 		case KindGroup:
@@ -627,8 +735,16 @@ func (m *Model) viewList() string {
 			if m.expanded[item.group] {
 				arrow = "▼"
 			}
-			label := fmt.Sprintf(" %s %s", arrow, item.group)
-			if selected {
+			prefix := " "
+			if inFlash && isMatch {
+				prefix = flashLabelStyle.Render(string(flashLabel)) + " "
+			} else if inFlash {
+				prefix = "  "
+			}
+			label := fmt.Sprintf("%s%s %s", prefix, arrow, item.group)
+			if inFlash && !isMatch {
+				line = dimStyle.Width(listW).Render(label)
+			} else if selected && !inFlash {
 				line = selectedGroupStyle.Width(listW).Render(label)
 			} else {
 				line = groupStyle.Width(listW).Render(label)
@@ -644,8 +760,16 @@ func (m *Model) viewList() string {
 			if p.SessionCount > 0 {
 				badges += fmt.Sprintf(" %ds", p.SessionCount)
 			}
-			label := fmt.Sprintf(" %s%s %s%s", indent, icon, p.Name, dimStyle.Render(badges))
-			if selected {
+			prefix := " "
+			if inFlash && isMatch {
+				prefix = flashLabelStyle.Render(string(flashLabel)) + " "
+			} else if inFlash {
+				prefix = "  "
+			}
+			label := fmt.Sprintf("%s%s%s %s%s", prefix, indent, icon, p.Name, dimStyle.Render(badges))
+			if inFlash && !isMatch {
+				line = dimStyle.Width(listW).Render(label)
+			} else if selected && !inFlash {
 				line = selectedStyle.Width(listW).Render(label)
 			} else {
 				line = itemStyle.Width(listW).Render(label)
@@ -655,10 +779,17 @@ func (m *Model) viewList() string {
 	}
 
 	// Footer.
-	pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
-	hint := "j/k  enter:open  l/→:shell  h:collapse  q:quit"
-	footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
-	rows = append(rows, footer)
+	if inFlash {
+		matchInfo := fmt.Sprintf(" %d matches ", len(m.flashMatches))
+		hint := "type to filter · letter to jump · esc cancel"
+		footer := footerStyle.Width(listW).Render(matchInfo + strings.Repeat(" ", max(0, listW-len(matchInfo)-len(hint)-1)) + hint)
+		rows = append(rows, footer)
+	} else {
+		pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
+		hint := "j/k  enter:open  l/→:shell  s:search  q:quit"
+		footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
+		rows = append(rows, footer)
+	}
 
 	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
 
@@ -876,6 +1007,16 @@ var (
 	separatorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("237")).
 			SetString("──────────────────────────────────────────")
+
+	flashSearchStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("220")).
+				Background(lipgloss.Color("235"))
+
+	flashLabelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("16")).
+			Background(lipgloss.Color("220"))
 
 	popupBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
