@@ -620,6 +620,39 @@ func (m *Model) flashLabelFor(itemIdx int) rune {
 	return 0
 }
 
+// flashInlineLabel renders a name with the match highlighted and the
+// jump label overlaying the character immediately after the match end,
+// matching flash.nvim's visual style.
+//
+// Example: name="limitless", query="lim", label='a'
+// → "[lim]a tless"  where [lim] is highlighted, a overlays 'i'
+func flashInlineLabel(name, query string, label rune) string {
+	lower := strings.ToLower(name)
+	q := strings.ToLower(query)
+	idx := strings.Index(lower, q)
+	if idx < 0 || q == "" {
+		return name
+	}
+
+	matchEnd := idx + len(q)
+	runes := []rune(name)
+
+	var b strings.Builder
+	// Before match.
+	if idx > 0 {
+		b.WriteString(string(runes[:idx]))
+	}
+	// Match portion — highlighted.
+	b.WriteString(flashMatchStyle.Render(string(runes[idx:matchEnd])))
+	// Label overlays the next character.
+	b.WriteString(flashLabelStyle.Render(string(label)))
+	// Rest of name (skip the overlaid character).
+	if matchEnd+1 < len(runes) {
+		b.WriteString(string(runes[matchEnd+1:]))
+	}
+	return b.String()
+}
+
 func (m *Model) ensureVisible() {
 	// Keep cursor pinned to the vertical center of the viewport.
 	// The list scrolls so the selected item is always at screen middle.
@@ -735,13 +768,11 @@ func (m *Model) viewList() string {
 			if m.expanded[item.group] {
 				arrow = "▼"
 			}
-			prefix := " "
+			name := item.group
 			if inFlash && isMatch {
-				prefix = flashLabelStyle.Render(string(flashLabel)) + " "
-			} else if inFlash {
-				prefix = "  "
+				name = flashInlineLabel(name, m.flashQuery, flashLabel)
 			}
-			label := fmt.Sprintf("%s%s %s", prefix, arrow, item.group)
+			label := fmt.Sprintf(" %s %s", arrow, name)
 			if inFlash && !isMatch {
 				line = dimStyle.Width(listW).Render(label)
 			} else if selected && !inFlash {
@@ -760,13 +791,11 @@ func (m *Model) viewList() string {
 			if p.SessionCount > 0 {
 				badges += fmt.Sprintf(" %ds", p.SessionCount)
 			}
-			prefix := " "
+			name := p.Name
 			if inFlash && isMatch {
-				prefix = flashLabelStyle.Render(string(flashLabel)) + " "
-			} else if inFlash {
-				prefix = "  "
+				name = flashInlineLabel(name, m.flashQuery, flashLabel)
 			}
-			label := fmt.Sprintf("%s%s%s %s%s", prefix, indent, icon, p.Name, dimStyle.Render(badges))
+			label := fmt.Sprintf(" %s%s %s%s", indent, icon, name, dimStyle.Render(badges))
 			if inFlash && !isMatch {
 				line = dimStyle.Width(listW).Render(label)
 			} else if selected && !inFlash {
@@ -1015,8 +1044,12 @@ var (
 
 	flashLabelStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("16")).
-			Background(lipgloss.Color("220"))
+			Foreground(lipgloss.Color("231")).
+			Background(lipgloss.Color("197")) // pink/red — high contrast like flash.nvim
+
+	flashMatchStyle = lipgloss.NewStyle().
+			Underline(true).
+			Foreground(lipgloss.Color("220")) // yellow underlined match
 
 	popupBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
