@@ -30,9 +30,10 @@ type popupItem struct {
 // listItem is one row in the nested list — either a group header or a project.
 type listItem struct {
 	kind    NodeKind
-	group   string  // group name (for KindGroup rows)
+	group   string   // group name (for KindGroup rows)
 	project *Project
 	indent  int
+	path    string   // filesystem path for shell navigation
 }
 
 // LaunchRequest is set when the user selects an action that should
@@ -133,7 +134,16 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 			m.ensureVisible()
 		}
-	case "enter", "l", "right":
+	case "l", "right":
+		// Open shell in the selected item's directory.
+		if m.cursor < len(m.items) {
+			item := m.items[m.cursor]
+			if item.path != "" {
+				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+				return m, tea.Quit
+			}
+		}
+	case "enter":
 		if m.cursor < len(m.items) {
 			item := m.items[m.cursor]
 			switch item.kind {
@@ -549,17 +559,17 @@ func (m *Model) rebuildItems() {
 		for i := range ws.Projects {
 			p := &ws.Projects[i]
 			if p.Group == "" {
-				m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 0})
+				m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 0, path: p.Path})
 			}
 		}
 		// Then groups.
 		for _, g := range ws.Groups {
-			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0})
+			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
 			if m.expanded[g] {
 				for i := range ws.Projects {
 					p := &ws.Projects[i]
 					if p.Group == g {
-						m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 1})
+						m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 1, path: p.Path})
 					}
 				}
 			}
@@ -646,7 +656,7 @@ func (m *Model) viewList() string {
 
 	// Footer.
 	pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
-	hint := "j/k enter h q"
+	hint := "j/k  enter:open  l/→:shell  h:collapse  q:quit"
 	footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
 	rows = append(rows, footer)
 

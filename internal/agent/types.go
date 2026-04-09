@@ -4,6 +4,8 @@
 // launching.
 package agent
 
+import "path/filepath"
+
 // NodeKind classifies an item in the workspace tree.
 type NodeKind int
 
@@ -25,6 +27,13 @@ type Project struct {
 	DefaultBranch string
 	WorktreeCount int
 	SessionCount  int
+}
+
+// GroupPath returns the filesystem directory for a group under a
+// workspace root. E.g. root="/home/user/development", group="work"
+// → "/home/user/development/work".
+func GroupPath(wsRoot, group string) string {
+	return filepath.Join(wsRoot, group)
 }
 
 // Workspace is the top-level data structure loaded from workspace.toml
