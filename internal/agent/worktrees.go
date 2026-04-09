@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -70,6 +72,54 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 	_ = autoPush
 
 	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
+}
+
+// DeleteWorktree removes a worktree. Refuses if it's the main worktree.
+func DeleteWorktree(mainPath, wtPath string, force bool) error {
+	if wtPath == mainPath {
+		return fmt.Errorf("cannot delete main worktree")
+	}
+	barePath := layout.BarePath(mainPath)
+	return git.WorktreeRemove(barePath, wtPath, force)
+}
+
+// PromoteWorktree renames a wt/<machine>/<topic> branch to a
+// repository-native branch name (e.g. feat/fix-login). This is a
+// simplified version — the full `ws worktree promote` also handles
+// autopush, remote delete, and directory rename.
+func PromoteWorktree(mainPath string, wt Worktree, newBranch string) error {
+	if wt.IsMain {
+		return fmt.Errorf("cannot promote main worktree")
+	}
+	if newBranch == "" {
+		return fmt.Errorf("new branch name required")
+	}
+	barePath := layout.BarePath(mainPath)
+	// Rename the branch in the bare repo.
+	return git.RenameBranch(barePath, wt.Branch, newBranch)
+}
+
+// worktreeDisplayName returns a human-readable short name for a worktree.
+// For main it's "main". For wt/<machine>/<topic> it extracts the topic.
+// For custom branches it shows the branch. For long directory-derived
+// names it extracts the meaningful suffix.
+func worktreeDisplayName(wt Worktree) string {
+	if wt.IsMain {
+		return "main"
+	}
+	// Try to extract topic from wt/<machine>/<topic> branch name.
+	if strings.HasPrefix(wt.Branch, "wt/") {
+		parts := strings.SplitN(wt.Branch, "/", 3)
+		if len(parts) == 3 {
+			return parts[2] // topic
+		}
+	}
+	// Custom branch — show as-is.
+	if wt.Branch != "" {
+		return wt.Branch
+	}
+	// Fallback to directory base name.
+	return filepath.Base(wt.Path)
 }
 
 // LoadWorktrees returns the worktrees for a project. Requires the

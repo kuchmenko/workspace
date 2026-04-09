@@ -84,3 +84,13 @@ func HasBranch(repoPath, branch string) bool {
 	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	return cmd.Run() == nil
 }
+
+// RenameBranch renames a local branch. Works on both bare and non-bare repos.
+func RenameBranch(repoPath, oldName, newName string) error {
+	cmd := exec.Command("git", "-C", repoPath, "branch", "-m", oldName, newName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git branch -m %s %s: %s", oldName, newName, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
