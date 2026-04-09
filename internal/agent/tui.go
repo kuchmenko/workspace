@@ -12,9 +12,10 @@ import (
 type viewMode int
 
 const (
-	viewList       viewMode = iota // nested list of groups + projects
-	viewPopup                      // floating action popup over dimmed list
-	viewNewWorktree                // worktree creation form
+	viewList        viewMode = iota // nested list of groups + projects
+	viewPopup                       // floating action popup over dimmed list
+	viewNewWorktree                 // worktree creation form
+	viewPromote                     // branch promote form
 )
 
 // popupItem is one selectable row in the project action popup.
@@ -64,6 +65,11 @@ type Model struct {
 	wtNoLaunch   bool   // true when "create only", false when "create + launch"
 	wtField      int    // 0=topic, 1=branch, 2=auto-push, 3=confirm
 
+	// Promote form state.
+	promoteWt       Worktree
+	promoteNewName  string
+	promoteField    int // 0=name, 1=confirm
+
 	// Set when the user picks a launch action.
 	Launch *LaunchRequest
 
@@ -97,6 +103,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.mode == viewPromote {
+			return m.updatePromote(msg)
+		}
 		if m.mode == viewNewWorktree {
 			return m.updateNewWorktree(msg)
 		}
@@ -226,10 +235,22 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "p", "P":
-		// Promote branch — for wt/* worktrees, rename branch.
-		// TODO: add a text input for new branch name. For now, this
-		// is a stub that needs the full promote flow.
-		_ = m // placeholder
+		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
+			item := m.popupItems[m.popupCursor]
+			if item.kind == "worktree" && item.cwd != m.popupProj.Path {
+				// Find the Worktree struct for this item.
+				for _, wt := range m.popupWorktrees {
+					if wt.Path == item.cwd {
+						m.promoteWt = wt
+						// Pre-fill: if wt/machine/topic, suggest feat/<topic>.
+						m.promoteNewName = suggestPromoteName(wt)
+						m.promoteField = 0
+						m.mode = viewPromote
+						break
+					}
+				}
+			}
+		}
 	}
 	return m, nil
 }
@@ -369,6 +390,109 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+func (m *Model) updatePromote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = viewPopup
+		return m, nil
+	case "tab", "down":
+		m.promoteField = (m.promoteField + 1) % 2
+	case "shift+tab", "up":
+		m.promoteField = (m.promoteField + 1) % 2
+	case "enter":
+		if m.promoteField == 1 {
+			return m.executePromote()
+		}
+		m.promoteField = 1
+	case "backspace":
+		if m.promoteField == 0 && len(m.promoteNewName) > 0 {
+			m.promoteNewName = m.promoteNewName[:len(m.promoteNewName)-1]
+		}
+	default:
+		if m.promoteField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+			m.promoteNewName += key
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) executePromote() (tea.Model, tea.Cmd) {
+	newName := strings.TrimSpace(m.promoteNewName)
+	if newName == "" {
+		return m, nil
+	}
+	err := PromoteWorktree(m.popupProj.Path, m.promoteWt, newName)
+	if err != nil {
+		// TODO: show error. For now just go back.
+		m.mode = viewPopup
+		return m, nil
+	}
+	m.openPopup(m.popupProj) // refresh
+	return m, nil
+}
+
+func (m *Model) viewPromote() string {
+	popupW := 50
+	if m.width < 56 {
+		popupW = m.width - 6
+	}
+	innerW := popupW - 6
+
+	oldName := m.promoteWt.Branch
+	displayOld := worktreeDisplayName(m.promoteWt)
+
+	var lines []string
+	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("🔄 Promote %s", displayOld)))
+	lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("current: %s", oldName)))
+	lines = append(lines, "")
+
+	// Field 0: new branch name.
+	nameLabel := "  New branch name:"
+	nameVal := m.promoteNewName + "█"
+	if m.promoteField != 0 {
+		nameVal = m.promoteNewName
+		if nameVal == "" {
+			nameVal = "(required)"
+		}
+	}
+	if m.promoteField == 0 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(nameLabel))
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+nameVal))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(nameLabel))
+		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+nameVal))
+	}
+	lines = append(lines, "")
+
+	// Field 1: confirm.
+	confirmLabel := "  → Rename branch"
+	if m.promoteField == 1 {
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
+	} else {
+		lines = append(lines, popupItemStyle.Width(innerW).Render(confirmLabel))
+	}
+	lines = append(lines, "")
+	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  esc:back"))
+
+	content := strings.Join(lines, "\n")
+	popup := popupBorderStyle.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+}
+
+func suggestPromoteName(wt Worktree) string {
+	if strings.HasPrefix(wt.Branch, "wt/") {
+		parts := strings.SplitN(wt.Branch, "/", 3)
+		if len(parts) == 3 {
+			return "feat/" + parts[2]
+		}
+	}
+	return wt.Branch
+}
+
 func (m *Model) ensureVisible() {
 	// Keep cursor pinned to the vertical center of the viewport.
 	// The list scrolls so the selected item is always at screen middle.
@@ -429,6 +553,9 @@ func (m *Model) rebuildItems() {
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "loading…"
+	}
+	if m.mode == viewPromote {
+		return m.viewPromote()
 	}
 	if m.mode == viewNewWorktree {
 		return m.viewNewWorktree()
@@ -553,7 +680,7 @@ func (m *Model) overlayPopup() string {
 	}
 
 	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k enter  d:delete wt  esc:back"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k enter  d:delete  p:promote  esc:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
