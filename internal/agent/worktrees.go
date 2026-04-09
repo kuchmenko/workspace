@@ -96,9 +96,17 @@ func DeleteWorktree(mainPath, wtPath string, force bool) error {
 }
 
 // PromoteWorktree renames a wt/<machine>/<topic> branch to a
-// repository-native branch name (e.g. feat/fix-login). This is a
-// simplified version — the full `ws worktree promote` also handles
-// autopush, remote delete, and directory rename.
+// repository-native branch name (e.g. feat/fix-login) AND moves the
+// worktree directory to match, so the on-disk name reflects the new
+// branch.
+//
+// Steps (matching the CLI `ws worktree promote` flow):
+//  1. Move worktree directory: old-path → new-path (git worktree move)
+//  2. Rename branch: old-branch → new-branch (git branch -m)
+//  3. If branch rename fails, roll back the directory move.
+//
+// Does NOT handle: autopush, remote ref delete, push. The daemon
+// picks these up on the next tick via workspace.toml.
 func PromoteWorktree(mainPath string, wt Worktree, newBranch string) error {
 	if wt.IsMain {
 		return fmt.Errorf("cannot promote main worktree")
@@ -106,9 +114,47 @@ func PromoteWorktree(mainPath string, wt Worktree, newBranch string) error {
 	if newBranch == "" {
 		return fmt.Errorf("new branch name required")
 	}
+
 	barePath := layout.BarePath(mainPath)
-	// Rename the branch in the bare repo.
-	return git.RenameBranch(barePath, wt.Branch, newBranch)
+	if !git.HasBranch(barePath, wt.Branch) {
+		return fmt.Errorf("branch %s does not exist", wt.Branch)
+	}
+	if git.HasBranch(barePath, newBranch) {
+		return fmt.Errorf("branch %s already exists", newBranch)
+	}
+
+	mc, _ := config.LoadMachineConfig()
+	machine := "unknown"
+	if mc != nil && mc.MachineName != "" {
+		machine = mc.MachineName
+	}
+
+	// New directory path derived from slugified new branch name.
+	newPath := filepath.Join(
+		filepath.Dir(mainPath),
+		layout.WorktreeDirName(filepath.Base(mainPath), machine, layout.SlugifyBranch(newBranch)),
+	)
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("target path already exists: %s", newPath)
+	}
+
+	// Step 1: move worktree directory.
+	if err := git.WorktreeMove(barePath, wt.Path, newPath); err != nil {
+		return fmt.Errorf("move worktree: %w", err)
+	}
+
+	// Step 2: rename branch inside the new worktree path (same as CLI
+	// promote). On failure, roll back the move.
+	if err := git.BranchRename(newPath, wt.Branch, newBranch); err != nil {
+		// Roll back directory move.
+		_ = git.WorktreeMove(barePath, newPath, wt.Path)
+		return fmt.Errorf("rename branch: %w", err)
+	}
+
+	// Step 3: best-effort delete the old remote ref.
+	_ = git.DeleteRemoteBranch(barePath, wt.Branch)
+
+	return nil
 }
 
 // worktreeDisplayName returns a human-readable short name for a worktree.
