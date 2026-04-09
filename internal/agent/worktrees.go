@@ -58,7 +58,7 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 	if customBranch != "" {
 		branch = customBranch
 		// Derive path topic from branch: feat/buddy → feat-buddy
-		pathTopic = slugifyBranch(customBranch)
+		pathTopic = layout.SlugifyBranch(customBranch)
 	} else {
 		branch = layout.BranchName(machine, topic)
 		pathTopic = topic
@@ -85,13 +85,6 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
 }
 
-// slugifyBranch converts a branch name to a filesystem-safe directory
-// component: slashes → dashes, strip leading/trailing dashes.
-func slugifyBranch(branch string) string {
-	s := strings.ReplaceAll(branch, "/", "-")
-	s = strings.Trim(s, "-")
-	return s
-}
 
 // DeleteWorktree removes a worktree. Refuses if it's the main worktree.
 func DeleteWorktree(mainPath, wtPath string, force bool) error {

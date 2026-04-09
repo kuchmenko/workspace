@@ -80,16 +80,18 @@ into the project's autopush list in workspace.toml.`,
 			}
 
 			var branch string
+			var pathTopic string // what goes into the worktree directory name
 			if customBranch != "" {
 				branch = customBranch
+				// When --branch is explicit, derive the directory name
+				// from the slugified branch (e.g. feat/buddy → feat-buddy)
+				// so the path reflects the actual branch, not the topic arg.
+				pathTopic = layout.SlugifyBranch(customBranch)
 			} else {
 				branch = layout.BranchName(machine, topic)
+				pathTopic = topic
 			}
-			// Worktree directory is always derived from <machine>+<topic>
-			// so extra worktrees for one project never collide on disk,
-			// even if another machine used the same topic name. The
-			// directory layout is independent of the branch name.
-			wtPath := layout.WorktreePath(mainPath, machine, topic)
+			wtPath := layout.WorktreePath(mainPath, machine, pathTopic)
 
 			if _, err := os.Stat(wtPath); err == nil {
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
