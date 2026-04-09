@@ -15,6 +15,7 @@ func newAgentCmd() *cobra.Command {
 	var graphics bool
 	var gpScale float64
 	var gpZoom float64
+	var bench int
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "Canvas TUI launcher for Claude Code sessions across workspaces",
@@ -29,7 +30,7 @@ useful for visually validating layout and rendering. Available templates:
 Pass --json to dump the laid-out graph + slot/highlight state as JSON
 and exit. Useful for debugging layout issues without a TTY.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentTUI(template, dumpJSON, graphics, gpScale, gpZoom)
+			return runAgentTUI(template, dumpJSON, graphics, gpScale, gpZoom, bench)
 		},
 	}
 	cmd.Flags().StringVar(&template, "template", "", "load synthetic graph fixture by name (see --help)")
@@ -37,6 +38,7 @@ and exit. Useful for debugging layout issues without a TTY.`,
 	cmd.Flags().BoolVar(&graphics, "graphics", false, "interactive graphics mode via Kitty graphics protocol")
 	cmd.Flags().Float64Var(&gpScale, "scale", 0.5, "render resolution scale for --graphics (0.25=fast, 0.5=balanced, 1.0=native)")
 	cmd.Flags().Float64Var(&gpZoom, "zoom", 1.0, "camera zoom for --graphics (0.3=see whole graph, 1.0=default, 2.0=close-up). Also +/- at runtime")
+	cmd.Flags().IntVar(&bench, "bench", 0, "headless benchmark: render N frames, print per-stage timing, exit")
 	return cmd
 }
 
@@ -59,7 +61,7 @@ func agentTemplateList() string {
 // The cross-renderer model has no global layout — slot positions are
 // computed per focused node at render time, so there is no slot store
 // to persist.
-func runAgentTUI(template string, dumpJSON, graphics bool, gpScale, gpZoom float64) error {
+func runAgentTUI(template string, dumpJSON, graphics bool, gpScale, gpZoom float64, bench int) error {
 	var g *agent.Graph
 
 	if template != "" {
@@ -91,6 +93,10 @@ func runAgentTUI(template string, dumpJSON, graphics bool, gpScale, gpZoom float
 		}
 		fmt.Println(string(data))
 		return nil
+	}
+
+	if bench > 0 {
+		return agent.RunBench(g, gpScale, gpZoom, bench)
 	}
 
 	if graphics {
