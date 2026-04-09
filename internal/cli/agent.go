@@ -35,6 +35,15 @@ func runAgentTUI() error {
 
 	m := agent.NewModel(workspaces)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
+	finalModel, err := p.Run()
+	if err != nil {
+		return err
+	}
+
+	// If the user selected a launch action, exec into claude now.
+	// bubbletea has already restored the terminal at this point.
+	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
+		return agent.LaunchClaude(final.Launch.Cwd, final.Launch.ResumeID)
+	}
+	return nil
 }

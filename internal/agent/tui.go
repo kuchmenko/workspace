@@ -24,6 +24,14 @@ type listItem struct {
 	indent  int
 }
 
+// LaunchRequest is set when the user selects an action that should
+// launch claude after the TUI exits. The CLI layer reads this from
+// the model and calls LaunchClaude.
+type LaunchRequest struct {
+	Cwd      string
+	ResumeID string
+}
+
 // Model is the bubbletea model for the agent TUI wizard.
 type Model struct {
 	workspaces []WorkspaceData
@@ -37,6 +45,9 @@ type Model struct {
 	popupProj   *Project
 	popupCursor int
 	popupItems  []string
+
+	// Set when the user picks a launch action.
+	Launch *LaunchRequest
 
 	width, height int
 }
@@ -146,7 +157,16 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.popupCursor--
 		}
 	case "enter", "l", "right":
-		// TODO: execute action (Layer 7 launcher)
+		if m.popupCursor < len(m.popupItems) {
+			switch m.popupCursor {
+			case 0: // New claude session in main worktree
+				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
+				return m, tea.Quit
+			case 1: // New worktree + session (TODO: prompt for topic name)
+				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
+				return m, tea.Quit
+			}
+		}
 	}
 	return m, nil
 }
@@ -156,10 +176,9 @@ func (m *Model) openPopup(p *Project) {
 	m.popupProj = p
 	m.popupCursor = 0
 	m.popupItems = []string{
-		"  New claude session",
-		"  New worktree + session",
+		"New claude session",
+		"New worktree + session",
 	}
-	// TODO: add worktrees and sessions when Layer 5/6 land.
 }
 
 func (m *Model) ensureVisible() {
