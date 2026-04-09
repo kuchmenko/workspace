@@ -360,11 +360,19 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
-	if strings.TrimSpace(m.wtTopic) == "" {
-		return m, nil // topic required
+	branch := strings.TrimSpace(m.wtBranch)
+	topic := strings.TrimSpace(m.wtTopic)
+
+	// When branch is set, topic is auto-derived from branch.
+	// When neither is set, reject.
+	if branch == "" && topic == "" {
+		return m, nil
+	}
+	if branch != "" && topic == "" {
+		topic = slugifyBranch(branch)
 	}
 
-	result, err := CreateWorktree(m.popupProj, strings.TrimSpace(m.wtTopic), strings.TrimSpace(m.wtBranch), m.wtAutoPush)
+	result, err := CreateWorktree(m.popupProj, topic, branch, m.wtAutoPush)
 	if err != nil {
 		m.mode = viewPopup
 		return m, nil
@@ -706,28 +714,39 @@ func (m *Model) viewNewWorktree() string {
 	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("🌿 New worktree for %s", p.Name)))
 	lines = append(lines, "")
 
-	// Field 0: topic (required)
+	// When branch is provided, topic is auto-derived (slugified branch).
+	// When branch is empty, topic is the primary input.
+	hasBranch := strings.TrimSpace(m.wtBranch) != ""
+
+	// Field 0: topic
 	topicLabel := "  Topic:"
-	topicVal := m.wtTopic + "█"
-	if m.wtField != 0 {
-		topicVal = m.wtTopic
-		if topicVal == "" {
-			topicVal = "(required)"
+	if hasBranch {
+		topicLabel = "  Topic (auto from branch):"
+	}
+	var topicDisplay string
+	if hasBranch {
+		topicDisplay = slugifyBranch(m.wtBranch)
+	} else if m.wtField == 0 {
+		topicDisplay = m.wtTopic + "█"
+	} else {
+		topicDisplay = m.wtTopic
+		if topicDisplay == "" {
+			topicDisplay = "(required if no branch)"
 		}
 	}
-	if m.wtField == 0 {
+	if m.wtField == 0 && !hasBranch {
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(topicLabel))
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+topicVal))
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+topicDisplay))
 	} else {
 		lines = append(lines, popupItemStyle.Width(innerW).Render(topicLabel))
-		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+topicVal))
+		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+topicDisplay))
 	}
 	lines = append(lines, "")
 
-	// Field 1: branch override (optional)
-	branchLabel := "  Branch (optional):"
+	// Field 1: branch override (optional — but if set, overrides topic for path)
+	branchLabel := "  Branch:"
 	branchDefault := fmt.Sprintf("wt/<machine>/%s", m.wtTopic)
-	if m.wtTopic == "" {
+	if m.wtTopic == "" && !hasBranch {
 		branchDefault = "wt/<machine>/<topic>"
 	}
 	branchVal := m.wtBranch + "█"
@@ -743,6 +762,16 @@ func (m *Model) viewNewWorktree() string {
 	} else {
 		lines = append(lines, popupItemStyle.Width(innerW).Render(branchLabel))
 		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+branchVal))
+	}
+	// Show resulting path preview.
+	pathPreview := ""
+	if hasBranch {
+		pathPreview = fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, slugifyBranch(m.wtBranch))
+	} else if m.wtTopic != "" {
+		pathPreview = fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, m.wtTopic)
+	}
+	if pathPreview != "" {
+		lines = append(lines, popupDimStyle.Width(innerW).Render(pathPreview))
 	}
 	lines = append(lines, "")
 

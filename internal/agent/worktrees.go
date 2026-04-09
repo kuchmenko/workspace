@@ -30,6 +30,17 @@ type WorktreeResult struct {
 // topic:        required — the worktree topic name (e.g. "fix-login")
 // customBranch: optional — overrides the default wt/<machine>/<topic>
 // autoPush:     whether to add the branch to daemon auto-push
+// CreateWorktree creates a new worktree for the given project.
+//
+// When customBranch is set, the topic is IGNORED — the worktree directory
+// name is derived from the slugified branch name instead:
+//
+//	branch "feat/buddy" → dir "myapp-wt-linux-feat-buddy"
+//	branch "" + topic "buddy" → dir "myapp-wt-linux-buddy"  (default wt/<machine>/buddy)
+//
+// This matches the convention in CLAUDE.md: worktree dirs flatten
+// slashes to dashes, and the branch name is the source of truth when
+// explicitly provided.
 func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*WorktreeResult, error) {
 	barePath := layout.BarePath(p.Path)
 	if _, err := os.Stat(barePath); err != nil {
@@ -43,13 +54,17 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 	}
 
 	var branch string
+	var pathTopic string // what goes into the worktree directory name
 	if customBranch != "" {
 		branch = customBranch
+		// Derive path topic from branch: feat/buddy → feat-buddy
+		pathTopic = slugifyBranch(customBranch)
 	} else {
 		branch = layout.BranchName(machine, topic)
+		pathTopic = topic
 	}
 
-	wtPath := layout.WorktreePath(p.Path, machine, topic)
+	wtPath := layout.WorktreePath(p.Path, machine, pathTopic)
 	if _, err := os.Stat(wtPath); err == nil {
 		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
 	}
@@ -66,12 +81,16 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 		return nil, fmt.Errorf("git worktree add: %w", err)
 	}
 
-	// Auto-push handling would require loading workspace.toml and saving
-	// back — skipped for now, the daemon auto-pushes wt/<machine>/* by
-	// default. Custom branches need explicit ws worktree promote.
 	_ = autoPush
-
 	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
+}
+
+// slugifyBranch converts a branch name to a filesystem-safe directory
+// component: slashes → dashes, strip leading/trailing dashes.
+func slugifyBranch(branch string) string {
+	s := strings.ReplaceAll(branch, "/", "-")
+	s = strings.Trim(s, "-")
+	return s
 }
 
 // DeleteWorktree removes a worktree. Refuses if it's the main worktree.
