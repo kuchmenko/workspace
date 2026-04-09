@@ -39,8 +39,9 @@ type listItem struct {
 // launch claude after the TUI exits. The CLI layer reads this from
 // the model and calls LaunchClaude.
 type LaunchRequest struct {
-	Cwd      string
-	ResumeID string
+	Cwd       string
+	ResumeID  string
+	ShellOnly bool // true = exec $SHELL instead of claude
 }
 
 // Model is the bubbletea model for the agent TUI wizard.
@@ -197,6 +198,9 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
 			item := m.popupItems[m.popupCursor]
 			switch item.kind {
+			case "shell":
+				m.Launch = &LaunchRequest{Cwd: item.cwd, ShellOnly: true}
+				return m, tea.Quit
 			case "action":
 				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
 				return m, tea.Quit
@@ -235,6 +239,15 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+	case "s", "S":
+		// Open shell in the selected worktree's directory.
+		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
+			item := m.popupItems[m.popupCursor]
+			if item.kind == "worktree" {
+				m.Launch = &LaunchRequest{Cwd: item.cwd, ShellOnly: true}
+				return m, tea.Quit
+			}
+		}
 	case "p", "P":
 		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
 			item := m.popupItems[m.popupCursor]
@@ -263,6 +276,7 @@ func (m *Model) openPopup(p *Project) {
 
 	// Build popup items: actions, then worktrees, then sessions.
 	m.popupItems = []popupItem{
+		{label: "📂 Open shell here", kind: "shell", cwd: p.Path},
 		{label: "⚡ New claude session", kind: "action", cwd: p.Path},
 		{label: "🌿 New worktree + session", kind: "new-worktree"},
 		{label: "🌿 Create worktree (no launch)", kind: "create-wt-only"},
@@ -689,7 +703,7 @@ func (m *Model) overlayPopup() string {
 	}
 
 	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("j/k enter  d:delete  p:promote  esc:back"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("enter  s:shell  d:del  p:promote  esc:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
