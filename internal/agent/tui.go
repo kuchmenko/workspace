@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 // View mode: browsing the project list, or floating action popup over it.
@@ -369,7 +370,7 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if branch != "" && topic == "" {
-		topic = slugifyBranch(branch)
+		topic = layout.SlugifyBranch(branch)
 	}
 
 	result, err := CreateWorktree(m.popupProj, topic, branch, m.wtAutoPush)
@@ -725,7 +726,7 @@ func (m *Model) viewNewWorktree() string {
 	}
 	var topicDisplay string
 	if hasBranch {
-		topicDisplay = slugifyBranch(m.wtBranch)
+		topicDisplay = layout.SlugifyBranch(m.wtBranch)
 	} else if m.wtField == 0 {
 		topicDisplay = m.wtTopic + "█"
 	} else {
@@ -766,7 +767,7 @@ func (m *Model) viewNewWorktree() string {
 	// Show resulting path preview.
 	pathPreview := ""
 	if hasBranch {
-		pathPreview = fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, slugifyBranch(m.wtBranch))
+		pathPreview = fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, layout.SlugifyBranch(m.wtBranch))
 	} else if m.wtTopic != "" {
 		pathPreview = fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, m.wtTopic)
 	}

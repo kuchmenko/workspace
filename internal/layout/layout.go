@@ -53,6 +53,19 @@ func BranchName(machine, topic string) string {
 	return "wt/" + machine + "/" + topic
 }
 
+// SlugifyBranch converts a branch name to a filesystem-safe directory
+// component: slashes → dashes, strip leading/trailing dashes. Used when
+// --branch overrides the topic to derive the worktree directory name
+// from the branch instead.
+//
+//	"feat/buddy" → "feat-buddy"
+//	"fix/amm-prices-chunking" → "fix-amm-prices-chunking"
+func SlugifyBranch(branch string) string {
+	s := strings.ReplaceAll(branch, "/", "-")
+	s = strings.Trim(s, "-")
+	return s
+}
+
 // BranchPrefix returns "wt/<machine>/" for the given machine. Useful for
 // filtering branches owned by this machine when deciding what to push.
 func BranchPrefix(machine string) string {
