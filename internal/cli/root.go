@@ -25,6 +25,12 @@ func NewRootCmd() *cobra.Command {
 			if cmd.Name() == "help" || cmd.Name() == "completion" {
 				return nil
 			}
+			// Agent TUI uses a hardcoded demo graph in early layers; later
+			// layers load workspace.toml lazily from inside the TUI loop
+			// rather than at command-startup time.
+			if cmd.Name() == "agent" {
+				return nil
+			}
 			if cmd.Parent() != nil && cmd.Parent().Name() == "daemon" {
 				return nil
 			}
@@ -81,6 +87,7 @@ func NewRootCmd() *cobra.Command {
 		newWorktreeCmd(),
 		newBootstrapCmd(),
 		newPulseCmd(),
+		newAgentCmd(),
 	)
 
 	return root
