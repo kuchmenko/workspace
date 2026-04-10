@@ -18,6 +18,7 @@ const (
 	viewNewWorktree                 // worktree creation form
 	viewPromote                     // branch promote form
 	viewFlash                       // flash search with jump labels
+	viewPromptInput                 // optional prompt input before launching claude
 )
 
 // popupItem is one selectable row in the project action popup.
@@ -43,7 +44,8 @@ type listItem struct {
 type LaunchRequest struct {
 	Cwd       string
 	ResumeID  string
-	ShellOnly bool // true = exec $SHELL instead of claude
+	ShellOnly bool   // true = exec $SHELL instead of claude
+	Prompt    string // optional initial prompt for claude (-p flag)
 }
 
 // Model is the bubbletea model for the agent TUI wizard.
@@ -73,6 +75,10 @@ type Model struct {
 	promoteWt       Worktree
 	promoteNewName  string
 	promoteField    int // 0=name, 1=confirm
+
+	// Prompt input state (optional prompt before launch).
+	pendingLaunch *LaunchRequest // set before entering prompt input
+	promptInput   string
 
 	// Flash search state.
 	flashQuery   string
@@ -112,6 +118,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// ctrl+c and ctrl+q always quit from anywhere.
+		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
+			return m, tea.Quit
+		}
+		if m.mode == viewPromptInput {
+			return m.updatePromptInput(msg)
+		}
 		if m.mode == viewFlash {
 			return m.updateFlash(msg)
 		}
@@ -131,7 +144,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "q":
 		return m, tea.Quit
 	case "j", "down":
 		if m.cursor < len(m.items)-1 {
@@ -199,9 +212,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
-	case "esc", "h", "left":
+	case "q", "esc", "h", "left":
 		m.mode = viewList
 	case "j", "down":
 		for next := m.popupCursor + 1; next < len(m.popupItems); next++ {
@@ -225,8 +236,11 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.Launch = &LaunchRequest{Cwd: item.cwd, ShellOnly: true}
 				return m, tea.Quit
 			case "action":
-				m.Launch = &LaunchRequest{Cwd: m.popupProj.Path}
-				return m, tea.Quit
+				// Go to prompt input — user can optionally type a prompt or just Enter to skip.
+				m.pendingLaunch = &LaunchRequest{Cwd: m.popupProj.Path}
+				m.promptInput = ""
+				m.mode = viewPromptInput
+				return m, nil
 			case "new-worktree":
 				m.mode = viewNewWorktree
 				m.wtTopic = ""
@@ -243,8 +257,10 @@ func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.wtField = 0
 				return m, nil
 			case "worktree":
-				m.Launch = &LaunchRequest{Cwd: item.cwd}
-				return m, tea.Quit
+				m.pendingLaunch = &LaunchRequest{Cwd: item.cwd}
+				m.promptInput = ""
+				m.mode = viewPromptInput
+				return m, nil
 			case "session":
 				m.Launch = &LaunchRequest{Cwd: item.cwd, ResumeID: item.resumeID}
 				return m, tea.Quit
@@ -348,8 +364,6 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
-	case "ctrl+c":
-		return m, tea.Quit
 	case "esc":
 		m.mode = viewPopup
 		return m, nil
@@ -439,8 +453,6 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 func (m *Model) updatePromote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
-	case "ctrl+c":
-		return m, tea.Quit
 	case "esc":
 		m.mode = viewPopup
 		return m, nil
@@ -537,6 +549,57 @@ func suggestPromoteName(wt Worktree) string {
 		}
 	}
 	return wt.Branch
+}
+
+func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "esc":
+		m.mode = viewPopup
+		m.pendingLaunch = nil
+	case "enter":
+		// Launch with or without prompt.
+		m.pendingLaunch.Prompt = strings.TrimSpace(m.promptInput)
+		m.Launch = m.pendingLaunch
+		m.pendingLaunch = nil
+		return m, tea.Quit
+	case "backspace":
+		if len(m.promptInput) > 0 {
+			m.promptInput = m.promptInput[:len(m.promptInput)-1]
+		}
+	default:
+		if len(key) == 1 && key[0] >= 32 {
+			m.promptInput += key
+		} else if key == "space" || key == " " {
+			m.promptInput += " "
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) viewPromptInput() string {
+	popupW := 56
+	if m.width < 62 {
+		popupW = m.width - 6
+	}
+	innerW := popupW - 6
+
+	var lines []string
+	lines = append(lines, popupTitleStyle.Width(innerW).Render("⚡ Launch claude"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("in: %s", m.pendingLaunch.Cwd)))
+	lines = append(lines, "")
+	lines = append(lines, popupItemStyle.Width(innerW).Render("  Initial prompt (optional):"))
+
+	input := m.promptInput + "█"
+	lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+input))
+	lines = append(lines, "")
+	lines = append(lines, popupDimStyle.Width(innerW).Render("  Enter: launch (empty = interactive)"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("  Esc: back"))
+
+	content := strings.Join(lines, "\n")
+	popup := popupBorderStyle.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
+		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
 }
 
 // jumpLabels is the alphabet used for flash jump labels.
@@ -713,6 +776,9 @@ func (m *Model) rebuildItems() {
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "loading…"
+	}
+	if m.mode == viewPromptInput {
+		return m.viewPromptInput()
 	}
 	if m.mode == viewPromote {
 		return m.viewPromote()

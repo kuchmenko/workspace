@@ -12,7 +12,7 @@ import (
 // bubbletea restores the terminal, then we exec.
 //
 // If resumeID is non-empty, passes --resume <id> to claude.
-func LaunchClaude(cwd string, resumeID string) error {
+func LaunchClaude(cwd, resumeID, prompt string) error {
 	bin, err := exec.LookPath("claude")
 	if err != nil {
 		return fmt.Errorf("claude not found in PATH: %w", err)
@@ -21,6 +21,9 @@ func LaunchClaude(cwd string, resumeID string) error {
 	args := []string{"claude"}
 	if resumeID != "" {
 		args = append(args, "--resume", resumeID)
+	}
+	if prompt != "" {
+		args = append(args, "-p", prompt)
 	}
 
 	if err := os.Chdir(cwd); err != nil {
