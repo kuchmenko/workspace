@@ -446,8 +446,11 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.Launch = &LaunchRequest{Cwd: result.Path}
-	return m, tea.Quit
+	// Go to prompt input before launching.
+	m.pendingLaunch = &LaunchRequest{Cwd: result.Path}
+	m.promptInput = ""
+	m.mode = viewPromptInput
+	return m, nil
 }
 
 func (m *Model) updatePromote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
