@@ -527,6 +527,10 @@ func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) viewPromptInput() string {
+	if m.pendingLaunch == nil {
+		m.mode = viewList
+		return m.viewList()
+	}
 	popupW := 56
 	if m.width < 62 {
 		popupW = m.width - 6
