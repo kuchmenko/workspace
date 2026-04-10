@@ -9,33 +9,27 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// View mode: browsing the project list, or floating action popup over it.
+// View mode.
 type viewMode int
 
 const (
-	viewList        viewMode = iota // nested list of groups + projects
-	viewPopup                       // floating action popup over dimmed list
+	viewList        viewMode = iota // nested list — all navigation lives here
 	viewNewWorktree                 // worktree creation form
 	viewPromote                     // branch promote form
 	viewFlash                       // flash search with jump labels
 	viewPromptInput                 // optional prompt input before launching claude
 )
 
-// popupItem is one selectable row in the project action popup.
-type popupItem struct {
-	label    string
-	kind     string // "action", "worktree", "session", "separator"
-	cwd      string // for worktree/session launch
-	resumeID string // for session resume
-}
-
-// listItem is one row in the nested list — either a group header or a project.
+// listItem is one row in the nested list.
 type listItem struct {
-	kind    NodeKind
-	group   string   // group name (for KindGroup rows)
-	project *Project
-	indent  int
-	path    string   // filesystem path for shell navigation
+	kind      NodeKind
+	group     string   // group name (for KindGroup rows)
+	project   *Project // for KindProject rows
+	worktree  *Worktree // for KindWorktree rows
+	session   *Session  // for KindPortal rows (sessions)
+	indent    int
+	path      string   // filesystem path for shell navigation
+	parentProj *Project // for worktree/session: which project they belong to
 }
 
 // LaunchRequest is set when the user selects an action that should
@@ -54,15 +48,11 @@ type Model struct {
 	mode       viewMode
 	items      []listItem   // flattened visible items
 	cursor     int
-	expanded   map[string]bool // group name → expanded
+	expanded   map[string]bool // group/project name → expanded
 	scroll     int           // scroll offset for long lists
 
-	// Popup state.
-	popupProj      *Project
-	popupCursor    int
-	popupItems     []popupItem
-	popupWorktrees []Worktree
-	popupSessions  []Session
+	// Active project for worktree/promote forms.
+	popupProj    *Project
 
 	// Worktree creation form state.
 	wtTopic      string
@@ -122,6 +112,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
 			return m, tea.Quit
 		}
+		// ctrl+s = open shell in selected item's directory from anywhere.
+		if msg.String() == "ctrl+s" {
+			item := m.currentItem()
+			if item != nil && item.path != "" {
+				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+				return m, tea.Quit
+			}
+		}
 		if m.mode == viewPromptInput {
 			return m.updatePromptInput(msg)
 		}
@@ -134,15 +132,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == viewNewWorktree {
 			return m.updateNewWorktree(msg)
 		}
-		if m.mode == viewPopup {
-			return m.updatePopup(msg)
-		}
 		return m.updateList(msg)
 	}
 	return m, nil
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	item := m.currentItem()
+
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
@@ -156,46 +153,106 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor--
 			m.ensureVisible()
 		}
-	case "l", "right":
-		// Open shell in the selected item's directory.
-		if m.cursor < len(m.items) {
-			item := m.items[m.cursor]
-			if item.path != "" {
-				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+
+	case "enter":
+		// Default action per item kind.
+		if item == nil {
+			break
+		}
+		switch item.kind {
+		case KindGroup:
+			m.toggleExpand(item.group)
+		case KindProject:
+			// Default: new worktree + claude session (no prompt).
+			return m.launchNewSession(item.project, "")
+		case KindWorktree:
+			// Open claude in this worktree.
+			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
+			m.promptInput = ""
+			m.mode = viewPromptInput
+			return m, nil
+		case KindPortal:
+			// Resume session.
+			if item.session != nil {
+				m.Launch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
 				return m, tea.Quit
 			}
 		}
-	case "enter":
-		if m.cursor < len(m.items) {
-			item := m.items[m.cursor]
-			switch item.kind {
-			case KindGroup:
-				m.expanded[item.group] = !m.expanded[item.group]
+
+	case "p":
+		// New session WITH prompt.
+		if item != nil && item.kind == KindProject {
+			m.pendingLaunch = &LaunchRequest{Cwd: item.project.Path}
+			m.promptInput = ""
+			m.mode = viewPromptInput
+			return m, nil
+		}
+		if item != nil && item.kind == KindWorktree {
+			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
+			m.promptInput = ""
+			m.mode = viewPromptInput
+			return m, nil
+		}
+
+	case "w":
+		// New worktree only (no claude).
+		if item != nil && item.kind == KindProject {
+			m.wtNoLaunch = true
+			m.wtTopic = ""
+			m.wtBranch = ""
+			m.wtAutoPush = false
+			m.wtField = 0
+			m.popupProj = item.project
+			m.mode = viewNewWorktree
+			return m, nil
+		}
+
+	case "l", "right":
+		// Open shell in directory.
+		if item != nil && item.path != "" {
+			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+			return m, tea.Quit
+		}
+
+	case "h", "left":
+		if item != nil {
+			switch {
+			case item.kind == KindProject && m.expanded["proj:"+item.project.ID]:
+				m.expanded["proj:"+item.project.ID] = false
 				m.rebuildItems()
 				m.ensureVisible()
-			case KindProject:
-				m.openPopup(item.project)
-			}
-		}
-	case "h", "left":
-		if m.cursor < len(m.items) {
-			item := m.items[m.cursor]
-			if item.kind == KindProject && item.project.Group != "" {
+			case item.kind == KindProject && item.project.Group != "":
 				m.expanded[item.project.Group] = false
 				m.rebuildItems()
-				for i, it := range m.items {
-					if it.kind == KindGroup && it.group == item.project.Group {
-						m.cursor = i
-						break
-					}
-				}
-				m.ensureVisible()
-			} else if item.kind == KindGroup && m.expanded[item.group] {
+				m.jumpToGroup(item.project.Group)
+			case (item.kind == KindWorktree || item.kind == KindPortal) && item.parentProj != nil:
+				m.expanded["proj:"+item.parentProj.ID] = false
+				m.rebuildItems()
+				m.jumpToProject(item.parentProj.ID)
+			case item.kind == KindGroup && m.expanded[item.group]:
 				m.expanded[item.group] = false
 				m.rebuildItems()
 				m.ensureVisible()
 			}
 		}
+
+	case "tab":
+		// Expand/collapse project's worktrees+sessions inline.
+		if item != nil && item.kind == KindProject {
+			key := "proj:" + item.project.ID
+			m.expanded[key] = !m.expanded[key]
+			m.rebuildItems()
+			m.ensureVisible()
+		}
+
+	case "d":
+		// Delete worktree.
+		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
+			DeleteWorktree(item.parentProj.Path, item.worktree.Path, false)
+			m.rebuildItems()
+			m.ensureVisible()
+		}
+
 	case "s", "/":
 		m.mode = viewFlash
 		m.flashQuery = ""
@@ -210,162 +267,58 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) updatePopup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "esc", "h", "left":
-		m.mode = viewList
-	case "j", "down":
-		for next := m.popupCursor + 1; next < len(m.popupItems); next++ {
-			if m.popupItems[next].kind != "separator" {
-				m.popupCursor = next
-				break
-			}
-		}
-	case "k", "up":
-		for prev := m.popupCursor - 1; prev >= 0; prev-- {
-			if m.popupItems[prev].kind != "separator" {
-				m.popupCursor = prev
-				break
-			}
-		}
-	case "enter", "l", "right":
-		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
-			item := m.popupItems[m.popupCursor]
-			switch item.kind {
-			case "shell":
-				m.Launch = &LaunchRequest{Cwd: item.cwd, ShellOnly: true}
-				return m, tea.Quit
-			case "action":
-				// Go to prompt input — user can optionally type a prompt or just Enter to skip.
-				m.pendingLaunch = &LaunchRequest{Cwd: m.popupProj.Path}
-				m.promptInput = ""
-				m.mode = viewPromptInput
-				return m, nil
-			case "new-worktree":
-				m.mode = viewNewWorktree
-				m.wtTopic = ""
-				m.wtBranch = ""
-				m.wtAutoPush = false
-				m.wtField = 0
-				return m, nil
-			case "create-wt-only":
-				m.mode = viewNewWorktree
-				m.wtTopic = ""
-				m.wtBranch = ""
-				m.wtAutoPush = false
-				m.wtNoLaunch = true
-				m.wtField = 0
-				return m, nil
-			case "worktree":
-				m.pendingLaunch = &LaunchRequest{Cwd: item.cwd}
-				m.promptInput = ""
-				m.mode = viewPromptInput
-				return m, nil
-			case "session":
-				m.Launch = &LaunchRequest{Cwd: item.cwd, ResumeID: item.resumeID}
-				return m, tea.Quit
-			}
-		}
-	case "d", "D":
-		// Delete worktree (only on worktree items, not main).
-		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
-			item := m.popupItems[m.popupCursor]
-			if item.kind == "worktree" && item.cwd != m.popupProj.Path {
-				err := DeleteWorktree(m.popupProj.Path, item.cwd, false)
-				if err == nil {
-					// Refresh popup.
-					m.openPopup(m.popupProj)
-				}
-			}
-		}
-	case "s", "S":
-		// Open shell in the selected worktree's directory.
-		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
-			item := m.popupItems[m.popupCursor]
-			if item.kind == "worktree" {
-				m.Launch = &LaunchRequest{Cwd: item.cwd, ShellOnly: true}
-				return m, tea.Quit
-			}
-		}
-	case "p", "P":
-		if m.popupCursor >= 0 && m.popupCursor < len(m.popupItems) {
-			item := m.popupItems[m.popupCursor]
-			if item.kind == "worktree" && item.cwd != m.popupProj.Path {
-				// Find the Worktree struct for this item.
-				for _, wt := range m.popupWorktrees {
-					if wt.Path == item.cwd {
-						m.promoteWt = wt
-						// Pre-fill: if wt/machine/topic, suggest feat/<topic>.
-						m.promoteNewName = suggestPromoteName(wt)
-						m.promoteField = 0
-						m.mode = viewPromote
-						break
-					}
-				}
-			}
+func (m *Model) currentItem() *listItem {
+	if m.cursor >= 0 && m.cursor < len(m.items) {
+		return &m.items[m.cursor]
+	}
+	return nil
+}
+
+func (m *Model) toggleExpand(key string) {
+	m.expanded[key] = !m.expanded[key]
+	m.rebuildItems()
+	m.ensureVisible()
+}
+
+func (m *Model) jumpToGroup(group string) {
+	for i, it := range m.items {
+		if it.kind == KindGroup && it.group == group {
+			m.cursor = i
+			break
 		}
 	}
+	m.ensureVisible()
+}
+
+func (m *Model) jumpToProject(projID string) {
+	for i, it := range m.items {
+		if it.kind == KindProject && it.project != nil && it.project.ID == projID {
+			m.cursor = i
+			break
+		}
+	}
+	m.ensureVisible()
+}
+
+// launchNewSession creates a worktree and launches claude in it.
+// For the default action (Enter on project), this creates a wt with
+// a generated topic name and launches claude immediately.
+func (m *Model) launchNewSession(p *Project, prompt string) (tea.Model, tea.Cmd) {
+	// For now, launch in the project's main path.
+	// TODO: auto-create worktree with generated topic name.
+	m.pendingLaunch = &LaunchRequest{Cwd: p.Path, Prompt: prompt}
+	m.promptInput = ""
+	m.mode = viewPromptInput
 	return m, nil
 }
 
-func (m *Model) openPopup(p *Project) {
-	m.mode = viewPopup
-	m.popupProj = p
-	m.popupCursor = 0
-
-	// Build popup items: actions, then worktrees, then sessions.
-	m.popupItems = []popupItem{
-		{label: "📂 Open shell here", kind: "shell", cwd: p.Path},
-		{label: "⚡ New claude session", kind: "action", cwd: p.Path},
-		{label: "🌿 New worktree + session", kind: "new-worktree"},
-		{label: "🌿 Create worktree (no launch)", kind: "create-wt-only"},
-	}
-
-	// Worktrees.
-	m.popupWorktrees = LoadWorktrees(p.Path)
-	if len(m.popupWorktrees) > 0 {
-		m.popupItems = append(m.popupItems, popupItem{kind: "separator", label: "── worktrees"})
-		for _, wt := range m.popupWorktrees {
-			name := worktreeDisplayName(wt)
-			branchInfo := ""
-			if wt.Branch != "" && !wt.IsMain {
-				branchInfo = fmt.Sprintf("  (%s)", wt.Branch)
-			}
-			label := fmt.Sprintf("🌿 %s%s", name, branchInfo)
-			m.popupItems = append(m.popupItems, popupItem{
-				label: label, kind: "worktree", cwd: wt.Path,
-			})
-		}
-	}
-
-	// Sessions.
-	var searchPaths []string
-	searchPaths = append(searchPaths, p.Path)
-	for _, wt := range m.popupWorktrees {
-		searchPaths = append(searchPaths, wt.Path)
-	}
-	m.popupSessions = LoadSessions(searchPaths)
-	if len(m.popupSessions) > 0 {
-		m.popupItems = append(m.popupItems, popupItem{kind: "separator", label: "── sessions"})
-		limit := len(m.popupSessions)
-		if limit > 10 {
-			limit = 10
-		}
-		for _, s := range m.popupSessions[:limit] {
-			label := fmt.Sprintf("💬 %s  %s", TimeAgo(s.Updated), s.Title)
-			m.popupItems = append(m.popupItems, popupItem{
-				label: label, kind: "session", cwd: s.Cwd, resumeID: s.ID,
-			})
-		}
-	}
-}
 
 func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
 	switch key {
 	case "esc":
-		m.mode = viewPopup
+		m.mode = viewList
 		return m, nil
 	case "tab", "down":
 		m.wtField = (m.wtField + 1) % 4
@@ -426,23 +379,16 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 
 	result, err := CreateWorktree(m.popupProj, topic, branch, m.wtAutoPush)
 	if err != nil {
-		m.mode = viewPopup
+		m.mode = viewList
 		return m, nil
 	}
 
-	// Check if we came from "create-wt-only" — don't launch, just refresh.
-	for _, item := range m.popupItems {
-		if item.kind == "create-wt-only" && m.popupItems[m.popupCursor].kind == "create-wt-only" {
-			// This was triggered from the non-launch variant.
-			// Can't easily distinguish here, so check a flag.
-			break
-		}
-	}
-
-	// If the popup had "create-wt-only" selected, go back to popup.
+	// If "create worktree only" (w key), go back to list.
 	if m.wtNoLaunch {
 		m.wtNoLaunch = false
-		m.openPopup(m.popupProj) // refresh to show new worktree
+		m.mode = viewList
+		m.rebuildItems()
+		m.ensureVisible()
 		return m, nil
 	}
 
@@ -457,7 +403,7 @@ func (m *Model) updatePromote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
-		m.mode = viewPopup
+		m.mode = viewList
 		return m, nil
 	case "tab", "down":
 		m.promoteField = (m.promoteField + 1) % 2
@@ -488,10 +434,10 @@ func (m *Model) executePromote() (tea.Model, tea.Cmd) {
 	err := PromoteWorktree(m.popupProj.Path, m.promoteWt, newName)
 	if err != nil {
 		// TODO: show error. For now just go back.
-		m.mode = viewPopup
+		m.mode = viewList
 		return m, nil
 	}
-	m.openPopup(m.popupProj) // refresh
+	m.rebuildItems() // refresh list to show renamed branch
 	return m, nil
 }
 
@@ -558,7 +504,7 @@ func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
-		m.mode = viewPopup
+		m.mode = viewList
 		m.pendingLaunch = nil
 	case "enter":
 		// Launch with or without prompt.
@@ -752,7 +698,7 @@ func (m *Model) rebuildItems() {
 		for i := range ws.Projects {
 			p := &ws.Projects[i]
 			if p.Group == "" {
-				m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 0, path: p.Path})
+				m.addProjectItem(p, 0)
 			}
 		}
 		// Then groups.
@@ -762,7 +708,7 @@ func (m *Model) rebuildItems() {
 				for i := range ws.Projects {
 					p := &ws.Projects[i]
 					if p.Group == g {
-						m.items = append(m.items, listItem{kind: KindProject, project: p, indent: 1, path: p.Path})
+						m.addProjectItem(p, 1)
 					}
 				}
 			}
@@ -773,6 +719,44 @@ func (m *Model) rebuildItems() {
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+}
+
+func (m *Model) addProjectItem(p *Project, indent int) {
+	m.items = append(m.items, listItem{kind: KindProject, project: p, indent: indent, path: p.Path})
+
+	// If project is expanded (tab), show worktrees + sessions inline.
+	if !m.expanded["proj:"+p.ID] {
+		return
+	}
+
+	wts := LoadWorktrees(p.Path)
+	for i := range wts {
+		wt := &wts[i]
+		name := worktreeDisplayName(*wt)
+		m.items = append(m.items, listItem{
+			kind:       KindWorktree,
+			worktree:   wt,
+			indent:     indent + 1,
+			path:       wt.Path,
+			parentProj: p,
+			group:      name,
+		})
+	}
+
+	sessions := LoadSessions([]string{p.Path})
+	if len(sessions) > 5 {
+		sessions = sessions[:5]
+	}
+	for i := range sessions {
+		s := &sessions[i]
+		m.items = append(m.items, listItem{
+			kind:       KindPortal,
+			session:    s,
+			indent:     indent + 1,
+			path:       s.Cwd,
+			parentProj: p,
+		})
 	}
 }
 
@@ -788,9 +772,6 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewNewWorktree {
 		return m.viewNewWorktree()
-	}
-	if m.mode == viewPopup {
-		return m.overlayPopup()
 	}
 	return m.viewList()
 }
@@ -864,13 +845,46 @@ func (m *Model) viewList() string {
 			if inFlash && isMatch {
 				name = flashInlineLabel(name, m.flashQuery, flashLabel)
 			}
-			label := fmt.Sprintf(" %s%s %s%s", indent, icon, name, dimStyle.Render(badges))
+			// Show expand indicator if project has worktrees.
+			expandMark := ""
+			if p.WorktreeCount > 1 {
+				if m.expanded["proj:"+p.ID] {
+					expandMark = "▼ "
+				} else {
+					expandMark = "▶ "
+				}
+			}
+			label := fmt.Sprintf(" %s%s%s %s%s", indent, expandMark, icon, name, dimStyle.Render(badges))
 			if inFlash && !isMatch {
 				line = dimStyle.Width(listW).Render(label)
 			} else if selected && !inFlash {
 				line = selectedStyle.Width(listW).Render(label)
 			} else {
 				line = itemStyle.Width(listW).Render(label)
+			}
+		case KindWorktree:
+			indent := strings.Repeat("  ", item.indent)
+			name := item.group // worktreeDisplayName stored in group field
+			if name == "" {
+				name = "worktree"
+			}
+			label := fmt.Sprintf(" %s🌿 %s", indent, name)
+			if selected {
+				line = selectedStyle.Width(listW).Render(label)
+			} else {
+				line = dimStyle.Width(listW).Render(label)
+			}
+		case KindPortal:
+			indent := strings.Repeat("  ", item.indent)
+			title := "(session)"
+			if item.session != nil {
+				title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated), item.session.Title)
+			}
+			label := fmt.Sprintf(" %s💬 %s", indent, title)
+			if selected {
+				line = selectedStyle.Width(listW).Render(label)
+			} else {
+				line = dimStyle.Width(listW).Render(label)
 			}
 		}
 		rows = append(rows, line)
@@ -884,7 +898,7 @@ func (m *Model) viewList() string {
 		rows = append(rows, footer)
 	} else {
 		pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
-		hint := "j/k  enter:open  l/→:shell  s:search  q:quit"
+		hint := "⏎:session  p:+prompt  w:worktree  l:shell  tab:expand  s:find"
 		footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
 		rows = append(rows, footer)
 	}
@@ -900,61 +914,6 @@ func (m *Model) viewList() string {
 
 // overlayPopup renders a floating bordered panel centered on screen.
 // The background is a solid dim fill — no ANSI-over-ANSI issues.
-func (m *Model) overlayPopup() string {
-	p := m.popupProj
-	if p == nil {
-		return m.viewList()
-	}
-
-	popupW := 46
-	if m.width < 54 {
-		popupW = m.width - 8
-	}
-	innerW := popupW - 6 // border + padding
-
-	var lines []string
-
-	// Title.
-	title := fmt.Sprintf("📦 %s", p.Name)
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(title))
-
-	// Info.
-	info := fmt.Sprintf("branch: %s · wt: %d", p.DefaultBranch, p.WorktreeCount)
-	lines = append(lines, popupDimStyle.Width(innerW).Render(info))
-	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
-
-	// Items: actions, worktrees, sessions, separators.
-	for i, item := range m.popupItems {
-		if item.kind == "separator" {
-			lines = append(lines, popupDimStyle.Width(innerW).Render(item.label))
-			continue
-		}
-		cursor := "  "
-		if i == m.popupCursor {
-			cursor = "▶ "
-		}
-		label := cursor + strings.TrimSpace(item.label)
-		if i == m.popupCursor {
-			lines = append(lines, popupSelectedStyle.Width(innerW).Render(label))
-		} else {
-			lines = append(lines, popupItemStyle.Width(innerW).Render(label))
-		}
-	}
-
-	lines = append(lines, popupDimStyle.Width(innerW).Render(strings.Repeat("─", innerW)))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("enter  s:shell  d:del  p:promote  esc:back"))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-
-	// Place popup centered on a dim background that fills the viewport.
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")),
-	)
-}
 
 func (m *Model) viewNewWorktree() string {
 	p := m.popupProj
