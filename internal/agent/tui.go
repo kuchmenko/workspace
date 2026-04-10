@@ -155,24 +155,27 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "enter":
-		// Default action per item kind.
 		if item == nil {
 			break
 		}
 		switch item.kind {
 		case KindGroup:
-			m.toggleExpand(item.group)
+			// Launch claude in group directory.
+			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
+			m.promptInput = ""
+			m.mode = viewPromptInput
+			return m, nil
 		case KindProject:
-			// Default: new worktree + claude session (no prompt).
-			return m.launchNewSession(item.project, "")
+			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
+			m.promptInput = ""
+			m.mode = viewPromptInput
+			return m, nil
 		case KindWorktree:
-			// Open claude in this worktree.
 			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
 			m.promptInput = ""
 			m.mode = viewPromptInput
 			return m, nil
 		case KindPortal:
-			// Resume session.
 			if item.session != nil {
 				m.Launch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
 				return m, tea.Quit
@@ -180,14 +183,8 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "p":
-		// New session WITH prompt.
-		if item != nil && item.kind == KindProject {
-			m.pendingLaunch = &LaunchRequest{Cwd: item.project.Path}
-			m.promptInput = ""
-			m.mode = viewPromptInput
-			return m, nil
-		}
-		if item != nil && item.kind == KindWorktree {
+		// Claude with prompt — available on group, project, worktree.
+		if item != nil && item.path != "" && (item.kind == KindGroup || item.kind == KindProject || item.kind == KindWorktree) {
 			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
 			m.promptInput = ""
 			m.mode = viewPromptInput
@@ -195,7 +192,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "w":
-		// New worktree only (no claude).
+		// New worktree — only on projects.
 		if item != nil && item.kind == KindProject {
 			m.wtNoLaunch = true
 			m.wtTopic = ""
@@ -208,7 +205,6 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "l", "right":
-		// Open shell in directory.
 		if item != nil && item.path != "" {
 			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
 			return m, tea.Quit
@@ -237,16 +233,20 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "tab":
-		// Expand/collapse project's worktrees+sessions inline.
-		if item != nil && item.kind == KindProject {
-			key := "proj:" + item.project.ID
-			m.expanded[key] = !m.expanded[key]
-			m.rebuildItems()
-			m.ensureVisible()
+		// Expand/collapse — groups and projects.
+		if item != nil {
+			switch item.kind {
+			case KindGroup:
+				m.toggleExpand(item.group)
+			case KindProject:
+				key := "proj:" + item.project.ID
+				m.expanded[key] = !m.expanded[key]
+				m.rebuildItems()
+				m.ensureVisible()
+			}
 		}
 
 	case "d":
-		// Delete worktree.
 		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
 			DeleteWorktree(item.parentProj.Path, item.worktree.Path, false)
 			m.rebuildItems()
@@ -898,7 +898,7 @@ func (m *Model) viewList() string {
 		rows = append(rows, footer)
 	} else {
 		pos := fmt.Sprintf(" %d/%d ", m.cursor+1, len(m.items))
-		hint := "⏎:session  p:+prompt  w:worktree  l:shell  tab:expand  s:find"
+		hint := m.toolbarHint()
 		footer := footerStyle.Width(listW).Render(pos + strings.Repeat(" ", max(0, listW-len(pos)-len(hint)-1)) + hint)
 		rows = append(rows, footer)
 	}
@@ -1020,6 +1020,32 @@ func (m *Model) viewNewWorktree() string {
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
 		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+}
+
+// toolbarHint builds a context-sensitive footer showing only the actions
+// available for the currently selected item.
+func (m *Model) toolbarHint() string {
+	item := m.currentItem()
+	if item == nil {
+		return "s:find  q:quit"
+	}
+
+	var parts []string
+	switch item.kind {
+	case KindGroup:
+		parts = append(parts, "⏎:claude", "p:+prompt", "tab:expand", "l:shell")
+	case KindProject:
+		parts = append(parts, "⏎:claude", "p:+prompt", "w:worktree", "tab:expand", "l:shell")
+	case KindWorktree:
+		parts = append(parts, "⏎:claude", "p:+prompt", "l:shell")
+		if item.worktree != nil && !item.worktree.IsMain {
+			parts = append(parts, "d:del")
+		}
+	case KindPortal:
+		parts = append(parts, "⏎:resume")
+	}
+	parts = append(parts, "s:find")
+	return strings.Join(parts, "  ")
 }
 
 func max(a, b int) int {
