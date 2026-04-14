@@ -16,7 +16,12 @@ func newArchiveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "archive <project-name>",
 		Short: "Archive a project (personal→tar+cleanup, work→remove)",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability":   "project",
+			"agent:when":   "Archive a project that is no longer actively developed",
+			"agent:safety": "Destructive: personal projects are tarred then deleted from disk. Migrated (bare+worktree) projects are refused.",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			proj, exists := ws.Projects[name]

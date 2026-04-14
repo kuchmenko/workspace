@@ -20,6 +20,10 @@ func newWorktreeCmd() *cobra.Command {
 		Use:     "worktree",
 		Aliases: []string{"wt"},
 		Short:   "Manage per-project worktrees (wt/<machine>/<topic>)",
+		Annotations: map[string]string{
+			"capability": "worktree",
+			"agent:when": "Manage per-feature worktrees under a bare+worktree project layout",
+		},
 	}
 	cmd.AddCommand(newWorktreeNewCmd(), newWorktreeListCmd(), newWorktreeRmCmd(), newWorktreePromoteCmd())
 	return cmd
@@ -51,6 +55,10 @@ func newWorktreeNewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "new <project> <topic>",
 		Short: "Create a worktree — or check out an existing remote branch",
+		Annotations: map[string]string{
+			"capability": "worktree",
+			"agent:when": "Start a new feature branch in an isolated worktree, or check out an existing remote branch",
+		},
 		Long: `Create a new worktree for <project> on topic <topic>.
 
 BRANCH NAMING
@@ -208,7 +216,11 @@ func newWorktreeListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list [project]",
 		Short: "List worktrees across projects",
-		Args:  cobra.MaximumNArgs(1),
+		Annotations: map[string]string{
+			"capability": "worktree",
+			"agent:when": "List all worktrees across projects with branch, dirty/clean state, and ownership info",
+		},
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			machine, _ := config.LoadMachineConfig()
 			myMachine := ""
@@ -298,7 +310,12 @@ func newWorktreeRmCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm <project> <topic>",
 		Short: "Remove a worktree (refuses if dirty or unpushed unless --force)",
-		Args:  cobra.ExactArgs(2),
+		Annotations: map[string]string{
+			"capability":   "worktree",
+			"agent:when":   "Remove a worktree after its branch has been merged or is no longer needed",
+			"agent:safety": "Refuses if dirty or has unpushed commits unless --force. Does not delete the branch.",
+		},
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, topic := args[0], args[1]
 			machine, err := ensureMachineName()
@@ -353,6 +370,11 @@ func newWorktreePromoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "promote <project> <topic>",
 		Short: "Rename wt/<machine>/<topic> to its final branch name (e.g. feat/<topic>)",
+		Annotations: map[string]string{
+			"capability":   "worktree",
+			"agent:when":   "Rename a WIP branch to its final name (e.g. feat/*) before opening a PR",
+			"agent:safety": "Refuses if dirty. Renames branch, moves worktree dir, deletes stale remote ref, pushes new branch.",
+		},
 		Long: `Promote a WIP worktree to its final, repository-native branch
 name before opening a PR. The final name is taken from --name if given,
 otherwise from project.branch_naming.pattern (with {topic} substituted).

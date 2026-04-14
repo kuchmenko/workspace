@@ -16,7 +16,12 @@ func newCleanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean [project-name]",
 		Short: "Remove dependency/build caches (node_modules, target/, .venv, etc.)",
-		Args:  cobra.MaximumNArgs(1),
+		Annotations: map[string]string{
+			"capability":   "project",
+			"agent:when":   "Free disk space by removing build artifacts and dependency caches from a project",
+			"agent:safety": "Deletes node_modules, target/, .venv, dist/, .next/, .svelte-kit/ etc. Recoverable via reinstall.",
+		},
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				return cleanProject(args[0])

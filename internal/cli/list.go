@@ -17,6 +17,10 @@ func newListCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List projects with optional filters",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "List registered projects, optionally filtering by status or category",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Projects) == 0 {
 				fmt.Println("No projects registered.")
