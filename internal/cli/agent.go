@@ -25,6 +25,7 @@ Subcommands provide non-interactive access to the same actions.`,
 	cmd.AddCommand(
 		newAgentLaunchCmd(),
 		newAgentShellCmd(),
+		newAgentResumeCmd(),
 	)
 	return cmd
 }
@@ -54,9 +55,28 @@ func newAgentShellCmd() *cobra.Command {
 	}
 }
 
+func newAgentResumeCmd() *cobra.Command {
+	var prompt string
+	cmd := &cobra.Command{
+		Use:   "resume <session-id>",
+		Short: "Resume a Claude Code session by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
+			session := agent.FindSession(sessionID)
+			if session == nil {
+				return fmt.Errorf("session %s not found", sessionID)
+			}
+			return agent.LaunchClaude(session.Cwd, session.ID, prompt)
+		},
+	}
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "additional prompt for the resumed session")
+	return cmd
+}
+
 func runAgentTUI() error {
 	cwd, _ := os.Getwd()
-	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
+	workspaces, sessCache, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {
 		fmt.Fprintf(os.Stderr, "ws agent: %s\n", d)
 	}
@@ -64,7 +84,7 @@ func runAgentTUI() error {
 		return fmt.Errorf("no workspaces found")
 	}
 
-	m := agent.NewModel(workspaces)
+	m := agent.NewModel(workspaces, sessCache)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
