@@ -69,6 +69,10 @@ type Model struct {
 	// Status message — shown in footer until next keypress.
 	statusMsg string
 
+	// Delete confirmation state.
+	pendingDelete bool // true = waiting for y/n confirmation
+	deleteItem    *listItem
+
 	// Active project for worktree/promote forms.
 	popupProj *Project
 
@@ -171,6 +175,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle pending delete confirmation.
+	if m.pendingDelete {
+		m.pendingDelete = false
+		if msg.String() == "y" && m.deleteItem != nil {
+			it := m.deleteItem
+			m.deleteItem = nil
+			if err := DeleteWorktree(it.parentProj.Path, it.worktree.Path, false); err != nil {
+				m.statusMsg = err.Error()
+				return m, nil
+			}
+			m.wtCache.Invalidate(it.parentProj.Path)
+			m.rebuildItems()
+			m.ensureVisible()
+			m.statusMsg = "worktree deleted"
+			return m, nil
+		}
+		m.deleteItem = nil
+		m.statusMsg = ""
+		return m, nil
+	}
+
 	m.statusMsg = "" // clear status on any key
 	item := m.currentItem()
 
@@ -303,14 +328,11 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
 				break
 			}
-			if err := DeleteWorktree(item.parentProj.Path, wt.Path, false); err != nil {
-				m.statusMsg = err.Error()
-				break
-			}
-			m.wtCache.Invalidate(item.parentProj.Path)
-			m.rebuildItems()
-			m.ensureVisible()
-			m.statusMsg = "worktree deleted"
+			// Ask for confirmation.
+			name := worktreeDisplayName(*wt)
+			m.statusMsg = fmt.Sprintf("delete %s? y to confirm", name)
+			m.pendingDelete = true
+			m.deleteItem = item
 		}
 
 	case "s", "/":
