@@ -15,6 +15,10 @@ func newGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "group",
 		Short: "Manage project groups",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Create and inspect project groups for organizing repos by team or domain",
+		},
 	}
 
 	cmd.AddCommand(
@@ -32,7 +36,11 @@ func newGroupAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a new group",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Create a new project group and its directory",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if _, exists := ws.Groups[name]; exists {
@@ -66,6 +74,10 @@ func newGroupListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all groups with project counts",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "List all defined groups with their project counts",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Groups) == 0 {
 				fmt.Println("No groups defined. Use 'ws group add <name>' to create one.")
@@ -109,7 +121,11 @@ func newGroupShowCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show projects in a group",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Show all projects belonging to a specific group",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			groupName := args[0]
 

@@ -13,6 +13,10 @@ func newAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
 		Short: "Manage GitHub authentication",
+		Annotations: map[string]string{
+			"capability": "auth",
+			"agent:when": "Manage GitHub authentication for repo discovery and API access",
+		},
 	}
 
 	cmd.AddCommand(
@@ -30,6 +34,11 @@ func newAuthLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with GitHub",
+		Annotations: map[string]string{
+			"capability":   "auth",
+			"agent:when":   "Authenticate with GitHub via device flow or personal access token",
+			"agent:safety": "Interactive: requires user to complete GitHub device flow or paste a PAT.",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var token auth.Token
 			var err error
@@ -61,6 +70,10 @@ func newAuthLogoutCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove stored authentication",
+		Annotations: map[string]string{
+			"capability": "auth",
+			"agent:when": "Remove the stored GitHub token",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !auth.HasToken() {
 				fmt.Println("  Not authenticated.")
@@ -79,6 +92,10 @@ func newAuthStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show current authentication status",
+		Annotations: map[string]string{
+			"capability": "auth",
+			"agent:when": "Check whether GitHub authentication is configured and valid",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			token, err := auth.LoadToken()
 			if err != nil {

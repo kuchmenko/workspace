@@ -14,6 +14,10 @@ func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Run one reconciler tick in the foreground",
+		Annotations: map[string]string{
+			"capability": "sync",
+			"agent:when": "Manually trigger a full sync cycle: push/pull workspace.toml, fetch all projects, ff-pull main worktrees, push owned wt/* branches",
+		},
 		Long: `Synchronize this workspace right now without waiting for the daemon.
 
 Performs the same work as a single daemon tick: commits and pushes
@@ -38,6 +42,11 @@ func newSyncResolveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resolve",
 		Short: "Inspect and act on unresolved sync conflicts",
+		Annotations: map[string]string{
+			"capability":   "sync",
+			"agent:when":   "View and resolve sync conflicts (branch divergence, merge failures, etc.)",
+			"agent:safety": "Interactive prompt — opens a shell for the user to resolve manually. Never auto-merges.",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncResolve()
 		},

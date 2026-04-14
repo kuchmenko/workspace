@@ -13,6 +13,11 @@ func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
 		Short: "TUI launcher for Claude Code sessions across workspaces",
+		Annotations: map[string]string{
+			"capability":   "agent",
+			"agent:when":   "Browse workspaces and projects, then launch or resume Claude Code sessions",
+			"agent:safety": "Interactive TUI. Use subcommands (launch, shell, resume) for non-interactive access.",
+		},
 		Long: `Launch an interactive TUI that lets you browse workspaces, projects,
 and worktrees, then start or resume Claude Code sessions.
 
@@ -35,7 +40,11 @@ func newAgentLaunchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "launch <project-path>",
 		Short: "Launch claude in a project directory (non-interactive)",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "agent",
+			"agent:when": "Start a new Claude Code session in a specific project directory",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return agent.LaunchClaude(args[0], "", prompt)
 		},
@@ -48,7 +57,11 @@ func newAgentShellCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "shell <path>",
 		Short: "Open shell in a directory (non-interactive)",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "agent",
+			"agent:when": "Open a new shell in a specific project directory",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return agent.LaunchShell(args[0])
 		},
@@ -60,7 +73,11 @@ func newAgentResumeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resume <session-id>",
 		Short: "Resume a Claude Code session by ID",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "agent",
+			"agent:when": "Resume a previously started Claude Code session by its session ID",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID := args[0]
 			session := agent.FindSession(sessionID)

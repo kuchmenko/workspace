@@ -23,6 +23,10 @@ func newBootstrapCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bootstrap [project]",
 		Short: "Clone projects from workspace.toml that are missing on this machine",
+		Annotations: map[string]string{
+			"capability": "project",
+			"agent:when": "On a fresh machine, clone all projects listed in workspace.toml directly into the bare+worktree layout",
+		},
 		Long: `Materialize projects listed in workspace.toml into the bare+worktree
 layout. On a fresh machine where workspace.toml has been pulled but nothing
 is cloned yet, 'ws bootstrap' walks the registry and clones each missing

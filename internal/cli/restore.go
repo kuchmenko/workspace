@@ -15,7 +15,11 @@ func newRestoreCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "restore <project-name>",
 		Short: "Restore an archived project (untar or re-clone)",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "project",
+			"agent:when": "Restore an archived project from tarball or by re-cloning from remote",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			proj, exists := ws.Projects[name]

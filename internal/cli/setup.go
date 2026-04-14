@@ -13,6 +13,11 @@ func newSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Interactive setup — select repos from GitHub and organize into groups",
+		Annotations: map[string]string{
+			"capability":   "project",
+			"agent:when":   "First-time workspace setup: interactively select GitHub repos and organize them into groups",
+			"agent:safety": "Interactive TUI — requires user interaction. Writes workspace.toml.",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := setup.NewModel()
 			p := tea.NewProgram(m, tea.WithAltScreen())
