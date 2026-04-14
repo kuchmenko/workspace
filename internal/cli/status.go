@@ -18,6 +18,10 @@ func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show all projects with their current state",
+		Annotations: map[string]string{
+			"capability": "observability",
+			"agent:when": "Get an overview of all projects: branch, last commit, layout (plain/worktree/missing)",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Projects) == 0 {
 				fmt.Println("No projects registered. Use 'ws add <url>' to add one.")

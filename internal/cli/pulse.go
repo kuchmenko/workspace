@@ -30,6 +30,10 @@ func newPulseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pulse",
 		Short: "Cross-machine activity dashboard from GitHub events",
+		Annotations: map[string]string{
+			"capability": "observability",
+			"agent:when": "View cross-machine push activity, open PRs, and review inbox from GitHub events",
+		},
 		Long: `Show what you've been pushing across all your projects, with
 machine attribution via the wt/<machine>/<topic> branch convention and
 the project.autopush.owned registry. Data comes from the GitHub Events

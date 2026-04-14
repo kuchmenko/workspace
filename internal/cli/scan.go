@@ -14,6 +14,10 @@ func newScanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "scan",
 		Short: "Find git repos not registered in workspace.toml",
+		Annotations: map[string]string{
+			"capability": "project",
+			"agent:when": "Discover git repos under standard directories that are not yet tracked in workspace.toml",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scanDirs := []string{"personal", "work", "playground", "researches", "tools"}
 			var found int

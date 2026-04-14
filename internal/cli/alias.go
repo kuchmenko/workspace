@@ -16,7 +16,11 @@ func newAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
 		Short: "Manage shell aliases for projects and groups",
-		RunE:  runAliasTUI,
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Manage shell aliases (cd shortcuts) for projects and groups via TUI or subcommands",
+		},
+		RunE: runAliasTUI,
 	}
 	cmd.AddCommand(
 		newAliasListCmd(),
@@ -53,6 +57,10 @@ func newAliasListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List configured aliases",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "List all configured shell aliases with their targets and resolved paths",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Aliases) == 0 {
 				fmt.Println("No aliases defined. Run `ws alias` to create some.")
@@ -80,7 +88,11 @@ func newAliasAddCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "add <alias> <target>",
 		Short: "Add an alias for a project or group",
-		Args:  cobra.ExactArgs(2),
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Create a shell alias that cd's into a project or group directory",
+		},
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, target := args[0], args[1]
 			if target != alias.RootTarget {
@@ -115,7 +127,11 @@ func newAliasRmCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "rm <alias>",
 		Short: "Remove an alias",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Remove a previously defined shell alias",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if _, ok := ws.Aliases[name]; !ok {
@@ -135,6 +151,10 @@ func newAliasInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init [shell]",
 		Short: "Print shell snippet to eval (default: zsh)",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Output shell init snippet for sourcing aliases (eval in .zshrc)",
+		},
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shell := "zsh"
@@ -155,6 +175,10 @@ func newAliasInstallCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install",
 		Short: "Add a sourcing line to ~/.zshrc (idempotent)",
+		Annotations: map[string]string{
+			"capability": "organisation",
+			"agent:when": "Install alias auto-loading into ~/.zshrc (idempotent, safe to re-run)",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Make sure state file exists before installing the source line.
 			if err := alias.WriteStateFile(ws, wsRoot); err != nil {
