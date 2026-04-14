@@ -122,8 +122,11 @@ func workspaceRoots(fallback string) []string {
 	}
 
 	if len(out) == 0 && fallback != "" {
+		// Try exact cwd first, then walk up to find workspace root.
 		if _, err := os.Stat(filepath.Join(fallback, "workspace.toml")); err == nil {
 			out = append(out, fallback)
+		} else if root, err := config.FindRoot(); err == nil && !seen[root] {
+			out = append(out, root)
 		}
 	}
 
