@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
@@ -61,6 +62,13 @@ type Model struct {
 	expanded   map[string]bool // group/project name → expanded
 	scroll     int             // scroll offset for long lists
 
+	// Caches — loaded lazily, invalidated after mutations.
+	sessCache *SessionCache
+	wtCache   *WorktreeCache
+
+	// Status message — shown in footer until next keypress.
+	statusMsg string
+
 	// Active project for worktree/promote forms.
 	popupProj *Project
 
@@ -97,11 +105,18 @@ type Model struct {
 }
 
 // NewModel constructs the TUI model from loaded workspace data.
-func NewModel(workspaces []WorkspaceData) *Model {
+// sessCache should be the cache returned by LoadWorkspaces (already
+// populated with session counts from the initial scan).
+func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
+	if sessCache == nil {
+		sessCache = NewSessionCache()
+	}
 	m := &Model{
 		workspaces: workspaces,
 		mode:       viewList,
 		expanded:   make(map[string]bool),
+		sessCache:  sessCache,
+		wtCache:    NewWorktreeCache(),
 	}
 	// Auto-expand all groups initially.
 	for _, ws := range workspaces {
@@ -156,6 +171,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.statusMsg = "" // clear status on any key
 	item := m.currentItem()
 
 	switch msg.String() {
@@ -277,9 +293,24 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "d":
 		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
-			DeleteWorktree(item.parentProj.Path, item.worktree.Path, false)
+			wt := item.worktree
+			if git.IsDirty(wt.Path) {
+				m.statusMsg = "cannot delete: uncommitted changes"
+				break
+			}
+			ahead, _, hasUpstream := git.AheadBehind(wt.Path, wt.Branch)
+			if hasUpstream && ahead > 0 {
+				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
+				break
+			}
+			if err := DeleteWorktree(item.parentProj.Path, wt.Path, false); err != nil {
+				m.statusMsg = err.Error()
+				break
+			}
+			m.wtCache.Invalidate(item.parentProj.Path)
 			m.rebuildItems()
 			m.ensureVisible()
+			m.statusMsg = "worktree deleted"
 		}
 
 	case "s", "/":
@@ -481,6 +512,18 @@ func (m *Model) currentItem() *listItem {
 	return nil
 }
 
+// workspaceRootFor returns the workspace root directory for a project.
+func (m *Model) workspaceRootFor(proj *Project) string {
+	for _, ws := range m.workspaces {
+		for _, p := range ws.Projects {
+			if p.ID == proj.ID {
+				return ws.Root
+			}
+		}
+	}
+	return ""
+}
+
 func (m *Model) toggleExpand(key string) {
 	m.expanded[key] = !m.expanded[key]
 	m.rebuildItems()
@@ -573,9 +616,11 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 
 	result, err := CreateWorktree(m.popupProj, topic, branch, m.wtAutoPush)
 	if err != nil {
+		m.statusMsg = err.Error()
 		m.mode = viewList
 		return m, nil
 	}
+	m.wtCache.Invalidate(m.popupProj.Path)
 
 	// If "create worktree only" (w key), go back to list.
 	if m.wtNoLaunch {
@@ -583,6 +628,7 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 		m.mode = viewList
 		m.rebuildItems()
 		m.ensureVisible()
+		m.statusMsg = "worktree created"
 		return m, nil
 	}
 
@@ -625,12 +671,17 @@ func (m *Model) executePromote() (tea.Model, tea.Cmd) {
 	if newName == "" {
 		return m, nil
 	}
-	err := PromoteWorktree(m.popupProj.Path, m.promoteWt, newName)
+	wsRoot := m.workspaceRootFor(m.popupProj)
+	err := PromoteWorktree(m.popupProj.Path, m.promoteWt, newName, wsRoot, m.popupProj.ID)
 	if err != nil {
+		m.statusMsg = err.Error()
 		m.mode = viewList
 		return m, nil
 	}
-	m.rebuildItems() // refresh list to show renamed branch
+	m.wtCache.Invalidate(m.popupProj.Path)
+	m.statusMsg = "branch promoted to " + newName
+	m.mode = viewList
+	m.rebuildItems()
 	return m, nil
 }
 
@@ -1008,7 +1059,7 @@ func (m *Model) addProjectItem(p *Project, indent int) {
 		return
 	}
 
-	wts := LoadWorktrees(p.Path)
+	wts := m.wtCache.Get(p.Path)
 	for i := range wts {
 		wt := &wts[i]
 		name := worktreeDisplayName(*wt)
@@ -1022,7 +1073,7 @@ func (m *Model) addProjectItem(p *Project, indent int) {
 		})
 	}
 
-	sessions := LoadSessions([]string{p.Path})
+	sessions := m.sessCache.Get(p.Path)
 	if len(sessions) > 5 {
 		sessions = sessions[:5]
 	}
@@ -1215,8 +1266,44 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
-	label := fmt.Sprintf(" %s%s %s", indent, iconWorktree, name)
 
+	// Status indicators: * for dirty, ↑N for ahead.
+	var status string
+	if item.worktree != nil {
+		if item.worktree.Dirty {
+			status += "*"
+		}
+		if item.worktree.Ahead > 0 {
+			status += fmt.Sprintf(" \u2191%d", item.worktree.Ahead)
+		}
+		status = strings.TrimSpace(status)
+	}
+
+	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
+	// Truncate name to fit available width.
+	maxName := w - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
+	if maxName > 0 && !inFlash {
+		name = truncateStr(name, maxName)
+	}
+
+	left := prefix + name
+	if status != "" {
+		line := m.padRight(left, status+" ", w)
+		if dimAll || (inFlash && !isMatch) {
+			return dimStyle.Width(w).Render(line)
+		}
+		if selected {
+			return m.renderSelected(line, wtStyle, w)
+		}
+		leftRendered := wtStyle.Render(left)
+		padding := w - lipgloss.Width(left) - lipgloss.Width(status) - 1
+		if padding < 1 {
+			padding = 1
+		}
+		return leftRendered + strings.Repeat(" ", padding) + wtStatusStyle.Render(status)
+	}
+
+	label := left
 	if dimAll || (inFlash && !isMatch) {
 		return dimStyle.Width(w).Render(label)
 	}
@@ -1315,8 +1402,10 @@ func (m *Model) viewList() string {
 	// List items.
 	rows = append(rows, m.renderListRows(listW, false)...)
 
-	// Footer — minimal hints.
-	if inFlash {
+	// Footer — status message or minimal hints.
+	if m.statusMsg != "" && !inFlash {
+		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
+	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump \u00b7 esc cancel"
 		footer := m.padRight(matchInfo, hint+" ", listW)
@@ -1530,6 +1619,7 @@ var (
 
 	selectedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("254")). // bright text
+			Background(lipgloss.Color("236")). // subtle dark bg
 			Bold(true)
 
 	// Type colors.
@@ -1548,6 +1638,13 @@ var (
 
 	badgeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")) // subtle
+
+	wtStatusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("173")) // warm amber dim — dirty/ahead indicators
+
+	statusMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("215")). // amber
+			Bold(true)
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
