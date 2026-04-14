@@ -96,20 +96,42 @@ into the project's autopush list in workspace.toml.`,
 			if _, err := os.Stat(wtPath); err == nil {
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
-			if git.HasBranch(barePath, branch) {
-				return fmt.Errorf("branch %s already exists; pick a different name or remove it first", branch)
+
+			// Fetch the specific branch from origin so we see branches
+			// pushed from other machines. Bare repos in the workspace layout
+			// have no fetch refspec (git clone --bare omits it), so a generic
+			// `git fetch --all` would not bring in new remote branches. A
+			// targeted refspec fetch works regardless.
+			// Best-effort: if offline or branch doesn't exist on origin, we
+			// continue with whatever local state is available.
+			refspec := "+refs/heads/" + branch + ":refs/heads/" + branch
+			if err := git.FetchRefspec(barePath, "origin", refspec); err != nil {
+				// Silence: the branch simply may not exist on origin yet
+				// (common case for truly new topics). No warning needed.
 			}
 
-			base := fromBase
-			if base == "" {
-				base = proj.DefaultBranch
-			}
-			if base == "" {
-				return fmt.Errorf("project %s has no default_branch and --from was not given", projectName)
-			}
+			branchExists := git.HasBranch(barePath, branch)
 
-			if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
-				return err
+			if branchExists {
+				if fromBase != "" {
+					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists\n", branch)
+				}
+				if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
+					return err
+				}
+				// Set up upstream tracking so git pull works.
+				_ = git.SetBranchUpstream(barePath, branch, "origin")
+			} else {
+				base := fromBase
+				if base == "" {
+					base = proj.DefaultBranch
+				}
+				if base == "" {
+					return fmt.Errorf("project %s has no default_branch and --from was not given", projectName)
+				}
+				if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
+					return err
+				}
 			}
 
 			autopushNote := ""
@@ -128,9 +150,17 @@ into the project's autopush list in workspace.toml.`,
 				autopushNote = fmt.Sprintf(" (auto-push enabled, owner: %s)", machine)
 			}
 
-			fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
-			if customBranch != "" && !autoPush {
-				fmt.Println("  note:   branch is outside wt/<machine>/* — daemon will not auto-push it; add --auto-push to opt in")
+			if branchExists {
+				fmt.Printf("created worktree %s\n  branch: %s%s (checked out existing)\n", wtPath, branch, autopushNote)
+			} else {
+				base := fromBase
+				if base == "" {
+					base = proj.DefaultBranch
+				}
+				fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
+				if customBranch != "" && !autoPush {
+					fmt.Println("  note:   branch is outside wt/<machine>/* — daemon will not auto-push it; add --auto-push to opt in")
+				}
 			}
 			return nil
 		},
