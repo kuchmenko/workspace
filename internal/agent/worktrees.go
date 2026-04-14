@@ -155,23 +155,30 @@ func PromoteWorktree(mainPath string, wt Worktree, newBranch, wsRoot, projID str
 		return fmt.Errorf("rename branch: %w", err)
 	}
 
-	// Step 3: best-effort delete the old remote ref.
-	_ = git.DeleteRemoteBranch(barePath, wt.Branch)
-
-	// Step 4: update autopush in workspace.toml.
+	// Step 3: update autopush in workspace.toml.
+	// Claim the new branch first — if it's owned by another machine the
+	// call returns an error and we skip the release so we never persist a
+	// half-transferred state.
 	if wsRoot != "" && projID != "" {
 		if ws, err := config.Load(wsRoot); err == nil {
 			if proj, ok := ws.Projects[projID]; ok {
-				proj.ReleaseAutopushBranch(wt.Branch)
-				proj.ClaimAutopushBranch(newBranch, machine, false)
-				ws.Projects[projID] = proj
-				_ = config.Save(wsRoot, ws)
+				if _, claimErr := proj.ClaimAutopushBranch(newBranch, machine, false); claimErr == nil {
+					proj.ReleaseAutopushBranch(wt.Branch)
+					ws.Projects[projID] = proj
+					if saveErr := config.Save(wsRoot, ws); saveErr != nil {
+						return fmt.Errorf("autopush saved failed: %w", saveErr)
+					}
+				}
 			}
 		}
 	}
 
-	// Step 5: best-effort push the renamed branch.
-	_ = git.PushBranch(barePath, newBranch)
+	// Step 4: push the renamed branch first, then delete the old remote
+	// ref. If push fails, keep the old ref so there's always at least one
+	// reachable branch on origin.
+	if err := git.PushBranch(barePath, newBranch); err == nil {
+		_ = git.DeleteRemoteBranch(barePath, wt.Branch)
+	}
 
 	return nil
 }
