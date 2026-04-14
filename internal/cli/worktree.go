@@ -50,12 +50,44 @@ func newWorktreeNewCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "new <project> <topic>",
-		Short: "Create a new worktree on branch wt/<machine>/<topic>",
-		Long: `Create a new worktree. By default the branch is named
-wt/<machine>/<topic> and is auto-pushed by the daemon. Pass --branch to use
-a custom, repository-native branch name (e.g. feat/fix-login); such branches
-are NOT auto-pushed unless you also pass --auto-push, which opts the branch
-into the project's autopush list in workspace.toml.`,
+		Short: "Create a worktree — or check out an existing remote branch",
+		Long: `Create a new worktree for <project> on topic <topic>.
+
+BRANCH NAMING
+
+  By default the branch is named wt/<machine>/<topic> and is auto-pushed
+  by the daemon. Pass --branch to use a custom, repository-native branch
+  name (e.g. feat/fix-login); such branches are NOT auto-pushed unless
+  you also pass --auto-push.
+
+AUTO-DETECT EXISTING BRANCHES
+
+  Before creating a new branch, the command fetches the specific branch
+  from origin. If it already exists (e.g. pushed from another machine or
+  created via a PR), the existing branch is checked out into the new
+  worktree instead of creating a fresh one. Upstream tracking is configured
+  automatically so git pull works.
+
+  When an existing branch is detected:
+    - --from is ignored (with a warning)
+    - output shows "(checked out existing)" to distinguish from creation
+
+EXAMPLES
+
+  # Create a new worktree (branch wt/<machine>/auth-refactor from main):
+  ws worktree new myapp auth-refactor
+
+  # Check out an existing remote branch (auto-detected):
+  ws worktree new myapp data-api
+
+  # Create from a specific base ref:
+  ws worktree new myapp hotfix --from release/v2
+
+  # Use a custom branch name and opt into auto-push:
+  ws worktree new myapp login --branch feat/login-2fa --auto-push
+
+  # Take ownership of a branch another machine already owns:
+  ws worktree new myapp login --branch feat/login-2fa --auto-push --reclaim`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, topic := args[0], args[1]
@@ -96,20 +128,42 @@ into the project's autopush list in workspace.toml.`,
 			if _, err := os.Stat(wtPath); err == nil {
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
-			if git.HasBranch(barePath, branch) {
-				return fmt.Errorf("branch %s already exists; pick a different name or remove it first", branch)
+
+			// Fetch the specific branch from origin so we see branches
+			// pushed from other machines. Bare repos in the workspace layout
+			// have no fetch refspec (git clone --bare omits it), so a generic
+			// `git fetch --all` would not bring in new remote branches. A
+			// targeted refspec fetch works regardless.
+			// Best-effort: if offline or branch doesn't exist on origin, we
+			// continue with whatever local state is available.
+			refspec := "+refs/heads/" + branch + ":refs/heads/" + branch
+			if err := git.FetchRefspec(barePath, "origin", refspec); err != nil {
+				// Silence: the branch simply may not exist on origin yet
+				// (common case for truly new topics). No warning needed.
 			}
 
-			base := fromBase
-			if base == "" {
-				base = proj.DefaultBranch
-			}
-			if base == "" {
-				return fmt.Errorf("project %s has no default_branch and --from was not given", projectName)
-			}
+			branchExists := git.HasBranch(barePath, branch)
 
-			if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
-				return err
+			if branchExists {
+				if fromBase != "" {
+					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists\n", branch)
+				}
+				if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
+					return err
+				}
+				// Set up upstream tracking so git pull works.
+				_ = git.SetBranchUpstream(barePath, branch, "origin")
+			} else {
+				base := fromBase
+				if base == "" {
+					base = proj.DefaultBranch
+				}
+				if base == "" {
+					return fmt.Errorf("project %s has no default_branch and --from was not given", projectName)
+				}
+				if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
+					return err
+				}
 			}
 
 			autopushNote := ""
@@ -128,17 +182,25 @@ into the project's autopush list in workspace.toml.`,
 				autopushNote = fmt.Sprintf(" (auto-push enabled, owner: %s)", machine)
 			}
 
-			fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
-			if customBranch != "" && !autoPush {
-				fmt.Println("  note:   branch is outside wt/<machine>/* — daemon will not auto-push it; add --auto-push to opt in")
+			if branchExists {
+				fmt.Printf("created worktree %s\n  branch: %s%s (checked out existing)\n", wtPath, branch, autopushNote)
+			} else {
+				base := fromBase
+				if base == "" {
+					base = proj.DefaultBranch
+				}
+				fmt.Printf("created worktree %s\n  branch: %s%s\n  base:   %s\n", wtPath, branch, autopushNote, base)
+				if customBranch != "" && !autoPush {
+					fmt.Println("  note:   branch is outside wt/<machine>/* — daemon will not auto-push it; add --auto-push to opt in")
+				}
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&fromBase, "from", "", "base ref to branch from (default: project default_branch)")
-	cmd.Flags().StringVar(&customBranch, "branch", "", "custom branch name (bypasses wt/<machine>/<topic>; excluded from auto-push unless --auto-push is also set)")
-	cmd.Flags().BoolVar(&autoPush, "auto-push", false, "opt the custom --branch into the project's daemon auto-push whitelist")
-	cmd.Flags().BoolVar(&reclaim, "reclaim", false, "with --auto-push, take ownership even if another machine already owns the branch")
+	cmd.Flags().StringVar(&fromBase, "from", "", "base ref to create the new branch from (default: project's\ndefault_branch). Ignored with a warning when the branch already\nexists on origin")
+	cmd.Flags().StringVar(&customBranch, "branch", "", "use a custom branch name instead of wt/<machine>/<topic>.\nThe branch is excluded from the daemon's auto-push unless\n--auto-push is also set. The worktree directory name is\nderived from the slugified branch (e.g. feat/buddy -> feat-buddy)")
+	cmd.Flags().BoolVar(&autoPush, "auto-push", false, "register the custom --branch in the project's autopush list\nin workspace.toml so the daemon pushes it automatically.\nRequires --branch (wt/<machine>/* branches are always auto-pushed)")
+	cmd.Flags().BoolVar(&reclaim, "reclaim", false, "with --auto-push, take ownership of the branch even if another\nmachine already owns it. Without this flag, claiming a branch\nowned by another machine is an error")
 	return cmd
 }
 
