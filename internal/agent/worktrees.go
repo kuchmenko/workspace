@@ -16,6 +16,8 @@ type Worktree struct {
 	Path   string
 	Branch string
 	IsMain bool
+	Dirty  bool // has uncommitted changes
+	Ahead  int  // commits ahead of upstream (0 if no upstream)
 }
 
 // WorktreeResult is returned after successful worktree creation.
@@ -104,10 +106,12 @@ func DeleteWorktree(mainPath, wtPath string, force bool) error {
 //  1. Move worktree directory: old-path → new-path (git worktree move)
 //  2. Rename branch: old-branch → new-branch (git branch -m)
 //  3. If branch rename fails, roll back the directory move.
+//  4. Update autopush in workspace.toml (release old, claim new).
+//  5. Delete old remote ref, push new branch (best-effort).
 //
-// Does NOT handle: autopush, remote ref delete, push. The daemon
-// picks these up on the next tick via workspace.toml.
-func PromoteWorktree(mainPath string, wt Worktree, newBranch string) error {
+// wsRoot and projID are needed for step 4 (workspace.toml update).
+// Pass empty strings to skip autopush update.
+func PromoteWorktree(mainPath string, wt Worktree, newBranch, wsRoot, projID string) error {
 	if wt.IsMain {
 		return fmt.Errorf("cannot promote main worktree")
 	}
@@ -154,6 +158,21 @@ func PromoteWorktree(mainPath string, wt Worktree, newBranch string) error {
 	// Step 3: best-effort delete the old remote ref.
 	_ = git.DeleteRemoteBranch(barePath, wt.Branch)
 
+	// Step 4: update autopush in workspace.toml.
+	if wsRoot != "" && projID != "" {
+		if ws, err := config.Load(wsRoot); err == nil {
+			if proj, ok := ws.Projects[projID]; ok {
+				proj.ReleaseAutopushBranch(wt.Branch)
+				proj.ClaimAutopushBranch(newBranch, machine, false)
+				ws.Projects[projID] = proj
+				_ = config.Save(wsRoot, ws)
+			}
+		}
+	}
+
+	// Step 5: best-effort push the renamed branch.
+	_ = git.PushBranch(barePath, newBranch)
+
 	return nil
 }
 
@@ -180,18 +199,49 @@ func worktreeDisplayName(wt Worktree) string {
 	return filepath.Base(wt.Path)
 }
 
+// WorktreeCache is a lazy, map-based cache for worktree listings.
+// Worktrees are loaded from git on first access for a given project
+// and served from memory on subsequent accesses. Invalidate after
+// create/delete/promote operations.
+type WorktreeCache struct {
+	data map[string][]Worktree // mainPath → worktrees
+}
+
+// NewWorktreeCache creates an empty worktree cache.
+func NewWorktreeCache() *WorktreeCache {
+	return &WorktreeCache{data: make(map[string][]Worktree)}
+}
+
+// Get returns worktrees for the given mainPath, loading from git on
+// first access and caching the result.
+func (c *WorktreeCache) Get(mainPath string) []Worktree {
+	if wts, ok := c.data[mainPath]; ok {
+		return wts
+	}
+	wts := LoadWorktrees(mainPath)
+	c.data[mainPath] = wts
+	return wts
+}
+
+// Invalidate removes cached worktrees for a path, forcing a reload
+// on the next Get call.
+func (c *WorktreeCache) Invalidate(mainPath string) {
+	delete(c.data, mainPath)
+}
+
 // LoadWorktrees returns the worktrees for a project. Requires the
-// project to be migrated (bare repo exists).
+// project to be migrated (bare repo exists). Populates Dirty and
+// Ahead fields by querying git status for each worktree.
 func LoadWorktrees(mainPath string) []Worktree {
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
 		// Not migrated — return just the main path.
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true}}
+		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
 	}
 
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true}}
+		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
 	}
 
 	var result []Worktree
@@ -199,11 +249,15 @@ func LoadWorktrees(mainPath string) []Worktree {
 		if wt.Bare {
 			continue
 		}
-		result = append(result, Worktree{
+		w := Worktree{
 			Path:   wt.Path,
 			Branch: wt.Branch,
 			IsMain: wt.Path == mainPath,
-		})
+			Dirty:  git.IsDirty(wt.Path),
+		}
+		ahead, _, _ := git.AheadBehind(wt.Path, wt.Branch)
+		w.Ahead = ahead
+		result = append(result, w)
 	}
 	return result
 }

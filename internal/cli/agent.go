@@ -56,7 +56,7 @@ func newAgentShellCmd() *cobra.Command {
 
 func runAgentTUI() error {
 	cwd, _ := os.Getwd()
-	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
+	workspaces, sessCache, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {
 		fmt.Fprintf(os.Stderr, "ws agent: %s\n", d)
 	}
@@ -64,7 +64,7 @@ func runAgentTUI() error {
 		return fmt.Errorf("no workspaces found")
 	}
 
-	m := agent.NewModel(workspaces)
+	m := agent.NewModel(workspaces, sessCache)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {

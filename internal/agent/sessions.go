@@ -146,6 +146,41 @@ func claudeProjectsDir() string {
 	return dir
 }
 
+// SessionCache is a lazy, map-based cache for Claude Code sessions.
+// Sessions are loaded from disk on first access for a given path and
+// then served from memory. Invalidation is explicit — call Invalidate
+// after operations that may create new sessions.
+type SessionCache struct {
+	data map[string][]Session // mainPath → sessions
+}
+
+// NewSessionCache creates an empty session cache.
+func NewSessionCache() *SessionCache {
+	return &SessionCache{data: make(map[string][]Session)}
+}
+
+// Get returns sessions for the given mainPath, loading from disk on
+// first access and caching the result.
+func (c *SessionCache) Get(mainPath string) []Session {
+	if sessions, ok := c.data[mainPath]; ok {
+		return sessions
+	}
+	sessions := LoadSessions([]string{mainPath})
+	c.data[mainPath] = sessions
+	return sessions
+}
+
+// Count returns the number of sessions for the given mainPath.
+func (c *SessionCache) Count(mainPath string) int {
+	return len(c.Get(mainPath))
+}
+
+// Invalidate removes cached sessions for a path, forcing a reload
+// on the next Get call.
+func (c *SessionCache) Invalidate(mainPath string) {
+	delete(c.data, mainPath)
+}
+
 // TimeAgo returns a human-readable relative time string.
 func TimeAgo(t time.Time) string {
 	d := time.Since(t)
