@@ -14,27 +14,30 @@ import (
 
 // LoadWorkspaces returns all registered workspaces with their projects.
 // Falls back to the workspace.toml under cwd if no daemon workspaces
-// are registered.
-func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
+// are registered. The returned SessionCache is pre-populated with
+// session counts from the initial scan and should be passed to NewModel
+// so the TUI can serve subsequent accesses from memory.
+func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, *SessionCache, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
 	if len(roots) == 0 {
 		diagnostics = append(diagnostics, "no workspaces registered (run `ws daemon register` or cd into a workspace)")
-		return nil, diagnostics
+		return nil, nil, diagnostics
 	}
 
+	cache := NewSessionCache()
 	var result []WorkspaceData
 	for _, root := range roots {
-		ws, diags := loadOneWorkspace(root)
+		ws, diags := loadOneWorkspace(root, cache)
 		diagnostics = append(diagnostics, diags...)
 		if ws != nil {
 			result = append(result, *ws)
 		}
 	}
-	return result, diagnostics
+	return result, cache, diagnostics
 }
 
-func loadOneWorkspace(root string) (*WorkspaceData, []string) {
+func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []string) {
 	var diagnostics []string
 	w, err := config.Load(root)
 	if err != nil {
@@ -91,9 +94,8 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 			}
 		}
 
-		// Count sessions.
-		sessions := LoadSessions([]string{mainPath})
-		proj.SessionCount = len(sessions)
+		// Count sessions (populates the cache for later TUI use).
+		proj.SessionCount = sessCache.Count(mainPath)
 
 		ws.Projects = append(ws.Projects, proj)
 	}
@@ -120,8 +122,11 @@ func workspaceRoots(fallback string) []string {
 	}
 
 	if len(out) == 0 && fallback != "" {
+		// Try exact cwd first, then walk up to find workspace root.
 		if _, err := os.Stat(filepath.Join(fallback, "workspace.toml")); err == nil {
 			out = append(out, fallback)
+		} else if root, err := config.FindRoot(); err == nil && !seen[root] {
+			out = append(out, root)
 		}
 	}
 
