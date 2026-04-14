@@ -25,6 +25,7 @@ Subcommands provide non-interactive access to the same actions.`,
 	cmd.AddCommand(
 		newAgentLaunchCmd(),
 		newAgentShellCmd(),
+		newAgentResumeCmd(),
 	)
 	return cmd
 }
@@ -52,6 +53,25 @@ func newAgentShellCmd() *cobra.Command {
 			return agent.LaunchShell(args[0])
 		},
 	}
+}
+
+func newAgentResumeCmd() *cobra.Command {
+	var prompt string
+	cmd := &cobra.Command{
+		Use:   "resume <session-id>",
+		Short: "Resume a Claude Code session by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := args[0]
+			session := agent.FindSession(sessionID)
+			if session == nil {
+				return fmt.Errorf("session %s not found", sessionID)
+			}
+			return agent.LaunchClaude(session.Cwd, session.ID, prompt)
+		},
+	}
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "additional prompt for the resumed session")
+	return cmd
 }
 
 func runAgentTUI() error {
