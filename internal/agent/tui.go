@@ -535,10 +535,11 @@ func (m *Model) currentItem() *listItem {
 }
 
 // workspaceRootFor returns the workspace root directory for a project.
+// Matches by Path (globally unique) rather than ID (per-workspace key).
 func (m *Model) workspaceRootFor(proj *Project) string {
 	for _, ws := range m.workspaces {
 		for _, p := range ws.Projects {
-			if p.ID == proj.ID {
+			if p.Path == proj.Path {
 				return ws.Root
 			}
 		}
