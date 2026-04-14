@@ -14,6 +14,10 @@ func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the workspace daemon",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Control the background daemon that auto-syncs projects across machines",
+		},
 	}
 
 	cmd.AddCommand(
@@ -45,6 +49,10 @@ func newDaemonStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
 		Short: "Start the daemon in background",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Start the workspace sync daemon in the background",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if pid, running := daemon.IsRunning(); running {
 				return fmt.Errorf("daemon already running (pid %d)", pid)
@@ -59,6 +67,10 @@ func newDaemonStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the daemon",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Stop the running workspace sync daemon",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := daemon.Dial()
 			if err != nil {
@@ -85,6 +97,10 @@ func newDaemonRestartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "restart",
 		Short: "Restart the daemon",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Restart the daemon (stop + start)",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Stop if running
 			if client, err := daemon.Dial(); err == nil {
@@ -102,6 +118,10 @@ func newDaemonStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show daemon status",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Check if the daemon is running and which workspaces it watches",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := daemon.Dial()
 			if err != nil {
@@ -133,7 +153,11 @@ func newDaemonRegisterCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "register [path]",
 		Short: "Register a workspace with the daemon",
-		Args:  cobra.MaximumNArgs(1),
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Register a workspace directory so the daemon auto-syncs it",
+		},
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := wsRoot
 			if len(args) == 1 {
@@ -152,7 +176,11 @@ func newDaemonUnregisterCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "unregister [path]",
 		Short: "Unregister a workspace from the daemon",
-		Args:  cobra.MaximumNArgs(1),
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Remove a workspace from the daemon's watch list",
+		},
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := wsRoot
 			if len(args) == 1 {
@@ -171,6 +199,10 @@ func newDaemonInstallServiceCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "install-service",
 		Short: "Install systemd user service for auto-start",
+		Annotations: map[string]string{
+			"capability": "daemon",
+			"agent:when": "Install a systemd user unit so the daemon starts automatically on login",
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			home, err := os.UserHomeDir()
 			if err != nil {

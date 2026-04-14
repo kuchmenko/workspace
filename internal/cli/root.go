@@ -23,7 +23,7 @@ func NewRootCmd() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Skip loading for commands that don't need it
 			// Commands that don't need workspace.toml
-			if cmd.Name() == "help" || cmd.Name() == "completion" {
+			if cmd.Name() == "help" || cmd.Name() == "completion" || cmd.Name() == "docs" {
 				return nil
 			}
 			// Agent TUI loads workspace data lazily from daemon.toml,
@@ -95,6 +95,7 @@ func NewRootCmd() *cobra.Command {
 		newBootstrapCmd(),
 		newPulseCmd(),
 		newAgentCmd(),
+		newDocsCmd(),
 	)
 
 	return root

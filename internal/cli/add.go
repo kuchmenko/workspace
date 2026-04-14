@@ -20,7 +20,12 @@ func newAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <remote-url>",
 		Short: "Register and clone a new project",
-		Args:  cobra.ExactArgs(1),
+		Annotations: map[string]string{
+			"capability":   "project",
+			"agent:when":   "Register a new git repository in workspace.toml and clone it locally",
+			"agent:safety": "Creates a new directory and updates workspace.toml. Use --no-clone to register without cloning.",
+		},
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			remote := args[0]
 
