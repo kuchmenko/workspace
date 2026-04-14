@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.4.0](https://github.com/kuchmenko/workspace/compare/v0.3.0...v0.4.0) (2026-04-10)
+
+
+### Features
+
+* **agent:** canvas TUI for launching Claude Code across workspaces ([0151c05](https://github.com/kuchmenko/workspace/commit/0151c0543a22f46d27205eb10806c47469e959d5))
+* **agent:** context-sensitive toolbar + claude on groups ([fa75aa3](https://github.com/kuchmenko/workspace/commit/fa75aa3bc4b510346c3ad7288e513c04d426f08d))
+* **agent:** flash labels inline like flash.nvim ([6343f9b](https://github.com/kuchmenko/workspace/commit/6343f9bc7a3e283b7983cde9ac13b6fcb7d2a480))
+* **agent:** flash search with jump labels (s or /) ([85037f3](https://github.com/kuchmenko/workspace/commit/85037f3a57e4f62cecfb70f548e0c104d742d75d))
+* **agent:** l/→ opens shell in any item's directory ([a176384](https://github.com/kuchmenko/workspace/commit/a1763848bad95b21433cf08ef0fee61c4ecc6924))
+* **agent:** launcher + bare ws entry point ([070261d](https://github.com/kuchmenko/workspace/commit/070261dd7695ef6019817809865c01fcca293b63))
+* **agent:** open shell in project/worktree directory ([e84bdbd](https://github.com/kuchmenko/workspace/commit/e84bdbdbef33aec1064caf4c049533d52aa7247b))
+* **agent:** promote branch from TUI ([352d8d8](https://github.com/kuchmenko/workspace/commit/352d8d8c94ef6b8545f094bec2d4d9db6c083442))
+* **agent:** q-as-back, prompt input, CLI subcommands ([44700b3](https://github.com/kuchmenko/workspace/commit/44700b33bc9bb38c49720e58d92cc453e4153295))
+* **agent:** sessions parser, worktree listing, session badges ([3f805c9](https://github.com/kuchmenko/workspace/commit/3f805c9efe3d040172fe953e6deae25cfc4477b9))
+* **agent:** warm amber redesign + which-key + smart flash search ([0983100](https://github.com/kuchmenko/workspace/commit/09831003e6ce4775d48a4c7cc7d01c9d0f66f3b3))
+* **agent:** worktree creation form with branch + auto-push ([2bcacf8](https://github.com/kuchmenko/workspace/commit/2bcacf87e6ea055aa014d7d52bc8eaa755104a9c))
+* **agent:** worktree management — create-only, delete, display names ([c152b3a](https://github.com/kuchmenko/workspace/commit/c152b3aee099e1b19be6b024aeb2ff93b79a046a))
+* **pulse:** cross-machine activity dashboard with PRs and inbox tabs ([c2836fa](https://github.com/kuchmenko/workspace/commit/c2836fa9bb4be672c12e522bc261130bf0d0ba20))
+
+
+### Bug Fixes
+
+* **agent:** derive worktree path from branch when branch is explicit ([3fcea8f](https://github.com/kuchmenko/workspace/commit/3fcea8f9b34fb5016b7a78ac51bdf969acc270be))
+* **agent:** new worktree + session now goes through prompt input ([86b684a](https://github.com/kuchmenko/workspace/commit/86b684a9b87b4a1b1627d17adf6aaec9be776dde))
+* **agent:** nil guard on pendingLaunch in viewPromptInput ([bca59a8](https://github.com/kuchmenko/workspace/commit/bca59a8bf55c824162aa8dce0b2b1f7746bccb9f))
+* **agent:** promote now moves worktree directory + renames branch ([9c6d158](https://github.com/kuchmenko/workspace/commit/9c6d15865c0b3bf58a373a195ce563f42820877e))
+* **worktree:** derive path from branch in ws worktree new --branch ([e1c29bc](https://github.com/kuchmenko/workspace/commit/e1c29bcedc18f67457985572123bfa755121d003))
+
+
+### Performance Improvements
+
+* **agent:** optimize graphics renderer — text cache, shm double-buffer, benchmarks ([3e8771a](https://github.com/kuchmenko/workspace/commit/3e8771a39b00ba8cb80e15b0e7f4f361378ca75d))
+
 ## [0.3.0](https://github.com/kuchmenko/workspace/compare/v0.2.1...v0.3.0) (2026-04-08)
 
 
