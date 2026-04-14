@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.0](https://github.com/kuchmenko/workspace/compare/v0.4.0...v0.5.0) (2026-04-14)
+
+
+### Features
+
+* **agent:** context-sensitive two-line footer with all available shortcuts ([41e45cd](https://github.com/kuchmenko/workspace/commit/41e45cde3a040285b4c4cbd2163e9d0b97742f92))
+* **agent:** inline y/n confirmation before worktree delete ([92d94f5](https://github.com/kuchmenko/workspace/commit/92d94f5654fe4045ac3c556b7b0d012980112bf7))
+* **agent:** session/worktree caches, delete guards, promote autopush ([b01071b](https://github.com/kuchmenko/workspace/commit/b01071bd3c48b6f3a26debfa091a16a436f03a3c))
+* **agent:** session/worktree caches, delete guards, promote autopush, visual polish ([9f3b096](https://github.com/kuchmenko/workspace/commit/9f3b096212d81159480ae07b4850c101472f538b))
+* **agent:** ws root walk-up detection + ws agent resume subcommand ([34618e8](https://github.com/kuchmenko/workspace/commit/34618e8cea60496f3126425c1f7de0d100f37e29))
+* **worktree:** auto-detect existing remote branch ([54ace90](https://github.com/kuchmenko/workspace/commit/54ace90ee2dee9afa25e12140927b291e9555167))
+* **worktree:** auto-detect existing remote branch in ws worktree new ([03ac804](https://github.com/kuchmenko/workspace/commit/03ac8042852c69433951910ce02bf320347af386)), closes [#8](https://github.com/kuchmenko/workspace/issues/8)
+
+
+### Bug Fixes
+
+* **agent:** address review — path-based workspace lookup, safe promote ordering ([4e52079](https://github.com/kuchmenko/workspace/commit/4e52079f3ce3608d133fa8f0a8328f7466dfa133))
+
 ## [0.4.0](https://github.com/kuchmenko/workspace/compare/v0.3.0...v0.4.0) (2026-04-10)
 
 
