@@ -1007,11 +1007,39 @@ func (m *Model) ensureVisible() {
 }
 
 func (m *Model) listHeight() int {
-	h := m.height - 4 // header + footer + borders
+	h := m.height - 5 // header + 2 footer lines + borders
 	if h < 3 {
 		h = 3
 	}
 	return h
+}
+
+// footerHints returns two lines of context-sensitive keyboard hints.
+// Line 1: actions available for the currently selected item type.
+// Line 2: universal navigation shortcuts.
+func (m *Model) footerHints() (actions, nav string) {
+	nav = "j/k:\u2195  tab:expand  s:find  S:all  ?:more"
+	item := m.currentItem()
+	if item == nil {
+		return "\u23ce:open  s:find  S:all", nav
+	}
+	switch item.kind {
+	case KindGroup:
+		actions = "\u23ce:claude  p:+prompt  l:shell"
+	case KindProject:
+		actions = "\u23ce:claude  p:+prompt  w:worktree  l:shell"
+	case KindWorktree:
+		if item.worktree != nil && !item.worktree.IsMain {
+			actions = "\u23ce:claude  p:+prompt  l:shell  m:promote  d:delete"
+		} else {
+			actions = "\u23ce:claude  p:+prompt  l:shell"
+		}
+	case KindPortal:
+		actions = "\u23ce:resume  p:+prompt"
+	default:
+		actions = "\u23ce:open"
+	}
+	return actions, nav
 }
 
 // breadcrumb derives contextual header from the current cursor position.
@@ -1424,7 +1452,7 @@ func (m *Model) viewList() string {
 	// List items.
 	rows = append(rows, m.renderListRows(listW, false)...)
 
-	// Footer — status message or minimal hints.
+	// Footer — status message or context-sensitive hints.
 	if m.statusMsg != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
 	} else if inFlash {
@@ -1433,8 +1461,9 @@ func (m *Model) viewList() string {
 		footer := m.padRight(matchInfo, hint+" ", listW)
 		rows = append(rows, footerStyle.Width(listW).Render(footer))
 	} else {
-		hint := "\u23ce open   ? actions   s find   S all"
-		rows = append(rows, footerStyle.Width(listW).Render(" "+hint))
+		actions, nav := m.footerHints()
+		rows = append(rows, footerStyle.Width(listW).Render(" "+actions))
+		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
 	}
 
 	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
