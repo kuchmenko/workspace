@@ -137,11 +137,11 @@ EXAMPLES
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
 
-			// Fetch the specific branch from origin so we see branches
-			// pushed from other machines. Bare repos in the workspace layout
-			// have no fetch refspec (git clone --bare omits it), so a generic
-			// `git fetch --all` would not bring in new remote branches. A
-			// targeted refspec fetch works regardless.
+			// Fetch the branch directly into refs/heads/<branch> so the
+			// subsequent WorktreeAdd sees it as a local branch rather than
+			// a remote-tracking ref. A plain `git fetch` with the standard
+			// refspec would land it in refs/remotes/origin/<branch>, which
+			// git worktree add won't check out without a separate -b step.
 			// Best-effort: if offline or branch doesn't exist on origin, we
 			// continue with whatever local state is available.
 			refspec := "+refs/heads/" + branch + ":refs/heads/" + branch

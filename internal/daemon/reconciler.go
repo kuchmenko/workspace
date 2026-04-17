@@ -327,6 +327,18 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 		return nil
 	}
 
+	// One-time repair for bare repos created before the SetFetchRefspec
+	// fix: if no remote.origin.fetch is configured, the upcoming Fetch
+	// would update only FETCH_HEAD and leave refs/remotes/origin/* empty,
+	// breaking AheadBehind and ff-pull for the main worktree. Best-effort:
+	// a failure here is logged via the fetch error path below, since we
+	// still attempt the fetch unconditionally.
+	if !git.HasFetchRefspec(barePath) {
+		if err := git.SetFetchRefspec(barePath); err != nil {
+			r.logger.Printf("reconciler: %s: repair fetch refspec: %v", name, err)
+		}
+	}
+
 	if err := git.Fetch(barePath); err != nil {
 		return err // counts toward backoff
 	}
@@ -412,8 +424,10 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 			continue
 		}
 
-		// Other people's wt/<host>/* branches: nothing to do; the fetch
-		// already updated their refs in bare.
+		// Other people's wt/<host>/* branches: nothing to do. The Fetch
+		// above, combined with remote.origin.fetch=+refs/heads/*:
+		// refs/remotes/origin/*, keeps refs/remotes/origin/wt/<host>/*
+		// in sync so `ws status` and friends see the latest remote SHAs.
 	}
 	return nil
 }
