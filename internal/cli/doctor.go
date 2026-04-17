@@ -62,6 +62,23 @@ and leaves the action to the user.`,
 				Only:       only,
 				SkipRemote: skipRemote,
 			}
+
+			// For text mode we stream per-scope blocks as each check
+			// batch completes. Without this, the user sits in front of
+			// a silent terminal while every project's remote-reach
+			// check burns its 10s timeout. --json must not stream
+			// (partial JSON is invalid); --fix mode also skips
+			// streaming because fix outcomes need to be shown inline
+			// with each finding, and we don't know Fixed/FixError
+			// until ApplyFixes runs after every check completes.
+			streaming := !asJSON && !fix
+			if streaming {
+				first := true
+				r.OnScope = func(scope string, findings []doctor.Finding) {
+					doctor.WriteScope(os.Stdout, scope, findings, first)
+					first = false
+				}
+			}
 			report := r.Run()
 
 			var fixesApplied int
@@ -69,11 +86,14 @@ and leaves the action to the user.`,
 				fixesApplied = doctor.ApplyFixes(report)
 			}
 
-			if asJSON {
+			switch {
+			case asJSON:
 				if err := doctor.WriteJSON(os.Stdout, report); err != nil {
 					return err
 				}
-			} else {
+			case streaming:
+				doctor.WriteFooter(os.Stdout, report, doctor.FixableCount(report))
+			default:
 				doctor.WriteText(os.Stdout, report)
 			}
 

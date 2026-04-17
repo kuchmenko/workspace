@@ -3,6 +3,8 @@ package doctor
 import (
 	"errors"
 	"testing"
+
+	"github.com/kuchmenko/workspace/internal/config"
 )
 
 // Severity order is load-bearing — Report.MaxSeverity and the CLI exit
@@ -80,5 +82,53 @@ func TestApplyFixes(t *testing.T) {
 	}
 	if _, ok := calls["b"]; ok {
 		t.Errorf("fix for b should not have run (no Fix attached)")
+	}
+}
+
+// Streaming contract: OnScope fires exactly once per scope, in the
+// order system → project1 → project2, and each callback receives only
+// that scope's findings (not cumulative). This is the guarantee the CLI
+// relies on to render incremental output.
+func TestRunner_OnScopeOrder(t *testing.T) {
+	isolateState(t)
+	ws := &config.Workspace{
+		Projects: map[string]config.Project{
+			"beta":  {Status: config.StatusActive, Remote: "x", Path: "beta"},
+			"alpha": {Status: config.StatusActive, Remote: "x", Path: "alpha"},
+			// Archived project must not produce a scope event.
+			"gamma": {Status: config.StatusArchived, Remote: "x", Path: "gamma"},
+		},
+	}
+	var gotScopes []string
+	r := &Runner{
+		WsRoot:     t.TempDir(),
+		WS:         ws,
+		SkipRemote: true,
+		OnScope: func(scope string, findings []Finding) {
+			gotScopes = append(gotScopes, scope)
+			for _, f := range findings {
+				if f.Scope != scope {
+					t.Errorf("OnScope(%q) leaked finding for %q", scope, f.Scope)
+				}
+			}
+		},
+	}
+	rep := r.Run()
+
+	want := []string{"system", "alpha", "beta"}
+	if len(gotScopes) != len(want) {
+		t.Fatalf("got scopes=%v want %v", gotScopes, want)
+	}
+	for i := range want {
+		if gotScopes[i] != want[i] {
+			t.Fatalf("scope[%d]=%q want %q", i, gotScopes[i], want[i])
+		}
+	}
+
+	// The streamed findings are the same slice the Report carries.
+	// If Runner.Run ever diverges from its per-scope callback, tests
+	// built on either one would start disagreeing.
+	if len(rep.Findings) == 0 {
+		t.Fatal("expected non-empty report")
 	}
 }

@@ -34,14 +34,12 @@ var severityLabel = map[Severity]string{
 //
 // When a fix was attempted (either applied or failed) the line is
 // annotated so the user can see the outcome at a glance without rerunning.
+//
+// For interactive runs prefer WriteScope + WriteFooter so blocks
+// stream as each scope completes.
 func WriteText(w io.Writer, rep *Report) {
 	groups := groupByScope(rep.Findings)
-	fixable := 0
-	for _, f := range rep.Findings {
-		if f.Fix != nil {
-			fixable++
-		}
-	}
+	fixable := fixableCount(rep.Findings)
 
 	// Print the system block first if it exists.
 	if findings, ok := groups["system"]; ok {
@@ -62,7 +60,45 @@ func WriteText(w io.Writer, rep *Report) {
 		writeBlock(w, scope, findings)
 	}
 
-	writeFooter(w, rep, fixable)
+	WriteFooter(w, rep, fixable)
+}
+
+// WriteScope renders a single scope block exactly as WriteText would.
+// Used by the CLI command to stream per-scope results as the Runner
+// completes each check batch. Pass leading=true for the first scope of
+// a run so no leading blank line is emitted (the "System" header
+// should sit flush against the top of the output).
+func WriteScope(w io.Writer, scope string, findings []Finding, leading bool) {
+	if !leading {
+		fmt.Fprintln(w)
+	}
+	writeBlock(w, scopeTitle(scope), findings)
+}
+
+// FixableCount returns the number of findings in rep that advertise an
+// auto-fix. Exposed so the CLI can compute the footer-line suffix
+// ("N auto-fixable") after streaming has already flushed each block.
+func FixableCount(rep *Report) int {
+	return fixableCount(rep.Findings)
+}
+
+func fixableCount(findings []Finding) int {
+	n := 0
+	for _, f := range findings {
+		if f.Fix != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// scopeTitle maps the Runner's scope identifier to the user-facing
+// heading. "system" becomes "System"; project names are displayed as-is.
+func scopeTitle(scope string) string {
+	if scope == "system" {
+		return "System"
+	}
+	return scope
 }
 
 func writeBlock(w io.Writer, title string, findings []Finding) {
@@ -83,11 +119,13 @@ func writeBlock(w io.Writer, title string, findings []Finding) {
 	}
 }
 
-// writeFooter is the summary line at the bottom of the report. Its shape
+// WriteFooter is the summary line at the bottom of the report. Its shape
 // changes depending on whether any fixes were applied — the acceptance
 // criteria distinguishes "before --fix" ("N issues found, K auto-fixable")
-// from "after --fix" ("Applied K fixes").
-func writeFooter(w io.Writer, rep *Report, fixable int) {
+// from "after --fix" ("Applied K fixes"). Exposed so the streaming
+// caller can flush its final line after every scope has already been
+// written.
+func WriteFooter(w io.Writer, rep *Report, fixable int) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, strings.Repeat("━", 21))
 
