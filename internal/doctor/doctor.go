@@ -153,19 +153,36 @@ type Runner struct {
 	// SkipRemote disables network-touching checks (remote-reach). Useful
 	// for offline invocations and for tests.
 	SkipRemote bool
+	// OnScope, when non-nil, is invoked after each scope completes (first
+	// with "system", then once per active project in sort order). The
+	// findings slice passed in is the same one that lands in the returned
+	// Report — callers can use it to stream progress to a terminal while
+	// checks that touch the network (remote-reach) are still in flight
+	// for later projects. Must not retain the slice past the call; the
+	// Runner may append to it afterwards.
+	OnScope func(scope string, findings []Finding)
 }
 
-// Run executes every check and returns the aggregated report. The Runner
-// does not mutate any state — callers are responsible for invoking
-// ApplyFixes on the returned Report if --fix was requested.
+// Run executes every check and returns the aggregated report. When
+// OnScope is set it also streams findings per scope as they complete,
+// so interactive callers can show progress without waiting for every
+// project's network check to finish.
+//
+// The Runner does not mutate any state — callers are responsible for
+// invoking ApplyFixes on the returned Report if --fix was requested.
 func (r *Runner) Run() *Report {
 	rep := &Report{}
-	rep.Findings = append(rep.Findings, r.systemChecks()...)
+	emit := func(scope string, findings []Finding) {
+		rep.Findings = append(rep.Findings, findings...)
+		if r.OnScope != nil {
+			r.OnScope(scope, findings)
+		}
+	}
 
-	names := r.projectNames()
-	for _, name := range names {
+	emit("system", r.systemChecks())
+	for _, name := range r.projectNames() {
 		proj := r.WS.Projects[name]
-		rep.Findings = append(rep.Findings, r.projectChecks(name, proj)...)
+		emit(name, r.projectChecks(name, proj))
 	}
 	return rep
 }
