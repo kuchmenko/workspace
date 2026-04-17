@@ -102,16 +102,15 @@ func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding)
 // bare. This is the #14/PR#16 bug: without the refspec, `git fetch` in a
 // bare only updates FETCH_HEAD, so @{u} cannot resolve and AheadBehind
 // silently returns (0, 0, false) for every branch. Auto-fix reuses the
-// helper from internal/git and additionally runs a fetch so that
-// refs/remotes/origin/* actually get populated — setting the refspec
-// alone changes config but leaves the tracking refs empty, which breaks
-// downstream checks (branch-upstream in particular) even after the fix
-// "succeeds".
+// helper from internal/git.
 //
-// The fetch is skipped when Runner.SkipRemote is set and treated as
-// best-effort otherwise: if it fails (network/auth), the primary goal
-// — a correct config value — is still achieved and the error is
-// surfaced through checkRemoteReach / the next tick.
+// The follow-up fetch that actually populates refs/remotes/origin/*
+// lives in checkBranchUpstream — that's where the tracking ref is
+// needed to make HasUpstream return true, and moving the fetch there
+// means it runs in both "fix-refspec-too" and "only-upstream-broken"
+// passes (otherwise bares that had their refspec fixed in an earlier
+// tick keep failing branch-upstream forever until someone runs a
+// manual fetch).
 func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 	if git.HasFetchRefspec(barePath) {
 		return Finding{
@@ -121,7 +120,6 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 			Message:  "fetch refspec configured",
 		}
 	}
-	skipRemote := r.SkipRemote
 	return Finding{
 		Scope:    name,
 		Check:    "fetch-refspec",
@@ -129,19 +127,7 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 		Message:  "bare repo is missing remote.origin.fetch — fetch won't update origin/* refs",
 		FixHint:  "set refspec to +refs/heads/*:refs/remotes/origin/*",
 		Fix: func() error {
-			if err := git.SetFetchRefspec(barePath); err != nil {
-				return err
-			}
-			if skipRemote {
-				return nil
-			}
-			// Populate refs/remotes/origin/* so subsequent checks (and
-			// the branch-upstream fix that runs after this one) can
-			// resolve against live tracking refs. Best-effort: a
-			// network failure here does not invalidate the refspec
-			// write we already performed.
-			_ = git.Fetch(barePath)
-			return nil
+			return git.SetFetchRefspec(barePath)
 		},
 	}
 }
@@ -287,9 +273,22 @@ func probeFallbackBranch(barePath string) string {
 }
 
 // checkBranchUpstream ensures the default branch has branch.<X>.remote
-// and branch.<X>.merge configured. Without these, plain `git push` and
-// `git pull` in any worktree fail because git can't figure out what to
-// talk to. SetBranchUpstream is idempotent and cheap.
+// and branch.<X>.merge configured AND that refs/remotes/origin/<X>
+// actually exists. Config alone isn't enough — git's @{upstream}
+// resolution needs the tracking ref, so HasUpstream keeps reporting
+// "missing" even after a config write if the ref is empty.
+//
+// Auto-fix therefore does both: SetBranchUpstream (idempotent) then
+// a best-effort Fetch to populate the tracking ref. Gated on
+// Runner.SkipRemote so offline users still get the config write
+// without a network call. A fetch failure does not invalidate the
+// fix — subsequent runs can retry — so the error is swallowed; the
+// next `ws doctor` will flag it again via remote-reach.
+//
+// There is one pre-condition we cannot repair: if HasBranch returns
+// false, the local default branch simply does not exist in this
+// bare, and there is nothing upstream-configuration-wise to set.
+// In that case we warn without an auto-fix.
 func (r *Runner) checkBranchUpstream(name string, proj config.Project, barePath string) Finding {
 	branch := strings.TrimSpace(proj.DefaultBranch)
 	if branch == "" {
@@ -318,6 +317,7 @@ func (r *Runner) checkBranchUpstream(name string, proj config.Project, barePath 
 			Message:  fmt.Sprintf("branch %q tracks origin", branch),
 		}
 	}
+	skipRemote := r.SkipRemote
 	return Finding{
 		Scope:    name,
 		Check:    "branch-upstream",
@@ -325,7 +325,17 @@ func (r *Runner) checkBranchUpstream(name string, proj config.Project, barePath 
 		Message:  fmt.Sprintf("branch %q has no upstream — plain `git push`/`git pull` will fail", branch),
 		FixHint:  fmt.Sprintf("set branch.%s.remote=origin and branch.%s.merge=refs/heads/%s", branch, branch, branch),
 		Fix: func() error {
-			return git.SetBranchUpstream(barePath, branch, "origin")
+			if err := git.SetBranchUpstream(barePath, branch, "origin"); err != nil {
+				return err
+			}
+			if skipRemote {
+				return nil
+			}
+			// Populate refs/remotes/origin/<branch> so @{upstream}
+			// resolution works. Best-effort — config is the primary
+			// mutation and remains valid even if the fetch fails.
+			_ = git.Fetch(barePath)
+			return nil
 		},
 	}
 }
