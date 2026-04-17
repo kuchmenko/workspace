@@ -79,6 +79,36 @@ func FetchRefspec(repoPath, source, refspec string) error {
 	return nil
 }
 
+// standardFetchRefspec is the refspec normal `git clone` writes into
+// remote.origin.fetch. `git clone --bare` omits it, which is the bug
+// SetFetchRefspec exists to work around — without it, `git fetch` in a
+// bare repo updates only FETCH_HEAD (no refs/remotes/origin/*), and
+// branch@{u} cannot resolve, so AheadBehind() returns (0, 0, false) for
+// every branch with configured upstream.
+const standardFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
+
+// SetFetchRefspec writes the standard fetch refspec into repoPath's config.
+// Idempotent: overwrites any single-valued existing setting. No-op on
+// multi-valued refspecs (rare custom config) — HasFetchRefspec returns
+// true for those, so the one-time repair in the reconciler skips them.
+func SetFetchRefspec(repoPath string) error {
+	return setConfig(repoPath, "remote.origin.fetch", standardFetchRefspec)
+}
+
+// HasFetchRefspec reports whether remote.origin.fetch has at least one
+// value configured in repoPath. Used by the daemon's one-time repair to
+// skip bare repos that already have a refspec (either from being cloned
+// post-fix or from user-customized config).
+func HasFetchRefspec(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get-all", "remote.origin.fetch")
+	out, err := cmd.Output()
+	if err != nil {
+		// Exit code 1 means "key not found" — treated as absent.
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
 // HasBranch reports whether refs/heads/<branch> exists in the repo.
 func HasBranch(repoPath, branch string) bool {
 	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
