@@ -92,10 +92,17 @@ func TestProjectChecks_HappyPath(t *testing.T) {
 func TestCheckFetchRefspec_MissingAndFix(t *testing.T) {
 	wsRoot := t.TempDir()
 	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
-	// Break the invariant: unset remote.origin.fetch so the check fires.
+	// Break the invariant: unset remote.origin.fetch AND delete the
+	// tracking ref so the fix has something to repopulate. This mirrors
+	// the real-world state of a bare that was cloned before PR#16.
 	testutil.RunGit(t, barePath, "config", "--unset", "remote.origin.fetch")
+	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
 
+	// Default runner has SkipRemote=true; flip it so the fix actually
+	// runs the follow-up fetch against our fake local bare.
 	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
+	r.SkipRemote = false
+
 	f := r.checkFetchRefspec("demo", barePath)
 	if f.Severity != Error {
 		t.Fatalf("Severity=%s want Error", f.Severity)
@@ -110,6 +117,37 @@ func TestCheckFetchRefspec_MissingAndFix(t *testing.T) {
 	after := r.checkFetchRefspec("demo", barePath)
 	if after.Severity != OK {
 		t.Fatalf("after fix: Severity=%s want OK", after.Severity)
+	}
+	// Regression guard: the fix must leave the tracking ref populated,
+	// otherwise branch-upstream stays broken on a re-run (observed in
+	// the wild when we only wrote config and skipped the fetch).
+	if err := testutil.RunGitTry(t, barePath, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"); err != nil {
+		t.Fatalf("refs/remotes/origin/main missing after fix: %v", err)
+	}
+}
+
+// With SkipRemote set the Fix must update config but leave the network
+// alone — mirroring a user who ran `ws doctor --fix --skip-remote`.
+// Branch-upstream remains broken until they later run a fetch, and
+// that is the documented trade-off.
+func TestCheckFetchRefspec_SkipRemoteLeavesRefs(t *testing.T) {
+	wsRoot := t.TempDir()
+	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
+	testutil.RunGit(t, barePath, "config", "--unset", "remote.origin.fetch")
+	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
+
+	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
+	r.SkipRemote = true
+
+	f := r.checkFetchRefspec("demo", barePath)
+	if err := f.Fix(); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if !git.HasFetchRefspec(barePath) {
+		t.Fatal("HasFetchRefspec=false after fix")
+	}
+	if err := testutil.RunGitTry(t, barePath, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"); err == nil {
+		t.Fatal("refs/remotes/origin/main should NOT be populated when SkipRemote is set")
 	}
 }
 
