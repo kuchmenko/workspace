@@ -217,9 +217,13 @@ func HasUpstream(repoPath, branch string) bool {
 // SetBranchUpstream wires up branch.<branch>.remote and
 // branch.<branch>.merge in the repo's config so plain `git push` and
 // `git pull` work without arguments. Used by both clone (after worktree
-// add) and migrate (after bare clone), where the older `branch
-// --set-upstream-to=origin/<branch>` approach fails because bare repos
-// don't have refs/remotes/origin/* refs to point at.
+// add) and migrate (after bare clone). We write the config keys directly
+// instead of `git branch --set-upstream-to=origin/<branch>` so the call
+// works in the narrow window after CloneBare + SetFetchRefspec but before
+// the first Fetch — that window has no refs/remotes/origin/<branch> yet
+// for --set-upstream-to to point at, whereas the raw config write is
+// accepted unconditionally and becomes valid as soon as the next fetch
+// populates the tracking ref.
 //
 // repoPath can be either the bare or any of its worktrees — branch config
 // is shared across them through the bare's config file.
