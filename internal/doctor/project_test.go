@@ -92,17 +92,10 @@ func TestProjectChecks_HappyPath(t *testing.T) {
 func TestCheckFetchRefspec_MissingAndFix(t *testing.T) {
 	wsRoot := t.TempDir()
 	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
-	// Break the invariant: unset remote.origin.fetch AND delete the
-	// tracking ref so the fix has something to repopulate. This mirrors
-	// the real-world state of a bare that was cloned before PR#16.
+	// Break the invariant: unset remote.origin.fetch so the check fires.
 	testutil.RunGit(t, barePath, "config", "--unset", "remote.origin.fetch")
-	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
 
-	// Default runner has SkipRemote=true; flip it so the fix actually
-	// runs the follow-up fetch against our fake local bare.
 	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
-	r.SkipRemote = false
-
 	f := r.checkFetchRefspec("demo", barePath)
 	if f.Severity != Error {
 		t.Fatalf("Severity=%s want Error", f.Severity)
@@ -117,37 +110,6 @@ func TestCheckFetchRefspec_MissingAndFix(t *testing.T) {
 	after := r.checkFetchRefspec("demo", barePath)
 	if after.Severity != OK {
 		t.Fatalf("after fix: Severity=%s want OK", after.Severity)
-	}
-	// Regression guard: the fix must leave the tracking ref populated,
-	// otherwise branch-upstream stays broken on a re-run (observed in
-	// the wild when we only wrote config and skipped the fetch).
-	if err := testutil.RunGitTry(t, barePath, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"); err != nil {
-		t.Fatalf("refs/remotes/origin/main missing after fix: %v", err)
-	}
-}
-
-// With SkipRemote set the Fix must update config but leave the network
-// alone — mirroring a user who ran `ws doctor --fix --skip-remote`.
-// Branch-upstream remains broken until they later run a fetch, and
-// that is the documented trade-off.
-func TestCheckFetchRefspec_SkipRemoteLeavesRefs(t *testing.T) {
-	wsRoot := t.TempDir()
-	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
-	testutil.RunGit(t, barePath, "config", "--unset", "remote.origin.fetch")
-	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
-
-	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
-	r.SkipRemote = true
-
-	f := r.checkFetchRefspec("demo", barePath)
-	if err := f.Fix(); err != nil {
-		t.Fatalf("Fix: %v", err)
-	}
-	if !git.HasFetchRefspec(barePath) {
-		t.Fatal("HasFetchRefspec=false after fix")
-	}
-	if err := testutil.RunGitTry(t, barePath, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"); err == nil {
-		t.Fatal("refs/remotes/origin/main should NOT be populated when SkipRemote is set")
 	}
 }
 
@@ -225,11 +187,19 @@ func TestCheckBranchUpstream_MissingAndFix(t *testing.T) {
 	wsRoot := t.TempDir()
 	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
 
-	// Break upstream: unset branch.main.remote.
+	// Break upstream thoroughly: unset config AND delete the tracking
+	// ref. Setting config alone is not enough to make HasUpstream pass
+	// — git's @{upstream} resolution needs refs/remotes/origin/<X> to
+	// actually exist. This is the exact state of a bare that was cloned
+	// pre-PR#16 and then had its refspec fixed but never re-fetched
+	// (observed repeatedly in the wild when the fix was split incorrectly).
 	testutil.RunGit(t, barePath, "config", "--unset", "branch.main.remote")
 	testutil.RunGit(t, barePath, "config", "--unset", "branch.main.merge")
+	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
 
 	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
+	r.SkipRemote = false // fix must fetch to populate tracking ref
+
 	f := r.checkBranchUpstream("demo", proj, barePath)
 	if f.Severity != Warn {
 		t.Fatalf("Severity=%s want Warn", f.Severity)
@@ -241,7 +211,33 @@ func TestCheckBranchUpstream_MissingAndFix(t *testing.T) {
 		t.Fatalf("Fix: %v", err)
 	}
 	if !git.HasUpstream(barePath, "main") {
-		t.Fatal("HasUpstream=false after fix")
+		t.Fatal("HasUpstream=false after fix — tracking ref not repopulated")
+	}
+}
+
+// SkipRemote must write config but refuse to touch the network, even
+// if that means HasUpstream still reports false afterwards. The user
+// opted into offline operation; the next online fetch will complete
+// the picture.
+func TestCheckBranchUpstream_SkipRemote(t *testing.T) {
+	wsRoot := t.TempDir()
+	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
+	testutil.RunGit(t, barePath, "config", "--unset", "branch.main.remote")
+	testutil.RunGit(t, barePath, "config", "--unset", "branch.main.merge")
+	testutil.RunGit(t, barePath, "update-ref", "-d", "refs/remotes/origin/main")
+
+	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
+	r.SkipRemote = true
+
+	f := r.checkBranchUpstream("demo", proj, barePath)
+	if err := f.Fix(); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	if remote := testutil.RunGit(t, barePath, "config", "--get", "branch.main.remote"); remote != "origin" {
+		t.Fatalf("branch.main.remote=%q want origin", remote)
+	}
+	if err := testutil.RunGitTry(t, barePath, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"); err == nil {
+		t.Fatal("refs/remotes/origin/main should NOT be populated when SkipRemote is set")
 	}
 }
 
