@@ -61,6 +61,19 @@ func TestCloneIntoLayout_HappyPath(t *testing.T) {
 	if gotMerge != wantMerge {
 		t.Errorf("branch.main.merge = %q, want %q", gotMerge, wantMerge)
 	}
+
+	// Issue #14: remote.origin.fetch must be set so subsequent fetches
+	// populate refs/remotes/origin/* (without it, AheadBehind and ff-pull
+	// silently break). `git clone --bare` omits this key — CloneIntoLayout
+	// has to install it explicitly.
+	if !git.HasFetchRefspec(bare) {
+		t.Error("remote.origin.fetch not set after CloneIntoLayout — issue #14 regression")
+	}
+	gotRefspec := testutil.RunGit(t, bare, "config", "--get-all", "remote.origin.fetch")
+	wantRefspec := "+refs/heads/*:refs/remotes/origin/*"
+	if gotRefspec != wantRefspec {
+		t.Errorf("remote.origin.fetch = %q, want %q", gotRefspec, wantRefspec)
+	}
 }
 
 // TestCloneIntoLayout_AlreadyCloned verifies that a second call returns

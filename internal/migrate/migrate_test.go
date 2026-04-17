@@ -127,8 +127,8 @@ func TestMigrateProject_HappyPath(t *testing.T) {
 
 	// 11. Upstream tracking on the default branch is set so plain
 	// `git push` works in the migrated main worktree. We write the
-	// underlying config keys directly because bare repos don't have
-	// refs/remotes/origin/* refs that `branch --set-upstream-to` needs.
+	// underlying config keys directly so the call doesn't depend on
+	// refs/remotes/origin/<default> existing yet (see SetBranchUpstream).
 	gotRemote := testutil.RunGit(t, barePath, "config", "branch.main.remote")
 	if gotRemote != "origin" {
 		t.Errorf("branch.main.remote = %q, want origin", gotRemote)
@@ -136,6 +136,18 @@ func TestMigrateProject_HappyPath(t *testing.T) {
 	gotMerge := testutil.RunGit(t, barePath, "config", "branch.main.merge")
 	if gotMerge != "refs/heads/main" {
 		t.Errorf("branch.main.merge = %q, want refs/heads/main", gotMerge)
+	}
+
+	// 12. Issue #14: remote.origin.fetch must be installed so subsequent
+	// fetches populate refs/remotes/origin/* (which in turn makes
+	// branch@{u} resolvable and AheadBehind accurate).
+	if !git.HasFetchRefspec(barePath) {
+		t.Error("remote.origin.fetch not set after migrate — issue #14 regression")
+	}
+	gotRefspec := testutil.RunGit(t, barePath, "config", "--get-all", "remote.origin.fetch")
+	wantRefspec := "+refs/heads/*:refs/remotes/origin/*"
+	if gotRefspec != wantRefspec {
+		t.Errorf("remote.origin.fetch = %q, want %q", gotRefspec, wantRefspec)
 	}
 }
 

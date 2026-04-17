@@ -296,11 +296,18 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 	}
 
 	// Step 8: point bare at the actual remote (clone --no-local set origin
-	// to mainPath, which is about to disappear) and fetch.
+	// to mainPath, which is about to disappear), install the standard
+	// fetch refspec (clone --bare omits it — without it fetch only updates
+	// FETCH_HEAD and branch@{u} can never resolve), then fetch so
+	// refs/remotes/origin/* is populated from the real remote.
 	if proj.Remote != "" {
 		if err := git.SetRemoteURL(barePath, proj.Remote); err != nil {
 			rollbackBare(barePath)
 			return nil, err
+		}
+		if err := git.SetFetchRefspec(barePath); err != nil {
+			rollbackBare(barePath)
+			return nil, fmt.Errorf("set fetch refspec: %w", err)
 		}
 		if err := git.Fetch(barePath); err != nil {
 			// Network failure here is recoverable — we still have a valid
@@ -311,21 +318,14 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		_ = git.SetRemoteHead(barePath, defaultBranch)
 	}
 
-	// Step 9: upstream tracking for the default branch.
-	//
-	// We don't try to restore upstream for every local branch (the old
-	// approach failed because bare repos don't have refs/remotes/origin/*
-	// to point at, and the worktree layout doesn't need it anyway: the
-	// reconciler only pushes wt/<machine>/* and ordinary `git pull`
-	// resolves upstream lazily). But the default branch DOES need it, so
-	// the user can run plain `git push` and `git pull` in the main
-	// worktree without arguments.
-	//
-	// SetBranchUpstream writes branch.<default>.remote and
-	// branch.<default>.merge directly via `git config`, bypassing
-	// `branch --set-upstream-to=origin/<X>` which would need a non-existent
-	// refs/remotes/origin/X ref. Best-effort: a failure here doesn't
-	// abort migration, just logs.
+	// Step 9: upstream tracking for the default branch so plain `git push`
+	// and `git pull` work in the main worktree without arguments.
+	// SetBranchUpstream writes branch.<default>.{remote,merge} via
+	// `git config`, which works even if the Step-8 fetch failed (offline
+	// migration) or hasn't populated refs/remotes/origin/<default> yet.
+	// We don't restore upstream for every local branch — the reconciler
+	// only pushes wt/<machine>/* and ordinary `git pull` resolves upstream
+	// lazily. Best-effort: a failure here doesn't abort migration.
 	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
 		opts.logf("migrate %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
 	}

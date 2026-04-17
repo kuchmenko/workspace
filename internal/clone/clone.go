@@ -122,6 +122,16 @@ func CloneIntoLayout(wsRoot, name string, proj *config.Project, opts Options) (*
 		return nil, err
 	}
 
+	// `git clone --bare` omits remote.origin.fetch. Without it, subsequent
+	// `git fetch` calls update only FETCH_HEAD, branch@{u} fails to resolve,
+	// and AheadBehind returns (0, 0, false) for every branch. Write the
+	// standard refspec now so every downstream fetch (daemon, worktree,
+	// user-initiated) updates refs/remotes/origin/* correctly.
+	if err := git.SetFetchRefspec(barePath); err != nil {
+		_ = os.RemoveAll(barePath)
+		return nil, fmt.Errorf("set fetch refspec: %w", err)
+	}
+
 	// Resolve default_branch. After a successful `git clone --bare`, when
 	// the remote exposes its HEAD, refs/remotes/origin/HEAD is set
 	// automatically and we can derive the branch from it.
@@ -156,12 +166,13 @@ func CloneIntoLayout(wsRoot, name string, proj *config.Project, opts Options) (*
 	}
 
 	// Wire up upstream tracking for the default branch so plain `git push`
-	// and `git pull` work in the new main worktree without arguments. We
-	// can't use `branch --set-upstream-to=origin/<branch>` here because
-	// `clone --bare` uses the mirror refspec and there's no
-	// `refs/remotes/origin/*` ref to point at. SetBranchUpstream writes
-	// the two underlying config keys directly. Best-effort: if this fails
-	// the clone is still usable, just ergonomically annoying.
+	// and `git pull` work in the new main worktree without arguments.
+	// SetBranchUpstream writes branch.<name>.remote and branch.<name>.merge
+	// directly instead of calling `git branch --set-upstream-to=origin/<name>`,
+	// which would require a second fetch first: we just cloned and haven't
+	// populated refs/remotes/origin/* yet (the refspec set above takes
+	// effect on the next fetch). Best-effort: if this fails the clone is
+	// still usable, just ergonomically annoying.
 	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
 		opts.logf("clone %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
 	}
