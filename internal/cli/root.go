@@ -96,6 +96,7 @@ func NewRootCmd() *cobra.Command {
 		newPulseCmd(),
 		newAgentCmd(),
 		newDocsCmd(),
+		newDoctorCmd(),
 	)
 
 	return root
