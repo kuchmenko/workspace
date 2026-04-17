@@ -271,6 +271,7 @@ group          = "..."              # optional grouping
 | `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
 | `ws list [--filter ...]` | Filtered list of projects. |
 | `ws scan` | Find git repos under `personal/`, `work/`, `playground/`, `researches/`, `tools/` that are not in `workspace.toml`. **Ignores `*.bare/` and `*-wt-*/` siblings** so the worktree layout doesn't show up as orphans. |
+| `ws doctor [name] [--fix] [--json] [--skip-remote]` | Run unified health check across system (daemon, stale sidecars, active conflicts, config validity) and per-project state (layout, fetch refspec, remote URL, reachability, default branch, branch upstream, index locks). `--fix` applies all safe auto-fixes in batch; conflicts and index-locks are intentionally never auto-fixed. Exit codes: `0` clean, `1` issues found, `2` --fix applied. |
 | `ws clean [name] [--all]` | Remove dependency/build caches (`node_modules`, `target/`, `.venv`, `dist/`, `.next/`, `.svelte-kit/`, etc.) from a project's main worktree. |
 | `ws archive <name>` | Archive a project. Personal → `tar.gz` into `archive/` then remove. Work → just remove. **Refused for migrated projects in v1** (full worktree-aware archiving is planned). |
 | `ws restore <name>` | Restore an archived project (untar or re-clone). |
@@ -409,6 +410,10 @@ Test files live next to the code they cover, in `_test` packages:
 - `internal/sidecar/sidecar_test.go` — Save/Load round-trip,
   Delete-is-idempotent, IsAlive with self/dead/zero pids, AnyActive
   finds either kind, AnyActive ignores stale entries.
+- `internal/doctor/*_test.go` — per-check tests for the `ws doctor`
+  catalog: happy-path runner, stale-sidecar auto-fix, conflict scoping,
+  config validation, fetch-refspec/remote-URL/default-branch/branch-
+  upstream fixes on real bare+worktree fixtures, index-lock detection.
 
 Run everything: `go test ./...`. CI runs `go test -race -timeout 5m ./...`
 on every push to main and on every PR via `.github/workflows/test.yml`.
