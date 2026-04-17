@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0](https://github.com/kuchmenko/workspace/compare/v0.5.0...v0.6.0) (2026-04-17)
+
+
+### Features
+
+* **docs:** add ws docs --agent for AI agent capability discovery ([ab13faf](https://github.com/kuchmenko/workspace/commit/ab13faff65b97af48c6ccdcd368d8d97729f626b))
+* **docs:** add ws docs --agent for AI agent capability discovery ([0112c96](https://github.com/kuchmenko/workspace/commit/0112c962678ada42d7f714d0bc981d597bd0d75e))
+* **doctor:** add ws doctor diagnostic command ([89bad6a](https://github.com/kuchmenko/workspace/commit/89bad6a67fbb735852a7e2f939a9b6b2d4fae780))
+* **doctor:** add ws doctor diagnostic command ([f31a4e1](https://github.com/kuchmenko/workspace/commit/f31a4e1b4d52e5fabfbe52acbe8ac081608262ea)), closes [#15](https://github.com/kuchmenko/workspace/issues/15)
+* **doctor:** stream per-scope output so progress is visible during checks ([a4b3c90](https://github.com/kuchmenko/workspace/commit/a4b3c9071610e9fa32c1061b4426e50a33c01940))
+
+
+### Bug Fixes
+
+* **doctor:** fetch after setting fetch-refspec so branch-upstream converges ([1163a39](https://github.com/kuchmenko/workspace/commit/1163a39da8d3248ff42a73336fa1798a6d8255da))
+* **doctor:** move post-fix fetch into branch-upstream where the ref is needed ([a27eabc](https://github.com/kuchmenko/workspace/commit/a27eabce01b64fc702c0e83ba97d0daa4a5d7af6))
+* **git:** install remote.origin.fetch refspec in bare repos ([5d928f4](https://github.com/kuchmenko/workspace/commit/5d928f4025fbab82a55e53c0685608439e53a178))
+* **git:** install remote.origin.fetch refspec in bare repos ([432e193](https://github.com/kuchmenko/workspace/commit/432e193adbd395aac6cd092e6218523bbed0be94)), closes [#14](https://github.com/kuchmenko/workspace/issues/14)
+
 ## [0.5.0](https://github.com/kuchmenko/workspace/compare/v0.4.0...v0.5.0) (2026-04-14)
 
 
