@@ -102,7 +102,16 @@ func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding)
 // bare. This is the #14/PR#16 bug: without the refspec, `git fetch` in a
 // bare only updates FETCH_HEAD, so @{u} cannot resolve and AheadBehind
 // silently returns (0, 0, false) for every branch. Auto-fix reuses the
-// helper from internal/git.
+// helper from internal/git and additionally runs a fetch so that
+// refs/remotes/origin/* actually get populated — setting the refspec
+// alone changes config but leaves the tracking refs empty, which breaks
+// downstream checks (branch-upstream in particular) even after the fix
+// "succeeds".
+//
+// The fetch is skipped when Runner.SkipRemote is set and treated as
+// best-effort otherwise: if it fails (network/auth), the primary goal
+// — a correct config value — is still achieved and the error is
+// surfaced through checkRemoteReach / the next tick.
 func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 	if git.HasFetchRefspec(barePath) {
 		return Finding{
@@ -112,6 +121,7 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 			Message:  "fetch refspec configured",
 		}
 	}
+	skipRemote := r.SkipRemote
 	return Finding{
 		Scope:    name,
 		Check:    "fetch-refspec",
@@ -119,7 +129,19 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 		Message:  "bare repo is missing remote.origin.fetch — fetch won't update origin/* refs",
 		FixHint:  "set refspec to +refs/heads/*:refs/remotes/origin/*",
 		Fix: func() error {
-			return git.SetFetchRefspec(barePath)
+			if err := git.SetFetchRefspec(barePath); err != nil {
+				return err
+			}
+			if skipRemote {
+				return nil
+			}
+			// Populate refs/remotes/origin/* so subsequent checks (and
+			// the branch-upstream fix that runs after this one) can
+			// resolve against live tracking refs. Best-effort: a
+			// network failure here does not invalidate the refspec
+			// write we already performed.
+			_ = git.Fetch(barePath)
+			return nil
 		},
 	}
 }
