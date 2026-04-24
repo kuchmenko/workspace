@@ -23,11 +23,11 @@ var capabilityMeta = map[string]struct {
 	Description string
 	Order       int
 }{
-	"project":       {"Register, clone, migrate, archive, and restore projects", 1},
+	"project":       {"Register, clone, and migrate projects", 1},
 	"sync":          {"Synchronize workspace state and resolve conflicts", 2},
 	"worktree":      {"Create, list, remove, and promote per-feature worktrees", 3},
-	"observability": {"Cross-machine activity dashboard and project status", 4},
-	"organisation":  {"Groups, shell aliases, and project filtering", 5},
+	"observability": {"Project status and health checks", 4},
+	"organisation":  {"Shell aliases and project filtering", 5},
 	"daemon":        {"Background daemon that auto-syncs projects", 6},
 	"auth":          {"GitHub authentication for repo discovery", 7},
 	"agent":         {"Launch and manage Claude Code sessions", 8},
