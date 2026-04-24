@@ -79,11 +79,8 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newSyncCmd(),
 		newAddCmd(),
-		newArchiveCmd(),
-		newRestoreCmd(),
 		newStatusCmd(),
 		newScanCmd(),
-		newCleanCmd(),
 		newListCmd(),
 		newGroupCmd(),
 		newSetupCmd(),
