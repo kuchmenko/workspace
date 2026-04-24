@@ -234,9 +234,6 @@ explicitly the user's choice via the spawned shell.
 ## Project statuses
 
 - `active` — cloned locally, actively developed
-- `archived` — not needed locally. Personal: tar.gz in `archive/`.
-  Work: removed. **Note:** archive of migrated (bare+worktree) projects
-  is not yet supported and refused with a clear message.
 - `dormant` — still cloned but no recent activity (detected by daemon)
 
 ## Categories
@@ -269,12 +266,8 @@ group          = "..."              # optional grouping
 | `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, push owned `wt/<machine>/*` branches). Same work as a daemon tick. |
 | `ws sync resolve` | Inspect and act on unresolved conflicts from `~/.local/state/ws/conflicts.json`. Prompt-based; never auto-merges. |
 | `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
-| `ws list [--filter ...]` | Filtered list of projects. |
 | `ws scan` | Find git repos under `personal/`, `work/`, `playground/`, `researches/`, `tools/` that are not in `workspace.toml`. **Ignores `*.bare/` and `*-wt-*/` siblings** so the worktree layout doesn't show up as orphans. |
 | `ws doctor [name] [--fix] [--json] [--skip-remote]` | Run unified health check across system (daemon, stale sidecars, active conflicts, config validity) and per-project state (layout, fetch refspec, remote URL, reachability, default branch, branch upstream, index locks). `--fix` applies all safe auto-fixes in batch; conflicts and index-locks are intentionally never auto-fixed. Exit codes: `0` clean, `1` issues found, `2` --fix applied. |
-| `ws clean [name] [--all]` | Remove dependency/build caches (`node_modules`, `target/`, `.venv`, `dist/`, `.next/`, `.svelte-kit/`, etc.) from a project's main worktree. |
-| `ws archive <name>` | Archive a project. Personal → `tar.gz` into `archive/` then remove. Work → just remove. **Refused for migrated projects in v1** (full worktree-aware archiving is planned). |
-| `ws restore <name>` | Restore an archived project (untar or re-clone). |
 
 ### Worktree layout
 
@@ -289,13 +282,10 @@ group          = "..."              # optional grouping
 | `ws worktree rm <project> <topic> [--force]` | Remove a worktree. Refuses if dirty or has unpushed commits unless `--force`. Does not delete the underlying branch (intentional — prevents accidental loss of unpushed work). |
 | `ws wt …` | Alias for `ws worktree`. |
 
-### Groups and aliases
+### Aliases
 
 | Command | Purpose |
 |---|---|
-| `ws group add <name>` | Create a project group. |
-| `ws group list` | List groups. |
-| `ws group show <name>` | Projects in a group. |
 | `ws alias list` | Show configured shell aliases. |
 | `ws alias add <alias> <target>` | Add an alias. |
 | `ws alias rm <alias>` | Remove an alias. |
@@ -427,9 +417,6 @@ inlining `exec.Command` in tests.
 These were deliberately deferred during the worktree refactor and are open
 for future work:
 
-- **Worktree-aware `ws archive` / `ws restore`.** Currently archive refuses
-  for migrated projects. Need to tar bare + main + extra worktrees and run
-  `git worktree repair` on restore.
 - **`ws add` should clone as bare + worktree** instead of plain. Today it
   still clones plain and `ws migrate` is required afterwards. Bootstrap
   covers the existing-record case (project already in `workspace.toml` but
