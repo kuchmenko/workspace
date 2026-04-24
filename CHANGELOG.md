@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/kuchmenko/workspace/compare/v0.6.0...v0.7.0) (2026-04-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* `ws group` CLI subcommands no longer exist. Edit workspace.toml directly or use `ws setup` to manage groups.
+* `ws list` no longer exists. Use `ws status` (with `--filter` if you need a subset).
+* `ws archive`, `ws restore`, and `ws clean` no longer exist. Use `git clean -xfd` or rm -rf for dep caches; worktree-aware archive support is deferred to a future rewrite if ever needed.
+* `ws pulse` no longer exists. No replacement planned.
+
+### Features
+
+* remove ws archive / restore / clean ([c383e09](https://github.com/kuchmenko/workspace/commit/c383e099eb344927f0abf1539cc19736ee03c43c))
+* remove ws group CLI subcommands ([34a5857](https://github.com/kuchmenko/workspace/commit/34a58578baa1c17b025592051d6ff01043011703))
+* remove ws list ([e3d304d](https://github.com/kuchmenko/workspace/commit/e3d304d5fb903fe0cf73a6177eae84954913dbe0))
+* remove ws pulse command ([0c5de41](https://github.com/kuchmenko/workspace/commit/0c5de41e5eeba5f53617ff5c1121e7cea8710ae6))
+
 ## [0.6.0](https://github.com/kuchmenko/workspace/compare/v0.5.0...v0.6.0) (2026-04-17)
 
 
