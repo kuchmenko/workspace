@@ -69,9 +69,8 @@ type BranchNaming struct {
 //   - Branches: legacy flat list, no machine attribution. Read by the
 //     daemon for push decisions. New writes go to Owned instead.
 //   - Owned: per-branch ownership records with the machine that
-//     promoted/created the branch. Used both by the daemon (push
-//     decisions) and by `ws pulse` (machine attribution for events
-//     on branches that don't carry the wt/<machine>/* prefix).
+//     promoted/created the branch. Used by the daemon for push
+//     decisions on branches that don't carry the wt/<machine>/* prefix.
 type Autopush struct {
 	Branches []string       `toml:"branches,omitempty"`
 	Owned    []OwnedBranch  `toml:"owned,omitempty"`

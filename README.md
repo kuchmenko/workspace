@@ -3,7 +3,7 @@
 Workspace manager — track, sync, and develop projects across multiple machines without losing work.
 
 Single TOML registry · interactive TUI setup · multi-machine WIP sync via per-branch
-worktrees · cross-machine activity dashboard with PR management.
+worktrees.
 
 ## Install
 
@@ -57,27 +57,7 @@ Filter by org, search by name, multi-select.
   ↑↓ navigate  space select  ctrl+a toggle all  enter next  esc quit
 ```
 
-### Step 2 — Assign groups
-
-Repos are auto-grouped by GitHub org. Rename, merge, or create new groups.
-
-```
- ws setup   Assign groups
-  Auto-grouped by org. Rename, move, or create new groups.
-
-  ┌ acme-corp (2 repos)
-  │  api-gateway
-  │  web-dashboard
-  └
-  ┌ personal (2 repos)
-  │  dotfiles
-  │  cli-tools
-  └
-
-  ↑↓ navigate  r rename  m move  n new group  enter finish  esc back
-```
-
-### Step 3 — Confirm
+### Step 2 — Confirm
 
 ```
  ws setup   Confirm
@@ -113,10 +93,9 @@ Done: 4 cloned, 0 pulled, 0 skipped, 0 failed
 ├── acme-corp/                  ← work group (gitignored)
 │   ├── api-gateway/
 │   └── web-dashboard/
-├── personal/                   ← personal group (gitignored)
-│   ├── dotfiles/
-│   └── cli-tools/
-└── archive/                    ← archived projects (gitignored)
+└── personal/                   ← personal group (gitignored)
+    ├── dotfiles/
+    └── cli-tools/
 ```
 
 ## Commands
@@ -130,12 +109,8 @@ ws sync resolve                   Inspect and act on unresolved sync conflicts
 ws add <url>                      Register and clone a new project
 ws bootstrap [name]               Clone projects listed in workspace.toml that are missing locally
 ws migrate [name]                 Convert plain git checkouts into the bare+worktree layout
-ws archive <name>                 Archive (personal → tar.gz, work → remove)
-ws restore <name>                 Re-clone or untar archived project
 ws status                         Table: project / group / status / branch / last commit / layout
 ws scan                           Find git repos not registered in workspace.toml
-ws clean [name|--all]             Remove node_modules, target/, .venv, dist/, .next/, etc.
-ws list [--status|--category]     Filtered project list
 ```
 
 ### Worktrees
@@ -156,21 +131,9 @@ ws worktree rm <proj> <topic>     Remove a worktree (refuses if dirty / unpushed
 ws wt …                           Alias for `ws worktree`
 ```
 
-### Pulse (cross-machine activity dashboard)
+### Aliases, daemon, auth
 
 ```
-ws pulse                          Open the bubbletea TUI: Pulse + PRs + Inbox tabs
-   -p, --period <1d|7d|30d>       Initial period window
-   --snapshot                     Dump current pulse data as JSON to stdout (no TUI)
-   --all                          With --snapshot, include PRs from repos not in workspace.toml
-```
-
-### Groups, aliases, daemon, auth
-
-```
-ws group add <name>               Create a project group
-ws group list                     List groups with project counts
-ws group show <name>              Show projects in a group
 ws alias                          Manage shell aliases (TUI)
 ws alias add <n> <t>              Add alias for project, group, or "." (workspace root)
 ws alias rm <name>                Remove alias
@@ -257,127 +220,7 @@ ws worktree new acme-api fix-login --branch feat/fix-login --auto-push
 ```
 
 `--auto-push` registers the branch in `project.autopush.owned`, which is the
-mechanism that lets the daemon keep pushing **non-wt** branches and lets `ws pulse`
-attribute their commits to your machine.
-
-## Pulse — cross-machine activity dashboard
-
-`ws pulse` opens a bubbletea TUI with three tabs that share one auth path and
-one machine-attribution pipeline.
-
-### Tab 1: Pulse — push activity
-
-```
-ws pulse    Pulse | PRs | Inbox            [1d] [7d*] [30d]
-
-  170 pushes  ·  15 merged PRs  ·  8 projects
-
-  By machine:
-    linux      ████████████████░░  102  (60%)
-    archlinux  ███████░░░░░░░░░░░   45  (26%)
-    shared     ██░░░░░░░░░░░░░░░░   23  (14%)
-
-  pushes per day — last 7d
-  max 16
-  ████
-  ████        ████
-  ████        ████        ████
-  ████   ▆▆▆▆ ████        ████   ▅▅▅▅
-  ████   ████ ████   ▃▃▃▃ ████   ████
-  ████   ████ ████   ████ ████   ████
-   16     5    12     4    12     5    ·
-  Mon    Tue   Wed   Thu  Fri   Sat   Sun
-
-  PROJECT                COMMITS  MACHINES                LAST
-▶ limitless-exchange-api  52       linux=51, archlinux=1   15s ago
-  dotfiles                49       linux=49                2h ago
-  workspace               22       linux=22                15m ago
-  ...
-
-  [1/2/3] period  [tab] tab  [r] refresh  [↑↓] nav  [enter] drill  [q] quit
-```
-
-`Enter` on a project opens a per-project detail view with the same bar chart,
-top branches, recent pushes, and a cross-link to open PRs in that repo.
-
-### Tab 2: PRs — manage open PRs across orgs
-
-```
-ws pulse    Pulse | PRs* | Inbox
-
-  [1] Mine    [2] Reviewing
-
-  15 PRs across 4 repos
-
-  ▼ kuchmenko
-    kuchmenko/workspace
-    ▶ #42    feat(pulse): cross-machine activity     [draft]   [linux] [app]
-      #38    docs: promote workflow                  [open]    [linux] [app]
-
-  ▼ acme-corp
-    acme-corp/api
-      #2183  chore(market): extract leaf module      [open]    [shared] [gh]
-      #2182  chore(market): extract MarketDefund     [open]    [shared] [gh]
-
-  [1/2] scope  [a] show all  [tab] tab  [r] refresh  [↑↓] nav
-  [o] open  [d] draft  [x] close  [u] reopen
-```
-
-Each PR carries two badges:
-- `[machine]` — resolved owner from the wt/`<machine>`/* ref or autopush.owned registry.
-- `[app|gh]` — which fetcher delivered the record (see "Data sources" below).
-
-Actions are dispatched through whichever transport delivered the PR — App PRs
-mutate via REST/GraphQL with the ws OAuth token, gh PRs mutate via `gh api`. While
-an action is in flight the row shows `⟳` and an optimistic state until the next
-refresh reconciles.
-
-### Tab 3: Inbox — local unpushed work
-
-Strictly local. Walks every active project's worktrees on this machine and shows:
-
-- worktrees with `git log @{u}..HEAD` ahead count > 0
-- fresh `wt/<machine>/<topic>` branches that don't have an upstream yet
-  (i.e. you ran `ws worktree new` but haven't pushed)
-
-```
-  3 unpushed commits across 2 worktrees
-
-▶ workspace               wt/linux/pulse-recent       ↑2
-      a1b2c3d4  feat(pulse): bigger bar chart      15m ago
-      e5f6a7b8  feat(pulse): drill view            2h ago
-  acme-api                wt/linux/cleanup-cron       ↑1
-```
-
-The default branches (`main`/`master`/`dev`) without upstream are filtered out so
-the inbox only shows things you might forget.
-
-### Data sources
-
-Pulse pulls from two sources in parallel and merges by event id / PR node id:
-
-| Source | Required? | What it covers |
-|---|---|---|
-| **ws GitHub App** (`internal/auth` device flow) | yes | Repos / orgs where the ws App is installed |
-| **gh CLI** (`gh auth status`) | opt-in (auto-detected) | Anything else gh's token can see |
-
-If only the App is configured, you get App-visible activity. Install `gh` and
-`gh auth login` to fill the gaps for orgs that haven't installed the ws App yet.
-Each record carries a `Source` tag so the snapshot diagnostic shows exactly which
-source delivered which row.
-
-### Debugging
-
-`ws pulse --snapshot` skips the TUI entirely and dumps everything as JSON:
-
-```sh
-ws pulse --snapshot              # 7d, PRs filtered to workspace.toml
-ws pulse --snapshot -p 30d       # last 30 days
-ws pulse --snapshot --all        # include PRs from repos not in workspace.toml
-```
-
-Useful when something is missing — the JSON includes per-source counts, raw event
-counts vs PushEvent counts, and any HTTP errors with the response body.
+mechanism that lets the daemon keep pushing **non-wt** branches.
 
 ## Shell aliases
 
@@ -424,13 +267,11 @@ ws alias install                # adds a sourcing line to ~/.zshrc
 exec zsh                        # reload shell
 ```
 
-After that, every `ws alias` save, `ws alias add`, `ws alias rm`, or project
-archive automatically regenerates the aliases file at
+After that, every `ws alias` save, `ws alias add`, or `ws alias rm`
+automatically regenerates the aliases file at
 `$XDG_STATE_HOME/ws/aliases.zsh` (default `~/.local/state/ws/aliases.zsh`).
 Open a new shell or `source` that file to pick up the changes — `.zshrc`
 itself is never touched again.
-
-Archived projects have their aliases removed automatically.
 
 Currently only zsh is supported.
 
@@ -474,7 +315,7 @@ The daemon handles two layers of sync, both automatic and both safe-by-default.
 ws daemon register ~/dev
 ws daemon start
 
-# Now any ws add/archive/restore automatically:
+# Now any ws add / setup / bootstrap automatically:
 # 1. Updates workspace.toml
 # 2. Daemon commits + pushes to git
 
@@ -512,15 +353,3 @@ ws daemon install-service     # auto-start on boot (systemd)
 
 workspace.toml can live in your dotfiles repo (symlinked). The daemon resolves
 symlinks and commits to the correct repository.
-
-## Archival
-
-| Type | What happens |
-|------|-------------|
-| Personal | Clean deps (node_modules, target/, .venv) → tar.gz to `archive/` → remove |
-| Work | Remove local clone, keep registry entry |
-
-```sh
-ws archive my-project    # archive
-ws restore my-project    # bring it back
-```
