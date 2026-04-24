@@ -81,7 +81,6 @@ func NewRootCmd() *cobra.Command {
 		newAddCmd(),
 		newStatusCmd(),
 		newScanCmd(),
-		newGroupCmd(),
 		newSetupCmd(),
 		newAuthCmd(),
 		newDaemonCmd(),
