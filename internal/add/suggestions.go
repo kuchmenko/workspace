@@ -80,6 +80,14 @@ type Suggestion struct {
 	// "migrate / reconcile" because the repo is already local.
 	DiskPath string
 
+	// RegisteredPath is non-empty when the GitHub-suggested URL maps
+	// to a project already present in workspace.toml. The TUI renders
+	// these with a "● cloned at <path>" highlight so the user can tell
+	// at a glance which suggestions would be duplicates. Selecting one
+	// is still allowed — the edit screen will surface a name conflict
+	// and the user can rename to create a copy at a fresh path.
+	RegisteredPath string
+
 	// GhActivity is the event count from GitHub Events API — useful
 	// for sort order when a repo is in the GitHub source. Zero for
 	// non-GitHub suggestions.
@@ -207,6 +215,9 @@ func mergeSuggestions(buckets [][]Suggestion) []Suggestion {
 			cur.Sources = unionSources(cur.Sources, s.Sources)
 			if cur.DiskPath == "" {
 				cur.DiskPath = s.DiskPath
+			}
+			if cur.RegisteredPath == "" {
+				cur.RegisteredPath = s.RegisteredPath
 			}
 			if cur.GhActivity == 0 {
 				cur.GhActivity = s.GhActivity

@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -157,6 +158,11 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 // Honors opts.GhProvider override but constructs disk and clipboard
 // sources from the current environment (workspace, default reader).
 //
+// The GitHub source receives a workspace-derived `KnownRemotes` map so
+// it can mark suggestions whose URL matches an already-registered
+// project. The TUI uses that mark to render the "already cloned"
+// highlight on the affected rows.
+//
 // Tests that need to swap sources construct their own AddModel directly
 // (see tui_test.go); buildSources is the production wiring.
 func buildSources(opts Options) []Source {
@@ -168,8 +174,75 @@ func buildSources(opts Options) []Source {
 	return []Source{
 		NewDiskSource(opts.WsRoot, opts.Workspace),
 		&ClipboardSource{Reader: clipboard.DefaultReader},
-		&GitHubSource{Provider: gh},
+		&GitHubSource{
+			Provider:     gh,
+			KnownRemotes: knownRemotesFromWorkspace(opts.Workspace),
+		},
 	}
+}
+
+// knownRemotesFromWorkspace builds a "owner/repo" → project-path map
+// from the workspace's registered projects. Used to flag GitHub
+// suggestions whose remote already exists locally — the TUI then
+// renders those rows with a "● cloned at <path>" suffix and a dimmed
+// style so the user can see at a glance which suggestions would
+// produce duplicates.
+//
+// Lower-cased keys so case differences in URLs (Foo/Bar vs foo/bar)
+// still collide. Lossy on the rare case of two registered projects
+// with the same upstream URL — last write wins, which is fine because
+// the "already cloned" highlight is a hint, not a data integrity
+// guarantee.
+func knownRemotesFromWorkspace(ws *config.Workspace) map[string]string {
+	if ws == nil || len(ws.Projects) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(ws.Projects))
+	for _, p := range ws.Projects {
+		if p.Remote == "" {
+			continue
+		}
+		key := ownerRepoFromRemote(p.Remote)
+		if key == "" {
+			continue
+		}
+		out[key] = p.Path
+	}
+	return out
+}
+
+// ownerRepoFromRemote extracts a lowercased "owner/repo" from a git
+// remote URL. Handles SSH shorthand (`git@host:owner/repo.git`) and
+// scheme://host/owner/repo[.git] forms. Returns empty string when the
+// shape doesn't match — the caller treats that as "no match".
+func ownerRepoFromRemote(remote string) string {
+	s := strings.TrimSpace(remote)
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.TrimSuffix(s, "/")
+
+	// SSH shorthand: git@host:owner/repo
+	if at := strings.Index(s, "@"); at >= 0 && !strings.Contains(s, "://") {
+		rest := s[at+1:]
+		if colon := strings.Index(rest, ":"); colon >= 0 {
+			s = rest[colon+1:] // owner/repo
+			return strings.ToLower(s)
+		}
+	}
+
+	// scheme://host/owner/repo
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+		if slash := strings.Index(s, "/"); slash >= 0 {
+			s = s[slash+1:]
+		}
+	}
+
+	// Strip any trailing path segments beyond owner/repo.
+	parts := strings.Split(s, "/")
+	if len(parts) >= 2 {
+		return strings.ToLower(parts[0] + "/" + parts[1])
+	}
+	return ""
 }
 
 // resolveSaveFn returns opts.Save when set, else falls back to the

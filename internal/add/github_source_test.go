@@ -120,3 +120,43 @@ func TestGitHubSource_EmptyReposReturnsEmpty(t *testing.T) {
 		t.Errorf("expected empty, got %v", got)
 	}
 }
+
+func TestGitHubSource_PopulatesRegisteredPath(t *testing.T) {
+	// Repo whose FullName matches our known-remotes lookup (lower-cased)
+	// must come back with RegisteredPath set so the TUI can highlight it.
+	provider := &fakeProvider{
+		repos: []github.Repo{
+			{Name: "alpha", FullName: "Kuchmenko/Alpha", Owner: "Kuchmenko", SSHURL: "git@github.com:Kuchmenko/Alpha.git"},
+			{Name: "fresh", FullName: "kuchmenko/fresh", Owner: "kuchmenko", SSHURL: "git@github.com:kuchmenko/fresh.git"},
+		},
+	}
+	src := &GitHubSource{
+		Provider: provider,
+		KnownRemotes: map[string]string{
+			"kuchmenko/alpha": "personal/alpha",
+		},
+	}
+	got, err := src.FetchSuggestions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].RegisteredPath != "personal/alpha" {
+		t.Errorf("alpha RegisteredPath = %q, want personal/alpha (case-insensitive match)", got[0].RegisteredPath)
+	}
+	if got[1].RegisteredPath != "" {
+		t.Errorf("fresh RegisteredPath leaked: %q", got[1].RegisteredPath)
+	}
+}
+
+func TestGitHubSource_NilKnownRemotes_NoMarks(t *testing.T) {
+	provider := &fakeProvider{
+		repos: []github.Repo{
+			{Name: "x", FullName: "any/thing", SSHURL: "git@github.com:any/thing.git"},
+		},
+	}
+	src := &GitHubSource{Provider: provider} // KnownRemotes nil
+	got, _ := src.FetchSuggestions(context.Background())
+	if got[0].RegisteredPath != "" {
+		t.Errorf("nil KnownRemotes should leave RegisteredPath empty")
+	}
+}
