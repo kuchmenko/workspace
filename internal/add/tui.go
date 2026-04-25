@@ -70,7 +70,12 @@ type AddModel struct {
 
 	// gathering.
 	spinner spinner.Model
-	gathered *GatherResult
+
+	// sourceOutcomes accumulates per-source results as each one
+	// completes. Used by viewBrowse to render the "disk:N github:M"
+	// chip line and by Update to decide when all sources are done.
+	sourceOutcomes []SourceOutcome
+	sourcesDone    int
 
 	// browse.
 	cursor int        // index into filteredView()
@@ -200,11 +205,6 @@ type AddDoneMsg struct {
 	Errors  []error
 }
 
-// gatherDoneMsg is posted by the gather goroutine to AddModel.Update.
-type gatherDoneMsg struct {
-	result *GatherResult
-}
-
 // cloneDoneMsg is posted after each Register call in the cloning queue.
 type cloneDoneMsg struct {
 	idx     int
@@ -230,7 +230,52 @@ type needsBranchMsg struct {
 // =============================================================================
 
 func (m AddModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.startGather())
+	// Streaming gather: each source runs as its own tea.Cmd so its
+	// result lands on the bubbletea event loop the moment the source
+	// returns. Disk + clipboard typically finish within a few hundred
+	// ms; GitHub can take seconds on cold cache. The TUI transitions
+	// from "gathering" to "browse" as soon as the FIRST source has
+	// any data — repos from later sources fold in dynamically without
+	// the user staring at a spinner.
+	cmds := []tea.Cmd{m.spinner.Tick}
+	for _, src := range m.sources {
+		cmds = append(cmds, m.startSource(src))
+	}
+	return tea.Batch(cmds...)
+}
+
+// startSource produces a tea.Cmd that runs one source's
+// FetchSuggestions in a goroutine and emits a sourceDoneMsg with the
+// outcome. The per-source ctx deadline is applied here so a single
+// slow provider never holds up the others — Gather's own timeout
+// logic stays available but is unused by the streaming path.
+func (m AddModel) startSource(src Source) tea.Cmd {
+	timeout := m.gatherTO
+	if timeout <= 0 {
+		timeout = DefaultSourceTimeout
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		start := time.Now()
+		got, err := src.FetchSuggestions(ctx)
+		return sourceDoneMsg{
+			name:  src.Name(),
+			items: got,
+			err:   err,
+			took:  time.Since(start),
+		}
+	}
+}
+
+// sourceDoneMsg lands on AddModel.Update each time a single source
+// finishes its FetchSuggestions call. Multiple sourceDoneMsgs are
+// expected per session (one per source).
+type sourceDoneMsg struct {
+	name  string
+	items []Suggestion
+	err   error
+	took  time.Duration
 }
 
 func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -253,6 +298,12 @@ func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return done, emit(AddDoneMsg{})
 		}
+	case sourceDoneMsg:
+		// Source completion can land in any state — fold the new
+		// results into allSuggestions even if the user has already
+		// moved on to manual / edit / confirm. We just don't change
+		// the visible state from those screens.
+		return m.handleSourceDone(msg)
 	}
 
 	switch m.state {
@@ -302,39 +353,60 @@ func (m AddModel) View() string {
 // Gathering
 // =============================================================================
 
-func (m AddModel) startGather() tea.Cmd {
-	return func() tea.Msg {
-		ctx := context.Background()
-		// Apply the timeout outside Gather so we can short-circuit
-		// the whole pipeline if all sources are slow. Gather's
-		// per-source timeout still applies inside.
-		if m.gatherTO > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, m.gatherTO+time.Second)
-			defer cancel()
+// handleSourceDone folds one source's FetchSuggestions outcome into
+// the model. Called for every source as it completes (sources run in
+// parallel via separate tea.Cmds from Init), so this runs ~N times
+// per session where N == len(m.sources).
+//
+// State transitions:
+//   - First source with results → addStateGathering → addStateBrowse
+//     (user sees something the moment any source finishes)
+//   - Last source done with no cumulative results → addStateBrowseEmpty
+//   - Subsequent sources after browse is reached → silently fold in;
+//     the rendered tree updates next frame
+func (m AddModel) handleSourceDone(msg sourceDoneMsg) (tea.Model, tea.Cmd) {
+	m.sourcesDone++
+	m.sourceOutcomes = append(m.sourceOutcomes, SourceOutcome{
+		Name:     msg.name,
+		Count:    len(msg.items),
+		Duration: msg.took,
+		Err:      msg.err,
+	})
+	if msg.err == nil && len(msg.items) > 0 {
+		// Re-run dedup against the existing list so a repo that
+		// shows up in two sources merges into one row even if the
+		// sources finish on different ticks.
+		merged := mergeSuggestions([][]Suggestion{m.allSuggestions, msg.items})
+		sortByRelevance(merged)
+		m.allSuggestions = merged
+		// Cursor may need clamping if the dedup pass shrank an
+		// already-rendered list (rare but possible if a clipboard
+		// suggestion arrives last and merges with an existing GH
+		// suggestion).
+		if m.cursor >= len(m.allSuggestions) && len(m.allSuggestions) > 0 {
+			m.cursor = len(m.allSuggestions) - 1
 		}
-		res, _ := Gather(ctx, m.sources, GatherOptions{SourceTimeout: m.gatherTO})
-		return gatherDoneMsg{result: res}
 	}
+
+	// State decisions only apply while we're still on the gathering
+	// screen — sources finishing after the user has already entered
+	// manual/edit/confirm don't yank them back.
+	if m.state == addStateGathering {
+		switch {
+		case len(m.allSuggestions) > 0:
+			m.transitionTo(addStateBrowse)
+		case m.sourcesDone >= len(m.sources):
+			m.transitionTo(addStateBrowseEmpty)
+		}
+	}
+	return m, nil
 }
 
 func (m AddModel) updateGathering(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case spinner.TickMsg:
+	if msg, ok := msg.(spinner.TickMsg); ok {
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-	case gatherDoneMsg:
-		m.gathered = msg.result
-		if msg.result != nil {
-			m.allSuggestions = msg.result.Suggestions
-		}
-		if len(m.allSuggestions) == 0 {
-			m.transitionTo(addStateBrowseEmpty)
-		} else {
-			m.transitionTo(addStateBrowse)
-		}
-		return m, nil
 	}
 	return m, nil
 }
@@ -343,8 +415,20 @@ func (m AddModel) viewGathering() string {
 	var b strings.Builder
 	b.WriteString(addTitle.Render(" Add project — gathering "))
 	b.WriteString("\n\n")
-	b.WriteString("  " + m.spinner.View() + " probing sources...\n\n")
-	b.WriteString(addHelp.Render("[ctrl+c] cancel"))
+	b.WriteString("  " + m.spinner.View() + " probing sources")
+	if m.sourcesDone > 0 {
+		// Show progress so the user can tell we haven't hung — e.g.
+		// "(2/3 sources done)".
+		fmt.Fprintf(&b, " %s", addDim.Render(fmt.Sprintf("(%d/%d done)", m.sourcesDone, len(m.sources))))
+	}
+	b.WriteString("\n\n")
+	// Per-source progress chips — same look as the in-browse line.
+	if len(m.sourceOutcomes) > 0 {
+		b.WriteString("  ")
+		b.WriteString(renderSourceChipsLive(m.sourceOutcomes))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("  " + addHelp.Render("[ctrl+c] cancel"))
 	return b.String()
 }
 
@@ -429,23 +513,17 @@ func (m AddModel) viewBrowse() string {
 		return b.String()
 	}
 
-	// Per-source diagnostics from the gather pass. Errors are shown
-	// inline so the user can tell "github source unavailable" from
-	// "github source returned zero results".
-	if m.gathered != nil {
-		var chips []string
-		for _, o := range m.gathered.PerSource {
-			color := "2"
-			label := fmt.Sprintf("%s:%d", o.Name, o.Count)
-			if o.Err != nil {
-				color = "3"
-				label = fmt.Sprintf("%s:err (%s)", o.Name, sourceErrHint(o.Err))
-			}
-			chips = append(chips, lipgloss.NewStyle().
-				Foreground(lipgloss.Color(color)).Render(label))
-		}
+	// Per-source diagnostics. Each chip reflects the status of one
+	// source as of "now": completed (with count), pending (spinner),
+	// or errored (with hint). Updates each frame as new sources land.
+	if len(m.sources) > 0 {
 		b.WriteString("  ")
-		b.WriteString(strings.Join(chips, "  "))
+		b.WriteString(renderSourceChipsLive(m.sourceOutcomes))
+		if m.sourcesDone < len(m.sources) {
+			fmt.Fprintf(&b, "  %s",
+				addDim.Render(fmt.Sprintf("%s loading %d more...",
+					m.spinner.View(), len(m.sources)-m.sourcesDone)))
+		}
 		b.WriteString("\n\n")
 	}
 
@@ -1236,6 +1314,37 @@ func shortURL(s Suggestion) string {
 		return s.DiskPath
 	}
 	return ""
+}
+
+// renderSourceChipsLive turns the model's accumulated per-source
+// outcomes into a single status line. Used both in the gathering
+// view (when the user is staring at the spinner) and in the browse
+// view (where it lives above the tree as a status bar).
+//
+// Color rules:
+//   green (2): source returned a non-empty result
+//   dim   (8): source returned 0 (empty but successful)
+//   amber (3): source errored
+func renderSourceChipsLive(outcomes []SourceOutcome) string {
+	var chips []string
+	for _, o := range outcomes {
+		var color string
+		var label string
+		switch {
+		case o.Err != nil:
+			color = "3"
+			label = fmt.Sprintf("%s:err (%s)", o.Name, sourceErrHint(o.Err))
+		case o.Count == 0:
+			color = "8"
+			label = fmt.Sprintf("%s:0", o.Name)
+		default:
+			color = "2"
+			label = fmt.Sprintf("%s:%d", o.Name, o.Count)
+		}
+		chips = append(chips, lipgloss.NewStyle().
+			Foreground(lipgloss.Color(color)).Render(label))
+	}
+	return strings.Join(chips, "  ")
 }
 
 // sourceErrHint summarizes a per-source error into a one-or-two-word

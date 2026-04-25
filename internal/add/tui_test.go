@@ -83,13 +83,16 @@ type ctxLike interface {
 
 func TestAddModel_GatherDone_NonEmpty_TransitionsToBrowse(t *testing.T) {
 	m := newTestModel(t, nil)
-	res := &GatherResult{
-		Suggestions: []Suggestion{
+	// One source returning two suggestions — model must transition
+	// to browse and accumulate the items.
+	m.sources = []Source{nil} // count matters for sourcesDone math
+	m, _ = driveModel(m, sourceDoneMsg{
+		name: "fake",
+		items: []Suggestion{
 			{Name: "alpha", RemoteURL: "git@github.com:me/alpha.git", Sources: []SourceKind{SourceGitHub}},
 			{Name: "beta", RemoteURL: "git@github.com:me/beta.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/beta"},
 		},
-	}
-	m, _ = driveModel(m, gatherDoneMsg{result: res})
+	})
 	if m.state != addStateBrowse {
 		t.Errorf("state = %d, want addStateBrowse", m.state)
 	}
@@ -100,9 +103,87 @@ func TestAddModel_GatherDone_NonEmpty_TransitionsToBrowse(t *testing.T) {
 
 func TestAddModel_GatherDone_Empty_TransitionsToBrowseEmpty(t *testing.T) {
 	m := newTestModel(t, nil)
-	m, _ = driveModel(m, gatherDoneMsg{result: &GatherResult{}})
+	// Single source that returns no items: model must end up in
+	// browseEmpty after all sources finish.
+	m.sources = []Source{nil}
+	m, _ = driveModel(m, sourceDoneMsg{name: "fake", items: nil})
 	if m.state != addStateBrowseEmpty {
 		t.Errorf("state = %d, want addStateBrowseEmpty", m.state)
+	}
+}
+
+func TestAddModel_StreamingGather_FirstResultTransitionsImmediately(t *testing.T) {
+	// With three sources, the model should transition to browse the
+	// moment any one returns non-empty results — before the others
+	// finish. Subsequent source completions fold in without changing
+	// state.
+	m := newTestModel(t, nil)
+	m.sources = []Source{nil, nil, nil}
+
+	// First source: 1 item → transition to browse.
+	m, _ = driveModel(m, sourceDoneMsg{name: "disk", items: []Suggestion{
+		{Name: "a", RemoteURL: "g@h:me/a.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/a"},
+	}})
+	if m.state != addStateBrowse {
+		t.Errorf("after source 1: state = %d, want browse", m.state)
+	}
+	if len(m.allSuggestions) != 1 {
+		t.Errorf("after source 1: suggestions = %d", len(m.allSuggestions))
+	}
+
+	// Second source: empty → no state change, count stays.
+	m, _ = driveModel(m, sourceDoneMsg{name: "clip"})
+	if m.state != addStateBrowse {
+		t.Errorf("after source 2: state changed, got %d", m.state)
+	}
+	if len(m.allSuggestions) != 1 {
+		t.Errorf("empty source 2 mutated suggestions: %d", len(m.allSuggestions))
+	}
+
+	// Third source: 2 more items → suggestions grow.
+	m, _ = driveModel(m, sourceDoneMsg{name: "github", items: []Suggestion{
+		{Name: "b", RemoteURL: "g@h:me/b.git", Sources: []SourceKind{SourceGitHub}, InferredGrp: "me"},
+		{Name: "c", RemoteURL: "g@h:me/c.git", Sources: []SourceKind{SourceGitHub}, InferredGrp: "me"},
+	}})
+	if m.state != addStateBrowse {
+		t.Errorf("after source 3: state = %d, want browse", m.state)
+	}
+	if len(m.allSuggestions) != 3 {
+		t.Errorf("after all sources: suggestions = %d, want 3", len(m.allSuggestions))
+	}
+	if m.sourcesDone != 3 {
+		t.Errorf("sourcesDone = %d, want 3", m.sourcesDone)
+	}
+	if len(m.sourceOutcomes) != 3 {
+		t.Errorf("sourceOutcomes = %d, want 3", len(m.sourceOutcomes))
+	}
+}
+
+func TestAddModel_StreamingGather_SourceErrIsRecorded(t *testing.T) {
+	m := newTestModel(t, nil)
+	m.sources = []Source{nil, nil}
+	// Source 1 errors → no items, error in outcomes.
+	m, _ = driveModel(m, sourceDoneMsg{name: "github", err: testutilFailErr("401")})
+	if len(m.sourceOutcomes) != 1 || m.sourceOutcomes[0].Err == nil {
+		t.Errorf("err not recorded: %+v", m.sourceOutcomes)
+	}
+	// Source 2 succeeds → transition to browse.
+	m, _ = driveModel(m, sourceDoneMsg{name: "disk", items: []Suggestion{{Name: "x"}}})
+	if m.state != addStateBrowse {
+		t.Errorf("state = %d, want browse", m.state)
+	}
+}
+
+func TestAddModel_StreamingGather_AllErrorsAndEmpty_BrowseEmpty(t *testing.T) {
+	m := newTestModel(t, nil)
+	m.sources = []Source{nil, nil}
+	// Both sources fail with no items. Model must end up in
+	// browseEmpty so the user sees the "no suggestions" hint with
+	// the error chips visible above.
+	m, _ = driveModel(m, sourceDoneMsg{name: "a", err: testutilFailErr("a-err")})
+	m, _ = driveModel(m, sourceDoneMsg{name: "b", err: testutilFailErr("b-err")})
+	if m.state != addStateBrowseEmpty {
+		t.Errorf("state = %d, want browseEmpty", m.state)
 	}
 }
 
@@ -453,9 +534,10 @@ func TestAddModel_FullHappyPath(t *testing.T) {
 		Sources:   nil,
 	})
 	m.standalone = true
+	m.sources = []Source{nil} // sourcesDone math expects a non-empty count
 
-	// 1. Pretend gather returned our suggestion.
-	m, _ = driveModel(m, gatherDoneMsg{result: &GatherResult{Suggestions: []Suggestion{suggestion}}})
+	// 1. Pretend a single source returned our suggestion.
+	m, _ = driveModel(m, sourceDoneMsg{name: "fake", items: []Suggestion{suggestion}})
 	if m.state != addStateBrowse {
 		t.Fatalf("state after gather: %d", m.state)
 	}
