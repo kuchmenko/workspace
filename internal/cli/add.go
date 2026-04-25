@@ -35,7 +35,7 @@ Three input modes:
   ws add <url>            register and clone a single URL
   ws add <url> <url> ...  register and clone several URLs (sequential)
   ws add -                read URLs from stdin, one per line
-  ws add                  open the interactive TUI (Phase 3 — coming soon)
+  ws add                  open the interactive TUI with disk / clipboard / GitHub suggestions
 
 Headless invocations (any with positional URLs, or stdin '-', or a non-TTY
 context) call clone.CloneIntoLayout — the same path 'ws bootstrap' uses —
@@ -95,9 +95,6 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 				Save:      func(*config.Workspace) error { return saveWorkspace() },
 			})
 			if err != nil {
-				if errors.Is(err, add.ErrTUINotImplemented) {
-					return fmt.Errorf("%w\n  workaround: pass URLs positionally, e.g. `ws add git@github.com:owner/repo.git`", err)
-				}
 				return err
 			}
 
@@ -117,7 +114,7 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 	cmd.Flags().StringVarP(&group, "group", "g", "", "group/directory for the project (e.g. limitless, personal/tools)")
 	cmd.Flags().StringVarP(&name, "name", "n", "", "project name (default: derived from URL; only valid with a single URL)")
 	cmd.Flags().BoolVar(&noClone, "no-clone", false, "register without cloning")
-	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI (default when no URLs given on a TTY; ships in Phase 3)")
+	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI (default when no URLs given on a TTY)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force headless mode; error if no URLs are provided")
 
 	// cmd.Context() is a no-op default; wire to a real context for now.

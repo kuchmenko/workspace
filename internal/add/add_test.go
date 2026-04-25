@@ -223,15 +223,11 @@ func TestRun_Sidecar_StaleIsClearedSilently(t *testing.T) {
 	}
 }
 
-func TestRun_ModeTUI_NotImplemented(t *testing.T) {
-	wsRoot, ws, save := setupWorkspace(t)
-	_, err := Run(context.Background(), Options{
-		WsRoot: wsRoot, Workspace: ws, Save: save, Mode: ModeTUI,
-	})
-	if !errors.Is(err, ErrTUINotImplemented) {
-		t.Errorf("want ErrTUINotImplemented, got %v", err)
-	}
-}
+// TUI mode tests (TestRun_ModeTUI_*, TestRun_ModeAuto_NoURLs_*) are
+// covered by tui_test.go's state-machine drives — Run() in TUI mode
+// launches a tea.Program against the real TTY which is not testable
+// here. The headless-side dispatch is exercised by the other tests
+// in this file.
 
 func TestRun_ModeEmbedded_NotSupported(t *testing.T) {
 	wsRoot, ws, save := setupWorkspace(t)
@@ -250,16 +246,6 @@ func TestRun_ModeHeadless_NoURLs_Errors(t *testing.T) {
 	})
 	if !errors.Is(err, ErrNoURLs) {
 		t.Errorf("want ErrNoURLs, got %v", err)
-	}
-}
-
-func TestRun_ModeAuto_NoURLs_FallsThroughToTUIErr(t *testing.T) {
-	wsRoot, ws, save := setupWorkspace(t)
-	_, err := Run(context.Background(), Options{
-		WsRoot: wsRoot, Workspace: ws, Save: save, Mode: ModeAuto,
-	})
-	if !errors.Is(err, ErrTUINotImplemented) {
-		t.Errorf("want ErrTUINotImplemented, got %v", err)
 	}
 }
 
