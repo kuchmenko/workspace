@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/auth"
 )
@@ -57,16 +58,24 @@ var ErrNotImplemented = errors.New("not implemented (GitHub App: Track C)")
 //  3. Neither → NoopProvider. Callers see ErrNotAuthed on SuggestRepos
 //     and render a "run `ws auth login` / `gh auth login`" hint.
 //
-// Phase 1 does NOT read ~/.config/ws/github-app.toml. That file and its
-// reader land with Track C together so an empty/malformed token file
-// cannot silently knock out httpClient/ghClient suggestions.
+// The OAuth path is health-probed before being returned: ws OAuth tokens
+// from the device-flow path are user-to-server (`ghu_*`) with an 8-hour
+// lifetime, and we don't refresh them. A stale token would silently 401
+// every API call. The probe is one HEAD-style request to /user with a
+// 2-second budget; if it fails (401, network, timeout), we fall through
+// to gh CLI rather than wedge the TUI on a dead session.
+//
+// Does NOT read ~/.config/ws/github-app.toml. That reader lands with the
+// future GitHub App integration so an empty/malformed token file cannot
+// silently knock out httpClient/ghClient suggestions.
 func ResolveProvider() Provider {
-	// 1. ws OAuth token (preferred).
+	// 1. ws OAuth token (preferred when valid).
 	if token, err := loadOAuthToken(); err == nil && token != "" {
-		return &clientProvider{
-			client: NewHTTPClient(token),
-			name:   "http-oauth",
+		client := NewHTTPClient(token)
+		if oauthProbe(client) {
+			return &clientProvider{client: client, name: "http-oauth"}
 		}
+		// Stale or rejected — silently fall through.
 	}
 
 	// 2. gh CLI fallback.
@@ -81,9 +90,38 @@ func ResolveProvider() Provider {
 	return noopProvider{}
 }
 
-// loadOAuthToken and ghAuthStatus are package-level variables so tests
-// can swap the environment probes without touching real auth state.
-// Production defaults below.
+// oauthProbeNetwork performs a quick /user round-trip to validate the
+// token before we hand the provider to the rest of the gather pipeline.
+// Avoids the common "expired ghu_* token" trap where the user ran
+// `ws auth login` weeks ago and the device-flow user-to-server token
+// has long since lapsed.
+//
+// Returns true on a successful CurrentUser() call. Any error — 401,
+// network, timeout — returns false, prompting the resolver to try the
+// next path.
+//
+// 2s budget is generous enough for a transcontinental round-trip and
+// strict enough that an unreachable api.github.com doesn't block the
+// TUI cold-start.
+//
+// Swappable via the package-level `oauthProbe` variable for tests.
+func oauthProbeNetwork(c Client) bool {
+	done := make(chan bool, 1)
+	go func() {
+		_, err := c.CurrentUser()
+		done <- err == nil
+	}()
+	select {
+	case ok := <-done:
+		return ok
+	case <-time.After(2 * time.Second):
+		return false
+	}
+}
+
+// loadOAuthToken, ghAuthStatus, and oauthProbe are package-level
+// variables so tests can swap the environment probes without touching
+// real auth state. Production defaults below.
 var (
 	loadOAuthToken = func() (string, error) {
 		token, err := auth.LoadToken()
@@ -99,6 +137,10 @@ var (
 		cmd := exec.Command("gh", "auth", "status")
 		return cmd.Run() == nil
 	}
+
+	// oauthProbe validates a freshly-built httpClient by hitting /user
+	// once. Swappable for tests that don't want to touch the network.
+	oauthProbe = oauthProbeNetwork
 )
 
 // clientProvider adapts any Client (httpClient or ghClient today; more
