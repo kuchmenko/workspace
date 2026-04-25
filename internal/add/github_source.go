@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/kuchmenko/workspace/internal/github"
 )
@@ -20,11 +21,18 @@ type GitHubSource struct {
 
 	// Limit caps the number of suggestions per call. 0 → DefaultLimit.
 	Limit int
+
+	// KnownRemotes maps lowercased "owner/repo" to the workspace.toml
+	// project path. Suggestions whose FullName hits this map get
+	// RegisteredPath set so the TUI can highlight already-cloned
+	// repositories. Empty/nil → no highlights, all repos surface as
+	// fresh suggestions.
+	KnownRemotes map[string]string
 }
 
 // DefaultLimit is the suggestion cap when GitHubSource.Limit is 0.
 // 50 is enough for the sole user's account today; revisit if 10x-scale
-// users complain (issue #20 Open item #6).
+// users complain.
 const DefaultLimit = 50
 
 func (*GitHubSource) Name() string { return "github" }
@@ -51,16 +59,23 @@ func (s *GitHubSource) FetchSuggestions(ctx context.Context) ([]Suggestion, erro
 
 	out := make([]Suggestion, 0, len(repos))
 	for _, r := range repos {
-		// Prefer the SSH URL the API gives us; consumers that need
-		// HTTPS can convert via normalizeRemoteURL on their end.
-		out = append(out, Suggestion{
+		sug := Suggestion{
 			Name:        r.Name,
 			RemoteURL:   r.SSHURL,
 			Sources:     []SourceKind{SourceGitHub},
 			GhActivity:  r.Activity,
 			PushedAt:    r.PushedAt,
 			InferredGrp: r.Owner, // GitHub owner = inferred group (org or self)
-		})
+		}
+		// Cross-reference workspace.toml: if a project with this
+		// remote is already registered, surface its path so the TUI
+		// can highlight the suggestion as "already cloned at X".
+		if s.KnownRemotes != nil {
+			if p, ok := s.KnownRemotes[strings.ToLower(r.FullName)]; ok && p != "" {
+				sug.RegisteredPath = p
+			}
+		}
+		out = append(out, sug)
 	}
 	return out, nil
 }

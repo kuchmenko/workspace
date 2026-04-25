@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -452,29 +453,41 @@ func (m AddModel) viewBrowse() string {
 		fmt.Fprintf(&b, "  filter: %s\n\n", addAccent.Render(m.filterInput.Value()))
 	}
 
-	limit := 12
-	start := 0
-	if m.cursor >= limit {
-		start = m.cursor - limit + 1
-	}
-	end := start + limit
-	if end > len(view) {
-		end = len(view)
-	}
-	for i := start; i < end; i++ {
-		s := view[i]
-		cursor := "  "
-		if i == m.cursor {
-			cursor = addCursor.Render("▸ ")
+	// Build the tree: group suggestions by owner / kind. The cursor
+	// (m.cursor) still indexes the flat filtered slice; the tree is a
+	// pure rendering concern. We compute which "rendered row" the
+	// cursor maps to and crop a window around it.
+	rows := buildBrowseRows(view)
+	cursorRow := -1
+	itemSeen := 0
+	for i, r := range rows {
+		if r.kind == rowItem {
+			if itemSeen == m.cursor {
+				cursorRow = i
+			}
+			itemSeen++
 		}
-		fmt.Fprintf(&b, "  %s%s  %s  %s\n",
-			cursor,
-			addPad(s.Name, 24),
-			renderSourceChips(s.Sources),
-			addDim.Render(shortURL(s)))
 	}
-	if len(view) > limit {
-		fmt.Fprintf(&b, "\n  %s\n", addDim.Render(fmt.Sprintf("…and %d more", len(view)-end+(end-start)-limit)))
+
+	const visibleRows = 16
+	start, end := windowAround(cursorRow, len(rows), visibleRows)
+	for i := start; i < end; i++ {
+		r := rows[i]
+		switch r.kind {
+		case rowGroup:
+			fmt.Fprintf(&b, "  %s\n", r.text)
+		case rowItem:
+			s := r.suggestion
+			cursor := "    "
+			if i == cursorRow {
+				cursor = "  " + addCursor.Render("▸ ")
+			}
+			b.WriteString(renderItemLine(cursor, s))
+		}
+	}
+	if start > 0 || end < len(rows) {
+		fmt.Fprintf(&b, "\n  %s\n",
+			addDim.Render(fmt.Sprintf("(scrolled %d/%d items)", m.cursor+1, len(view))))
 	}
 
 	b.WriteString("\n")
@@ -485,6 +498,159 @@ func (m AddModel) viewBrowse() string {
 		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [⏎] select  [/] filter  [i] manual URL  [esc] quit"))
 	}
 	return b.String()
+}
+
+// browseRowKind tags a rendered line so the windowing math can tell
+// group headers (which the cursor cannot land on) from item rows
+// (which it can).
+type browseRowKind int
+
+const (
+	rowGroup browseRowKind = iota
+	rowItem
+)
+
+type browseRow struct {
+	kind       browseRowKind
+	text       string      // pre-formatted header text; empty for items
+	suggestion *Suggestion // non-nil for items
+}
+
+// buildBrowseRows groups the filtered suggestion list into a
+// header-and-items sequence. The grouping axis is the suggestion's
+// "natural home" — see groupKey for the precedence.
+func buildBrowseRows(view []Suggestion) []browseRow {
+	type bucket struct {
+		key    string
+		label  string
+		order  int
+		items  []*Suggestion
+	}
+	bucketsByKey := make(map[string]*bucket)
+	var keysInOrder []string
+
+	for i := range view {
+		s := &view[i]
+		key, label, order := groupKey(*s)
+		bk, ok := bucketsByKey[key]
+		if !ok {
+			bk = &bucket{key: key, label: label, order: order}
+			bucketsByKey[key] = bk
+			keysInOrder = append(keysInOrder, key)
+		}
+		bk.items = append(bk.items, s)
+	}
+
+	// Sort buckets by (order, label). Order pins fixed-priority
+	// groups (clipboard, local) above the GitHub orgs; alphabetical
+	// is the tie-breaker. Items inside a bucket keep the order from
+	// `view` (already relevance-sorted upstream).
+	buckets := make([]*bucket, 0, len(bucketsByKey))
+	for _, k := range keysInOrder {
+		buckets = append(buckets, bucketsByKey[k])
+	}
+	sort.SliceStable(buckets, func(i, j int) bool {
+		if buckets[i].order != buckets[j].order {
+			return buckets[i].order < buckets[j].order
+		}
+		return strings.ToLower(buckets[i].label) < strings.ToLower(buckets[j].label)
+	})
+
+	var rows []browseRow
+	for _, b := range buckets {
+		header := fmt.Sprintf("%s %s",
+			addGroupHdr.Render(b.label),
+			addDim.Render(fmt.Sprintf("(%d)", len(b.items))))
+		rows = append(rows, browseRow{kind: rowGroup, text: header})
+		for _, s := range b.items {
+			rows = append(rows, browseRow{kind: rowItem, suggestion: s})
+		}
+	}
+	return rows
+}
+
+// groupKey returns (key, displayLabel, sortOrder) for a Suggestion.
+// Sort order pins Clipboard at the top (most recent intent), then
+// any disk-only entries (acting on what's already on the user's
+// machine), then GitHub owners alphabetically. Mixed sources fall
+// into the GitHub bucket because that's where they came from
+// originally — the disk presence becomes a row-level highlight, not
+// a separate bucket.
+func groupKey(s Suggestion) (key, label string, order int) {
+	hasGh := hasSource(s.Sources, SourceGitHub)
+	hasClip := hasSource(s.Sources, SourceClipboard)
+	hasDisk := hasSource(s.Sources, SourceDisk)
+	hasManual := hasSource(s.Sources, SourceManual)
+
+	switch {
+	case hasClip && !hasGh:
+		return "_clip", "Clipboard", 0
+	case hasManual && !hasGh:
+		return "_manual", "Manual", 0
+	case hasDisk && !hasGh:
+		return "_disk", "Local (unregistered)", 1
+	case hasGh && s.InferredGrp != "":
+		return "gh:" + strings.ToLower(s.InferredGrp), s.InferredGrp, 2
+	default:
+		return "_other", "Other", 3
+	}
+}
+
+// windowAround crops [0, total) to a visible-size window centered
+// around `cursor`. Used by viewBrowse to keep the cursor in view
+// without scrolling the entire 300-row tree.
+func windowAround(cursor, total, size int) (start, end int) {
+	if total <= size {
+		return 0, total
+	}
+	if cursor < 0 {
+		return 0, size
+	}
+	half := size / 2
+	start = cursor - half
+	if start < 0 {
+		start = 0
+	}
+	end = start + size
+	if end > total {
+		end = total
+		start = end - size
+	}
+	return start, end
+}
+
+// renderItemLine produces one suggestion-row in the browse list,
+// applying the "already cloned" highlight when the suggestion has a
+// disk path or a registered-path match. The cursor argument is the
+// pre-rendered prefix ("  ▸ " for the selected row, "    " otherwise).
+func renderItemLine(cursor string, s *Suggestion) string {
+	nameStyle := addItemName
+	suffix := ""
+	urlStyle := addDim
+
+	switch {
+	case s.RegisteredPath != "":
+		// Already in workspace.toml — would create a duplicate. The
+		// highlight is loud enough to warn the user but the row
+		// stays selectable so they can intentionally make a copy.
+		nameStyle = addExists
+		suffix = " " + addExistsTag.Render(
+			fmt.Sprintf("● cloned at %s", s.RegisteredPath))
+	case s.DiskPath != "":
+		// Found on disk but not registered — selecting will
+		// register the existing path (no clone).
+		nameStyle = addExists
+		suffix = " " + addExistsTag.Render(
+			fmt.Sprintf("● local: %s", s.DiskPath))
+	}
+
+	url := shortURL(*s)
+	return fmt.Sprintf("%s%s  %s  %s%s\n",
+		cursor,
+		nameStyle.Render(addPad(s.Name, 24)),
+		renderSourceChips(s.Sources),
+		urlStyle.Render(url),
+		suffix)
 }
 
 func (m AddModel) filteredView() []Suggestion {
@@ -1051,4 +1217,29 @@ var (
 	addCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 
 	addChip = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+
+	// Group header: bright magenta + bold so org names stand out
+	// against the muted body. Underline gives a clear visual break
+	// between groups in dense lists.
+	addGroupHdr = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("5")).
+			Bold(true).
+			Underline(true)
+
+	// Default item-name color for fresh suggestions.
+	addItemName = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+
+	// "Already cloned" highlight for items that map to a registered
+	// project or an unregistered local clone. Yellow so it screams
+	// "look at me" without going full red, since picking the row is
+	// still allowed (creates a copy after rename).
+	addExists = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("3")).
+			Bold(true)
+
+	// Tag suffix that follows the item name, with a slightly dimmer
+	// shade so it reads as metadata not part of the name.
+	addExistsTag = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("3")).
+			Italic(true)
 )
