@@ -428,15 +428,18 @@ func (m AddModel) viewBrowse() string {
 		return b.String()
 	}
 
-	// Per-source diagnostics from the gather pass.
+	// Per-source diagnostics from the gather pass. Errors are shown
+	// inline so the user can tell "github source unavailable" from
+	// "github source returned zero results".
 	if m.gathered != nil {
 		var chips []string
 		for _, o := range m.gathered.PerSource {
 			color := "2"
+			label := fmt.Sprintf("%s:%d", o.Name, o.Count)
 			if o.Err != nil {
 				color = "3"
+				label = fmt.Sprintf("%s:err (%s)", o.Name, sourceErrHint(o.Err))
 			}
-			label := fmt.Sprintf("%s:%d", o.Name, o.Count)
 			chips = append(chips, lipgloss.NewStyle().
 				Foreground(lipgloss.Color(color)).Render(label))
 		}
@@ -971,6 +974,33 @@ func shortURL(s Suggestion) string {
 		return s.DiskPath
 	}
 	return ""
+}
+
+// sourceErrHint summarizes a per-source error into a one-or-two-word
+// chip suffix. Keeps the gather chips readable on narrow terminals
+// without burying the user in stack-trace prose.
+func sourceErrHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case strings.Contains(msg, "ErrNotAuthed"), strings.Contains(msg, "not authed"):
+		return "no auth"
+	case strings.Contains(msg, "rate limit"):
+		return "rate-limited"
+	}
+	// Fallback: first word, capped at 16 chars.
+	first := strings.SplitN(msg, " ", 2)[0]
+	first = strings.TrimSuffix(first, ":")
+	if len(first) > 16 {
+		first = first[:16]
+	}
+	return first
 }
 
 // =============================================================================
