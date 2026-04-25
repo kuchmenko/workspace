@@ -65,6 +65,7 @@ func (s *GitHubSource) FetchSuggestions(ctx context.Context) ([]Suggestion, erro
 			Sources:     []SourceKind{SourceGitHub},
 			GhActivity:  r.Activity,
 			PushedAt:    r.PushedAt,
+			Description: r.Description,
 			InferredGrp: r.Owner, // GitHub owner = inferred group (org or self)
 		}
 		// Cross-reference workspace.toml: if a project with this
