@@ -113,12 +113,18 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	sources := buildSources(opts)
 
+	// 10s per-source budget covers gh CLI paginate at ~300 repos
+	// (observed: 7.5s for 294 repos via gh --paginate). Disk and
+	// clipboard sources always finish well under this; the cap only
+	// matters for github. Increase further if real users at 1k+
+	// repos hit it — the TUI keeps spinning until ctx.Done either
+	// way.
 	model := NewAddModel(AddModelOptions{
 		WsRoot:        opts.WsRoot,
 		Workspace:     opts.Workspace,
 		Save:          resolveSaveFn(opts),
 		Sources:       sources,
-		GatherTimeout: 3 * time.Second,
+		GatherTimeout: 10 * time.Second,
 		Standalone:    true,
 	})
 
