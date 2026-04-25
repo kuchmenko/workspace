@@ -48,6 +48,7 @@ type Kind string
 const (
 	KindBootstrap Kind = "bootstrap"
 	KindMigrate   Kind = "migrate"
+	KindAdd       Kind = "add"
 )
 
 // Meta is the common header every sidecar file carries. It records who
@@ -269,7 +270,7 @@ func IsAlive(sc *Sidecar) bool {
 // first one whose pid is alive. Used by the daemon's tick pre-check.
 // Returns nil if no sidecars block this workspace.
 func AnyActive(wsRoot string) *Sidecar {
-	for _, k := range []Kind{KindBootstrap, KindMigrate} {
+	for _, k := range []Kind{KindBootstrap, KindMigrate, KindAdd} {
 		sc, err := Load(wsRoot, k)
 		if err != nil || sc == nil {
 			continue

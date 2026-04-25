@@ -155,6 +155,23 @@ func TestAnyActiveFindsBoth(t *testing.T) {
 	if got == nil || got.Meta.Kind != sidecar.KindMigrate {
 		t.Errorf("AnyActive after migrate save: %+v", got)
 	}
+
+	// Cleanup migrate before testing add (AnyActive returns the first
+	// active sidecar in its iteration order, which is Bootstrap →
+	// Migrate → Add; leftover migrate would mask the add result).
+	_ = sidecar.Delete(wsRoot, sidecar.KindMigrate)
+
+	// Add sidecar: Track B Phase 1-C — the reconciler must pause for
+	// `ws add` runs the same way it does for bootstrap and migrate.
+	sc3 := sidecar.New(wsRoot, sidecar.KindAdd)
+	if err := sidecar.Save(sc3); err != nil {
+		t.Fatalf("Save add: %v", err)
+	}
+	got = sidecar.AnyActive(wsRoot)
+	if got == nil || got.Meta.Kind != sidecar.KindAdd {
+		t.Errorf("AnyActive after add save: %+v", got)
+	}
+	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
 }
 
 func TestAnyActiveIgnoresStale(t *testing.T) {
