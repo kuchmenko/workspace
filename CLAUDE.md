@@ -81,7 +81,7 @@ the configured interval, plus on `config_changed` IPC notifications) it:
 
 0. **Sidecar pre-check.** Before any work, the reconciler calls
    `sidecar.AnyActive(wsRoot)`, which checks every known sidecar kind
-   (currently `bootstrap` and `migrate`) for the workspace at
+   (`bootstrap`, `migrate`, `add`) for the workspace at
    `~/.local/state/ws/<kind>/<sha>.toml`. If any sidecar exists and its
    recorded pid is alive, the entire tick is skipped for that workspace —
    both Phase 1 and Phase 2. This prevents the daemon from pushing
@@ -260,7 +260,7 @@ group          = "..."              # optional grouping
 
 | Command | Purpose |
 |---|---|
-| `ws add <remote-url>` | Register and clone a new repo into `workspace.toml`. |
+| `ws add [remote-url...]` | Register and clone one or more new repos into `workspace.toml`, directly into the bare+worktree layout (no follow-up `ws migrate` needed). Accepts positional URLs, `-` for stdin (one URL per line, `#` comments allowed), and the legacy single-URL invocation. Flags: `-c`/`--category` personal\|work, `-g`/`--group`, `-n`/`--name` (single-URL only), `--no-clone` register-only, `--no-tui` force headless, `--tui` force TUI (Phase 3). Crash-safe via a sidecar at `~/.local/state/ws/add/`; daemon pauses while running. |
 | `ws bootstrap [name]` | Interactive TUI: clone projects listed in `workspace.toml` that are missing on this machine, directly into the bare+worktree layout. Crash-safe via a sidecar at `~/.local/state/ws/bootstrap/`. While running, the daemon pauses all sync for this workspace. `--dry-run` shows the plan without cloning. |
 | `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. Default: interactive TUI with per-project decisions for `dirty / stash / detached HEAD`. Pass any flag (`--all`, `--check`, `--wip`, `--no-tui`) or run without a TTY to switch to non-interactive mode. Crash-safe via a sidecar at `~/.local/state/ws/migrate/`; daemon pauses while running. See "Migration" below for the worktree-attach strategy. |
 | `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, push owned `wt/<machine>/*` branches). Same work as a daemon tick. |
@@ -328,7 +328,8 @@ group          = "..."              # optional grouping
 - `~/.config/ws/daemon.{sock,pid,log}` — daemon runtime files.
 - `~/.local/state/ws/conflicts.json` — unresolved sync conflicts. Honors `$XDG_STATE_HOME`.
 - `~/.local/state/ws/bootstrap/<sha>.toml` — per-workspace bootstrap progress sidecar. Created by `ws bootstrap`, deleted on success. While present with a live pid, the daemon skips its tick for that workspace. Honors `$XDG_STATE_HOME`.
-- `~/.local/state/ws/migrate/<sha>.toml` — per-workspace migrate progress sidecar. Created by `ws migrate`, deleted on success. Same daemon-skip semantics. Honors `$XDG_STATE_HOME`. Both sidecar kinds share `internal/sidecar` which centralizes file/lock/pid mechanics; command-specific value types (`bootstrap.DoneEntry`, `migrate.DoneEntry`) live in their own packages and round-trip through `json.RawMessage`.
+- `~/.local/state/ws/migrate/<sha>.toml` — per-workspace migrate progress sidecar. Created by `ws migrate`, deleted on success. Same daemon-skip semantics. Honors `$XDG_STATE_HOME`. All three sidecar kinds (`bootstrap`, `migrate`, `add`) share `internal/sidecar` which centralizes file/lock/pid mechanics; command-specific value types live in their own packages and round-trip through `json.RawMessage`.
+- `~/.local/state/ws/add/<sha>.toml` — per-workspace `ws add` session sidecar. Created when `ws add` starts (any mode), deleted on success/error/panic via `defer`. While present with a live pid, the daemon skips its tick for that workspace and a second `ws add` invocation refuses with an "is running" error. Honors `$XDG_STATE_HOME`.
 
 ## Conventions
 
@@ -417,11 +418,6 @@ inlining `exec.Command` in tests.
 These were deliberately deferred during the worktree refactor and are open
 for future work:
 
-- **`ws add` should clone as bare + worktree** instead of plain. Today it
-  still clones plain and `ws migrate` is required afterwards. Bootstrap
-  covers the existing-record case (project already in `workspace.toml` but
-  not yet on this machine); `ws add` handles new-record creation and is
-  still pending the same bare+worktree treatment via `clone.CloneIntoLayout`.
 - **`ws worktree gc`** to clean up old WIP branches and orphaned worktrees.
 - **fsnotify on `workspace.toml`** to remove the dependency on IPC
   notifications from CLI commands.
