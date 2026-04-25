@@ -106,7 +106,8 @@ Done: 4 cloned, 0 pulled, 0 skipped, 0 failed
 ws setup                          Interactive onboarding — select repos, assign groups
 ws sync                           Run one reconciler tick: clone missing, fetch, ff-pull, push owned
 ws sync resolve                   Inspect and act on unresolved sync conflicts
-ws add <url>                      Register and clone a new project
+ws add <url>...                   Register and clone projects (bare+worktree layout)
+ws add -                          Read URLs from stdin, one per line
 ws bootstrap [name]               Clone projects listed in workspace.toml that are missing locally
 ws migrate [name]                 Convert plain git checkouts into the bare+worktree layout
 ws status                         Table: project / group / status / branch / last commit / layout
@@ -164,6 +165,20 @@ personal/
 
 Convert any plain checkout once with `ws migrate <name>` (interactive TUI by default,
 preserves dirty state, stash entries, and detached HEADs as recovery branches).
+
+`ws add` clones new projects directly into this layout — no follow-up `ws migrate`
+required:
+
+```sh
+ws add git@github.com:owner/repo.git           # single URL
+ws add url1 url2 url3                          # several URLs
+echo url | ws add -                            # stdin, one URL per line
+ws add --no-clone url                          # register only, defer clone
+```
+
+While `ws add` is running it holds an `add/<sha>.toml` sidecar so the daemon
+pauses both `workspace.toml` sync and project reconcile for the affected workspace
+— your in-progress edits never race the reconciler.
 
 ### Starting a feature
 
