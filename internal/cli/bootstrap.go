@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/bootstrap"
+	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/clone"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
@@ -258,13 +258,11 @@ type bootstrapModel struct {
 	spinner spinner.Model
 	sidecar *bootstrap.Sidecar
 
-	// Branch-prompt sub-state
-	branchProject    string
-	branchCandidates []string
-	branchCursor     int
-	branchInput      textinput.Model
-	branchInputMode  bool
-	branchAnswer     chan branchAnswer
+	// Branch-prompt sub-state. The UI is owned by internal/branchprompt;
+	// branchAnswer is how we unblock the worker goroutine waiting on the
+	// channel passed into clone.Options.PromptDefaultBranch.
+	branchPrompt branchprompt.Model
+	branchAnswer chan branchAnswer
 }
 
 type branchAnswer struct {
@@ -291,10 +289,6 @@ func newBootstrapModel(plan *bootstrap.Plan, toClone []bootstrap.PlanItem, resum
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 
-	ti := textinput.New()
-	ti.Placeholder = "branch name"
-	ti.CharLimit = 80
-
 	// Initialize sidecar (in-memory only — written to disk after first
 	// successful clone, so a Ctrl+C on the plan screen leaves no trace).
 	sc := bootstrap.New(wsRoot)
@@ -303,12 +297,11 @@ func newBootstrapModel(plan *bootstrap.Plan, toClone []bootstrap.PlanItem, resum
 	}
 
 	return bootstrapModel{
-		step:        bsStepPlan,
-		plan:        plan,
-		toClone:     toClone,
-		spinner:     sp,
-		sidecar:     sc,
-		branchInput: ti,
+		step:    bsStepPlan,
+		plan:    plan,
+		toClone: toClone,
+		spinner: sp,
+		sidecar: sc,
 	}
 }
 
@@ -431,15 +424,14 @@ func (m bootstrapModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case needsBranchMsg:
 		// Pause clone progress and switch to the branch-prompt sub-step.
+		// The UI (candidate list, free-text input, styling) is owned by
+		// internal/branchprompt; we keep only the answer channel that
+		// unblocks the clone goroutine.
 		m.step = bsStepBranchPrompt
 		m.stepChangedAt = time.Now()
-		m.branchProject = msg.project
-		m.branchCandidates = msg.candidates
-		m.branchCursor = 0
-		m.branchInputMode = false
+		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
-		m.branchInput.SetValue("")
-		return m, nil
+		return m, m.branchPrompt.Init()
 
 	case cloneDoneMsg:
 		if msg.err != nil {
@@ -472,56 +464,27 @@ func (m bootstrapModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m bootstrapModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		// Edit-mode: free-text branch input
-		if m.branchInputMode {
-			switch key.String() {
-			case "enter":
-				val := strings.TrimSpace(m.branchInput.Value())
-				if val == "" {
-					return m, nil
-				}
-				m.resolveBranch(val, nil)
-				return m, m.startClone(m.current)
-			case "escape":
-				m.branchInputMode = false
-				return m, nil
-			}
-			var cmd tea.Cmd
-			m.branchInput, cmd = m.branchInput.Update(msg)
-			return m, cmd
-		}
-
-		switch key.String() {
-		case "up", "k":
-			if m.branchCursor > 0 {
-				m.branchCursor--
-			}
-		case "down", "j":
-			if m.branchCursor < len(m.branchCandidates)-1 {
-				m.branchCursor++
-			}
-		case "enter":
-			if len(m.branchCandidates) == 0 {
-				m.branchInputMode = true
-				return m, m.branchInput.Focus()
-			}
-			m.resolveBranch(m.branchCandidates[m.branchCursor], nil)
-			m.step = bsStepCloning
-			m.stepChangedAt = time.Now()
-			return m, nil
-		case "i":
-			m.branchInputMode = true
-			return m, m.branchInput.Focus()
-		case "escape":
-			// User refuses to pick → treat as error for this project.
-			m.resolveBranch("", errors.New("user cancelled branch selection"))
-			m.step = bsStepCloning
-			m.stepChangedAt = time.Now()
-			return m, nil
-		}
+	// Terminal messages from the branchprompt model take priority: a pick
+	// or cancel ends the sub-step and unblocks the clone worker.
+	switch msg := msg.(type) {
+	case branchprompt.PickedMsg:
+		m.resolveBranch(msg.Branch, nil)
+		m.step = bsStepCloning
+		m.stepChangedAt = time.Now()
+		return m, nil
+	case branchprompt.CancelledMsg:
+		// User refuses to pick → treat as error for this project.
+		m.resolveBranch("", errors.New("user cancelled branch selection"))
+		m.step = bsStepCloning
+		m.stepChangedAt = time.Now()
+		return m, nil
 	}
-	return m, nil
+
+	// Otherwise delegate to the embedded model and let it produce the
+	// terminal messages above on the next key event.
+	var cmd tea.Cmd
+	m.branchPrompt, cmd = m.branchPrompt.Update(msg)
+	return m, cmd
 }
 
 // resolveBranch unblocks the worker goroutine waiting for a branch answer.
@@ -626,36 +589,7 @@ func (m bootstrapModel) viewCloning() string {
 }
 
 func (m bootstrapModel) viewBranchPrompt() string {
-	var b strings.Builder
-	b.WriteString(bsTitleStyle.Render(" Default branch needed "))
-	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "  Project: %s\n\n", bsHeaderStyle.Render(m.branchProject))
-
-	if m.branchInputMode {
-		b.WriteString("  Enter branch name:\n\n")
-		b.WriteString("    " + m.branchInput.View() + "\n\n")
-		b.WriteString(bsHelpStyle.Render("[enter] confirm   [esc] back to list"))
-		return b.String()
-	}
-
-	if len(m.branchCandidates) == 0 {
-		b.WriteString(bsDimStyle.Render("  No candidates found.\n\n"))
-	} else {
-		b.WriteString("  Select default branch:\n\n")
-		for i, c := range m.branchCandidates {
-			cursor := "  "
-			line := c
-			if i == m.branchCursor {
-				cursor = bsCursorStyle.Render("▸ ")
-				line = bsSelectedStyle.Render(c)
-			}
-			fmt.Fprintf(&b, "    %s%s\n", cursor, line)
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString(bsHelpStyle.Render("[↑↓] move   [enter] pick   [i] type custom   [esc] skip project"))
-	return b.String()
+	return m.branchPrompt.View()
 }
 
 func (m bootstrapModel) viewDone() string {
