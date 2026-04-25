@@ -21,16 +21,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kuchmenko/workspace/internal/clipboard"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/github"
 )
 
-// ErrTUINotImplemented signals a caller explicitly requested ModeTUI
-// before the TUI ships in Phase 3. Callers (CLI, agent) inspect this
-// sentinel and either print a helpful message or fall back to headless.
-var ErrTUINotImplemented = errors.New("`ws add` TUI ships in Phase 3; pass URLs positionally or use --no-tui")
-
 // ErrEmbedNotSupported is returned when a caller asks for ModeEmbedded.
-// Phase 5 (agent integration) will implement embed; Phase 1 shape
-// freezes the interface without providing the behavior.
+// Phase 5 (agent integration) will implement embed; the interface is
+// frozen now to lock the shape.
 var ErrEmbedNotSupported = errors.New("embedded mode ships in Phase 5 (ws agent)")
 
 // ErrNoURLs is returned by headless runs with Options.URLs empty.
@@ -68,16 +69,17 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, errors.New("add.Run: nil Workspace")
 	}
 
+	useTUI := false
 	switch opts.Mode {
 	case ModeTUI:
-		return nil, ErrTUINotImplemented
+		useTUI = true
 	case ModeEmbedded:
 		return nil, ErrEmbedNotSupported
 	case ModeAuto:
 		if len(opts.URLs) == 0 {
-			return nil, ErrTUINotImplemented
+			useTUI = true
 		}
-		// ModeAuto with URLs → headless.
+		// ModeAuto with URLs → headless (useTUI stays false).
 	case ModeHeadless:
 		if len(opts.URLs) == 0 {
 			return nil, ErrNoURLs
@@ -94,7 +96,86 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	_ = sc // currently unused after acquire; progress tracking comes in Phase 3
 	defer releaseSidecar(opts.WsRoot)
 
+	if useTUI {
+		return runTUI(ctx, opts)
+	}
 	return runHeadless(ctx, opts)
+}
+
+// runTUI launches AddModel as a standalone tea.Program and returns
+// the Result accumulated by the model when it reaches its done state.
+//
+// The sources used by the gather pass come from buildSources unless
+// the caller pre-populated opts.GhProvider (which only overrides the
+// GitHub source — disk and clipboard sources are always built from
+// opts.WsRoot/opts.Workspace). This keeps standalone `ws add` working
+// out of the box while letting tests inject any subset.
+func runTUI(ctx context.Context, opts Options) (*Result, error) {
+	sources := buildSources(opts)
+
+	model := NewAddModel(AddModelOptions{
+		WsRoot:        opts.WsRoot,
+		Workspace:     opts.Workspace,
+		Save:          resolveSaveFn(opts),
+		Sources:       sources,
+		GatherTimeout: 3 * time.Second,
+		Standalone:    true,
+	})
+
+	// Use AltScreen + signal handler so Ctrl+C surfaces as a clean
+	// AddDoneMsg and the terminal restores correctly on quit.
+	prog := tea.NewProgram(
+		model,
+		tea.WithAltScreen(),
+		tea.WithContext(ctx),
+	)
+	model.SetProgram(prog)
+
+	finalModel, err := prog.Run()
+	if err != nil {
+		return nil, fmt.Errorf("add TUI: %w", err)
+	}
+
+	final, ok := finalModel.(AddModel)
+	if !ok {
+		return nil, fmt.Errorf("add TUI: unexpected final model type %T", finalModel)
+	}
+	return &Result{
+		Added:   final.added,
+		Skipped: final.skipped,
+		Errors:  final.errors,
+	}, nil
+}
+
+// buildSources assembles the default suggestion sources for a TUI run.
+// Honors opts.GhProvider override but constructs disk and clipboard
+// sources from the current environment (workspace, default reader).
+//
+// Tests that need to swap sources construct their own AddModel directly
+// (see tui_test.go); buildSources is the production wiring.
+func buildSources(opts Options) []Source {
+	gh := opts.GhProvider
+	if gh == nil {
+		gh = github.ResolveProvider()
+	}
+
+	return []Source{
+		NewDiskSource(opts.WsRoot, opts.Workspace),
+		&ClipboardSource{Reader: clipboard.DefaultReader},
+		&GitHubSource{Provider: gh},
+	}
+}
+
+// resolveSaveFn returns opts.Save when set, else falls back to the
+// production config.Save call. AddModel needs a non-nil saver because
+// Register asserts on the field at the per-job level.
+func resolveSaveFn(opts Options) func(*config.Workspace) error {
+	if opts.Save != nil {
+		return opts.Save
+	}
+	return func(ws *config.Workspace) error {
+		return config.Save(opts.WsRoot, ws)
+	}
 }
 
 // runHeadless walks Options.URLs, calling Register for each. It does
