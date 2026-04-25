@@ -79,6 +79,18 @@ func LoadCache() ([]Repo, time.Duration, error) {
 	if cf.Version != cacheVersion {
 		return nil, 0, nil
 	}
+	// Sanity guard against malformed / test-polluted caches: a real
+	// GitHub repo always has Owner + SSHURL populated. If even one
+	// cached entry is missing both, the file is junk (a partial
+	// write, a schema-drift accident, or — observed in development —
+	// tests that wrote Name-only Repo fixtures into the user's real
+	// cache before t.Setenv was added). Treat as a miss; the next
+	// live fetch will overwrite cleanly.
+	for _, r := range cf.Repos {
+		if r.Owner == "" && r.SSHURL == "" {
+			return nil, 0, nil
+		}
+	}
 	return cf.Repos, time.Since(cf.StoredAt), nil
 }
 
