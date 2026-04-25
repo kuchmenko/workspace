@@ -155,9 +155,19 @@ type clientProvider struct {
 func (p *clientProvider) Name() string { return p.name }
 
 func (p *clientProvider) SuggestRepos(ctx context.Context, limit int) ([]Repo, error) {
+	// Cache hit short-circuit: paginated GitHub fetches take 5-10s on
+	// large accounts, but the data rarely changes minute-to-minute.
+	// Serving from a 1-hour cache makes repeated `ws add` invocations
+	// feel instant. The limit is applied at read time so callers
+	// asking for the top-50 still get the freshest 50 from the cached
+	// (already-sorted) full list.
+	if cached, age, err := LoadCache(); err == nil && len(cached) > 0 && age < cacheTTL {
+		return applyLimit(cached, limit), nil
+	}
+
 	// Client methods predate ctx; we check cancellation at the two
 	// natural boundaries (before and between calls). Full ctx-plumbing
-	// into the Client interface is out of scope for Phase 1-B.
+	// into the Client interface is out of scope for now.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -191,10 +201,27 @@ func (p *clientProvider) SuggestRepos(ctx context.Context, limit int) ([]Repo, e
 		return repos[i].PushedAt.After(repos[j].PushedAt)
 	})
 
+	// Persist the full result (pre-limit) so future requests for any
+	// cap can be served from cache. Save errors are non-fatal — log
+	// would be nice but the package has no logger; silent fallback
+	// matches the rest of the cache layer.
+	_ = SaveCache(repos)
+
+	return applyLimit(repos, limit), nil
+}
+
+// applyLimit caps the returned slice at `limit` entries when limit > 0.
+// Used at both cache-read and live-fetch return paths so the public
+// surface honors the cap regardless of the source.
+func applyLimit(repos []Repo, limit int) []Repo {
 	if limit > 0 && len(repos) > limit {
-		repos = repos[:limit]
+		// Defensive copy: callers may not expect the slice to alias
+		// the cache's underlying array.
+		out := make([]Repo, limit)
+		copy(out, repos[:limit])
+		return out
 	}
-	return repos, nil
+	return repos
 }
 
 // noopProvider is the terminal "GitHub unavailable" fallback. Name is

@@ -161,6 +161,7 @@ func TestGhAppProviderStub_ReturnsErrNotImplemented(t *testing.T) {
 }
 
 func TestClientProvider_SortByActivityThenPushedAt(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	now := time.Now()
 	earlier := now.Add(-24 * time.Hour)
 	much_earlier := now.Add(-72 * time.Hour)
@@ -194,6 +195,7 @@ func TestClientProvider_SortByActivityThenPushedAt(t *testing.T) {
 }
 
 func TestClientProvider_LimitTrims(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	fc := &fakeClient{
 		user:       "me",
 		repos:      []Repo{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}},
@@ -212,6 +214,7 @@ func TestClientProvider_LimitTrims(t *testing.T) {
 }
 
 func TestClientProvider_LimitZeroReturnsAll(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	fc := &fakeClient{
 		user:       "me",
 		repos:      []Repo{{Name: "a"}, {Name: "b"}, {Name: "c"}},
@@ -227,6 +230,7 @@ func TestClientProvider_LimitZeroReturnsAll(t *testing.T) {
 }
 
 func TestClientProvider_ActivityErrorStillReturnsRepos(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	// Activity-fetch failure is non-fatal: we sort by PushedAt only.
 	// Matches legacy FetchAll behavior that swallowed the error.
 	now := time.Now()
@@ -251,6 +255,7 @@ func TestClientProvider_ActivityErrorStillReturnsRepos(t *testing.T) {
 }
 
 func TestClientProvider_UserErrorIsFatal(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	fc := &fakeClient{userErr: errors.New("401")}
 	p := &clientProvider{client: fc, name: "fake"}
 
@@ -261,6 +266,7 @@ func TestClientProvider_UserErrorIsFatal(t *testing.T) {
 }
 
 func TestClientProvider_ReposErrorIsFatal(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	fc := &fakeClient{user: "me", reposErr: errors.New("502")}
 	p := &clientProvider{client: fc, name: "fake"}
 
@@ -271,6 +277,7 @@ func TestClientProvider_ReposErrorIsFatal(t *testing.T) {
 }
 
 func TestClientProvider_RespectsCancelledContext(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	fc := &fakeClient{user: "me"}
 	p := &clientProvider{client: fc, name: "fake"}
 
@@ -280,6 +287,58 @@ func TestClientProvider_RespectsCancelledContext(t *testing.T) {
 	_, err := p.SuggestRepos(ctx, 10)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got %v", err)
+	}
+}
+
+func TestClientProvider_CacheHit_SkipsLiveFetch(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	// Pre-populate the cache.
+	cached := []Repo{{Name: "from-cache", FullName: "me/from-cache"}}
+	if err := SaveCache(cached); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use a fakeClient that would return DIFFERENT repos if asked —
+	// but it shouldn't be asked because the cache is fresh.
+	fc := &fakeClient{
+		user:       "me",
+		repos:      []Repo{{Name: "live-only"}},
+		activityOk: true,
+	}
+	p := &clientProvider{client: fc, name: "fake"}
+
+	got, err := p.SuggestRepos(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "from-cache" {
+		t.Errorf("expected cache hit with 'from-cache', got %v", names(got))
+	}
+}
+
+func TestClientProvider_LiveFetch_SavesCacheForNextCall(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	fc := &fakeClient{
+		user:       "me",
+		repos:      []Repo{{Name: "fresh"}, {Name: "newer"}},
+		activityOk: true,
+	}
+	p := &clientProvider{client: fc, name: "fake"}
+
+	// First call hits live fetch (no cache).
+	if _, err := p.SuggestRepos(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now load directly from cache — should reflect what fc returned.
+	got, age, _ := LoadCache()
+	if len(got) != 2 {
+		t.Errorf("cache should have 2 repos, got %d", len(got))
+	}
+	if age == 0 || age > 5*time.Second {
+		t.Errorf("cache age should be just-set, got %v", age)
 	}
 }
 
