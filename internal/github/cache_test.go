@@ -12,8 +12,8 @@ func TestCacheRoundtrip(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	repos := []Repo{
-		{Name: "alpha", FullName: "me/alpha", Owner: "me"},
-		{Name: "beta", FullName: "me/beta", Owner: "me"},
+		{Name: "alpha", FullName: "me/alpha", Owner: "me", SSHURL: "git@github.com:me/alpha.git"},
+		{Name: "beta", FullName: "me/beta", Owner: "me", SSHURL: "git@github.com:me/beta.git"},
 	}
 	if err := SaveCache(repos); err != nil {
 		t.Fatal(err)
@@ -74,6 +74,25 @@ func TestLoadCache_CorruptIsTreatedAsMiss(t *testing.T) {
 	}
 }
 
+func TestLoadCache_MalformedReposIsMiss(t *testing.T) {
+	// Reproduces the production incident where dev-time tests with
+	// Name-only Repo fixtures wrote into the user's real cache file
+	// (because XDG_STATE_HOME wasn't yet set in those tests). Such a
+	// cache must be rejected as junk on the next read so the user
+	// doesn't see fake "a / b / c" entries.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := SaveCache([]Repo{
+		{Name: "a", FullName: "me/a"}, // no Owner, no SSHURL
+		{Name: "b", FullName: "me/b"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := LoadCache()
+	if got != nil {
+		t.Errorf("malformed cache should be a miss, got %d entries", len(got))
+	}
+}
+
 func TestLoadCache_OldVersionIsMiss(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", dir)
@@ -119,7 +138,7 @@ func TestSaveCache_EmptyIsNoop(t *testing.T) {
 func TestPurgeCache_RemovesFile(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if err := SaveCache([]Repo{{Name: "x"}}); err != nil {
+	if err := SaveCache([]Repo{{Name: "x", Owner: "me", SSHURL: "git@github.com:me/x.git"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := PurgeCache(); err != nil {
@@ -142,7 +161,7 @@ func TestPurgeCache_NoFile_NoError(t *testing.T) {
 func TestCacheFresh_ReportsFreshAndAge(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	if err := SaveCache([]Repo{{Name: "x"}}); err != nil {
+	if err := SaveCache([]Repo{{Name: "x", Owner: "me", SSHURL: "git@github.com:me/x.git"}}); err != nil {
 		t.Fatal(err)
 	}
 	fresh, age := CacheFresh()

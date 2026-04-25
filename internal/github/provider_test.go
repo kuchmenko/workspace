@@ -293,8 +293,10 @@ func TestClientProvider_RespectsCancelledContext(t *testing.T) {
 func TestClientProvider_CacheHit_SkipsLiveFetch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	// Pre-populate the cache.
-	cached := []Repo{{Name: "from-cache", FullName: "me/from-cache"}}
+	// Pre-populate the cache. Owner + SSHURL are mandatory for the
+	// LoadCache sanity guard (cache.go rejects entries that lack
+	// both — defensive against test pollution).
+	cached := []Repo{{Name: "from-cache", FullName: "me/from-cache", Owner: "me", SSHURL: "git@github.com:me/from-cache.git"}}
 	if err := SaveCache(cached); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +305,7 @@ func TestClientProvider_CacheHit_SkipsLiveFetch(t *testing.T) {
 	// but it shouldn't be asked because the cache is fresh.
 	fc := &fakeClient{
 		user:       "me",
-		repos:      []Repo{{Name: "live-only"}},
+		repos:      []Repo{{Name: "live-only", Owner: "me", SSHURL: "git@github.com:me/live-only.git"}},
 		activityOk: true,
 	}
 	p := &clientProvider{client: fc, name: "fake"}
@@ -321,8 +323,11 @@ func TestClientProvider_LiveFetch_SavesCacheForNextCall(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	fc := &fakeClient{
-		user:       "me",
-		repos:      []Repo{{Name: "fresh"}, {Name: "newer"}},
+		user: "me",
+		repos: []Repo{
+			{Name: "fresh", Owner: "me", SSHURL: "git@github.com:me/fresh.git"},
+			{Name: "newer", Owner: "me", SSHURL: "git@github.com:me/newer.git"},
+		},
 		activityOk: true,
 	}
 	p := &clientProvider{client: fc, name: "fake"}
