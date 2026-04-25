@@ -97,6 +97,13 @@ type Suggestion struct {
 	// source doesn't provide it (clipboard).
 	PushedAt time.Time
 
+	// Description is the human-readable repo blurb, when the source
+	// has one. The TUI shows it on the currently-selected row and
+	// includes it in the substring search. Empty for clipboard /
+	// disk / manual entries (only GitHub provides descriptions
+	// today).
+	Description string
+
 	// InferredGrp is the group name our grouper assigned. Used by the
 	// TUI to pre-fill the group field on the edit screen.
 	InferredGrp string
@@ -218,6 +225,9 @@ func mergeSuggestions(buckets [][]Suggestion) []Suggestion {
 			}
 			if cur.RegisteredPath == "" {
 				cur.RegisteredPath = s.RegisteredPath
+			}
+			if cur.Description == "" {
+				cur.Description = s.Description
 			}
 			if cur.GhActivity == 0 {
 				cur.GhActivity = s.GhActivity

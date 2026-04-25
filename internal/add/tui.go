@@ -146,9 +146,9 @@ func NewAddModel(opts AddModelOptions) AddModel {
 	manual.Width = 60
 
 	filter := textinput.New()
-	filter.Placeholder = "filter..."
+	filter.Placeholder = "type to search name / url / description / org..."
 	filter.CharLimit = 60
-	filter.Width = 30
+	filter.Width = 50
 
 	return AddModel{
 		state:        addStateGathering,
@@ -450,7 +450,7 @@ func (m AddModel) viewBrowse() string {
 	}
 
 	if m.filterInput.Value() != "" {
-		fmt.Fprintf(&b, "  filter: %s\n\n", addAccent.Render(m.filterInput.Value()))
+		fmt.Fprintf(&b, "  search: %s\n\n", addAccent.Render(m.filterInput.Value()))
 	}
 
 	// Build the tree: group suggestions by owner / kind. The cursor
@@ -490,14 +490,106 @@ func (m AddModel) viewBrowse() string {
 			addDim.Render(fmt.Sprintf("(scrolled %d/%d items)", m.cursor+1, len(view))))
 	}
 
+	// Selected-item preview: description + repo metadata. Always
+	// rendered when a row is highlighted so the visible height stays
+	// stable as the cursor moves.
+	if cursorRow >= 0 && cursorRow < len(rows) && rows[cursorRow].kind == rowItem {
+		b.WriteString("\n")
+		b.WriteString(renderSelectionPreview(rows[cursorRow].suggestion))
+	}
+
 	b.WriteString("\n")
 	if m.filterMode {
-		b.WriteString("  filter: " + m.filterInput.View() + "\n")
+		b.WriteString("  search: " + m.filterInput.View() + "\n")
 		b.WriteString("  " + addHelp.Render("[enter] commit   [esc] cancel"))
 	} else {
-		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [⏎] select  [/] filter  [i] manual URL  [esc] quit"))
+		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [⏎] select  [/] search  [i] manual URL  [esc] quit"))
 	}
 	return b.String()
+}
+
+// renderSelectionPreview shows the currently-selected suggestion's
+// description and metadata (last push, activity, sources, paths).
+// Always emits at least 2 lines so the screen height stays constant
+// as the cursor moves between described and undescribed repos —
+// otherwise the help line jumps.
+func renderSelectionPreview(s *Suggestion) string {
+	var b strings.Builder
+	// Title line: name + URL.
+	b.WriteString("  " + addPreviewName.Render(s.Name))
+	if u := shortURL(*s); u != "" {
+		b.WriteString("  " + addDim.Render(u))
+	}
+	b.WriteString("\n")
+
+	// Description, or a placeholder so the layout doesn't shift.
+	desc := strings.TrimSpace(s.Description)
+	if desc == "" {
+		desc = "(no description)"
+		b.WriteString("  " + addDim.Render(truncate(desc, 100)) + "\n")
+	} else {
+		// Replace newlines so multi-line descriptions don't blow out
+		// the layout. Truncate at ~100 chars for the same reason.
+		desc = strings.ReplaceAll(desc, "\n", " ")
+		b.WriteString("  " + truncate(desc, 100) + "\n")
+	}
+
+	// Optional metadata: pushed timestamp, activity count, registered
+	// or local-disk hint repeated here for visibility (they're also
+	// rendered as inline tags on the row, but the preview is where
+	// the user looks for context after selecting).
+	var meta []string
+	if !s.PushedAt.IsZero() && s.PushedAt.Year() > 1 {
+		meta = append(meta, "pushed "+relativeTime(s.PushedAt))
+	}
+	if s.GhActivity > 0 {
+		meta = append(meta, fmt.Sprintf("%d events", s.GhActivity))
+	}
+	if s.RegisteredPath != "" {
+		meta = append(meta, "● already at "+s.RegisteredPath)
+	} else if s.DiskPath != "" {
+		meta = append(meta, "● local at "+s.DiskPath)
+	}
+	if len(meta) > 0 {
+		b.WriteString("  " + addDim.Render(strings.Join(meta, " · ")) + "\n")
+	}
+	return b.String()
+}
+
+// truncate caps s at n characters with a trailing ellipsis when
+// truncation occurs. Operates on bytes, which is wrong for any
+// non-ASCII repo description but acceptable as a stop-gap; the
+// fallout (a cut mid-rune) is cosmetic only.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return s[:n]
+	}
+	return s[:n-1] + "…"
+}
+
+// relativeTime renders a time.Time as a short "Nd ago" string. Used in
+// the selection preview to give a quick "is this repo active" cue.
+func relativeTime(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dw ago", int(d.Hours()/(24*7)))
+	case d < 365*24*time.Hour:
+		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
+	default:
+		return fmt.Sprintf("%dy ago", int(d.Hours()/(24*365)))
+	}
 }
 
 // browseRowKind tags a rendered line so the windowing math can tell
@@ -660,7 +752,11 @@ func (m AddModel) filteredView() []Suggestion {
 	}
 	var out []Suggestion
 	for _, s := range m.allSuggestions {
-		hay := strings.ToLower(s.Name + " " + s.RemoteURL + " " + s.InferredGrp)
+		// Search across name, URL, owner/group, and the repo
+		// description so the user can find a repo by what it does
+		// (e.g. typing "graphql" matches any repo whose description
+		// mentions GraphQL), not just by name.
+		hay := strings.ToLower(s.Name + " " + s.RemoteURL + " " + s.InferredGrp + " " + s.Description)
 		if strings.Contains(hay, q) {
 			out = append(out, s)
 		}
@@ -1242,4 +1338,10 @@ var (
 	addExistsTag = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("3")).
 			Italic(true)
+
+	// Selection-preview header: bright cyan + bold, distinct from the
+	// row's name color so the preview reads as separate panel.
+	addPreviewName = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("14")).
+			Bold(true)
 )

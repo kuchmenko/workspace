@@ -6,14 +6,15 @@ import (
 )
 
 type Repo struct {
-	Name     string
-	FullName string // owner/repo
-	Owner    string
-	SSHURL   string
-	Private  bool
-	Fork     bool
-	PushedAt time.Time
-	Activity int // event count from Events API (last 90 days)
+	Name        string
+	FullName    string // owner/repo
+	Owner       string
+	SSHURL      string
+	Description string
+	Private     bool
+	Fork        bool
+	PushedAt    time.Time
+	Activity    int // event count from Events API (last 90 days)
 }
 
 type rawRepo struct {
@@ -22,10 +23,11 @@ type rawRepo struct {
 	Owner    struct {
 		Login string `json:"login"`
 	} `json:"owner"`
-	SSHURL   string `json:"ssh_url"`
-	Private  bool   `json:"private"`
-	Fork     bool   `json:"fork"`
-	PushedAt string `json:"pushed_at"`
+	SSHURL      string `json:"ssh_url"`
+	Description string `json:"description"`
+	Private     bool   `json:"private"`
+	Fork        bool   `json:"fork"`
+	PushedAt    string `json:"pushed_at"`
 }
 
 type rawEvent struct {
