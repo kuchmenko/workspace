@@ -31,21 +31,36 @@ func (f *fakeClient) FetchActivity(string) (map[string]int, error) {
 
 // swapResolveEnv swaps the package-level resolver probes for the test
 // and returns a restore function. Tests deferring this stay hermetic.
-func swapResolveEnv(loadFn func() (string, error), ghFn func() bool) func() {
+//
+// probeOk is true to make oauthProbe always succeed (i.e. token is
+// valid), false to make it always fail (i.e. token is stale/rejected).
+// nil → keep the production network probe (which will likely fail for
+// the bogus tokens tests use; pass an explicit value to be safe).
+func swapResolveEnv(loadFn func() (string, error), ghFn func() bool, probeOk *bool) func() {
 	origLoad := loadOAuthToken
 	origGh := ghAuthStatus
+	origProbe := oauthProbe
+
 	loadOAuthToken = loadFn
 	ghAuthStatus = ghFn
+	if probeOk != nil {
+		v := *probeOk
+		oauthProbe = func(_ Client) bool { return v }
+	}
 	return func() {
 		loadOAuthToken = origLoad
 		ghAuthStatus = origGh
+		oauthProbe = origProbe
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 func TestResolveProvider_PrefersOAuth(t *testing.T) {
 	restore := swapResolveEnv(
 		func() (string, error) { return "ws-oauth-token", nil },
 		func() bool { return true }, // gh auth also ok — but OAuth wins
+		boolPtr(true),               // probe ok → use OAuth
 	)
 	defer restore()
 
@@ -59,6 +74,7 @@ func TestResolveProvider_FallsBackToGhCLI(t *testing.T) {
 	restore := swapResolveEnv(
 		func() (string, error) { return "", errors.New("no token") },
 		func() bool { return true },
+		boolPtr(true), // probe value irrelevant when no token
 	)
 	defer restore()
 
@@ -68,10 +84,26 @@ func TestResolveProvider_FallsBackToGhCLI(t *testing.T) {
 	}
 }
 
+func TestResolveProvider_FallsBackToGhCLIWhenProbeRejects(t *testing.T) {
+	// Token loads fine but probe says 401 — must fall through to gh-cli.
+	// This is the production scenario where ws OAuth ghu_* expired.
+	restore := swapResolveEnv(
+		func() (string, error) { return "stale-ghu-token", nil },
+		func() bool { return true },
+		boolPtr(false), // probe rejects → don't use OAuth
+	)
+	defer restore()
+
+	if got := ResolveProvider().Name(); got != "gh-cli" {
+		t.Errorf("want gh-cli (probe rejected OAuth), got %s", got)
+	}
+}
+
 func TestResolveProvider_NoopWhenNothingConfigured(t *testing.T) {
 	restore := swapResolveEnv(
 		func() (string, error) { return "", errors.New("no token") },
 		func() bool { return false },
+		boolPtr(false),
 	)
 	defer restore()
 
@@ -81,11 +113,26 @@ func TestResolveProvider_NoopWhenNothingConfigured(t *testing.T) {
 	}
 }
 
+func TestResolveProvider_NoopWhenProbeRejectsAndNoGhCLI(t *testing.T) {
+	// OAuth token present but stale, no gh CLI auth → noop.
+	restore := swapResolveEnv(
+		func() (string, error) { return "stale", nil },
+		func() bool { return false },
+		boolPtr(false),
+	)
+	defer restore()
+
+	if got := ResolveProvider().Name(); got != "noop" {
+		t.Errorf("want noop, got %s", got)
+	}
+}
+
 func TestResolveProvider_IgnoresEmptyToken(t *testing.T) {
 	// Token loaded OK but empty string — should fall through to gh-cli.
 	restore := swapResolveEnv(
 		func() (string, error) { return "", nil },
 		func() bool { return true },
+		boolPtr(true),
 	)
 	defer restore()
 

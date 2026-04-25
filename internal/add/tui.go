@@ -979,6 +979,12 @@ func shortURL(s Suggestion) string {
 // sourceErrHint summarizes a per-source error into a one-or-two-word
 // chip suffix. Keeps the gather chips readable on narrow terminals
 // without burying the user in stack-trace prose.
+//
+// Errors in the source pipeline are wrapped as `<source>: <inner>` or
+// even `<source>: <middle>: <inner>` (clipboard wraps the binary path,
+// github wraps "github source", etc). The fallback strips those
+// prefixes and shows the deepest cause — that's the actionable bit
+// the user wants to read.
 func sourceErrHint(err error) string {
 	if err == nil {
 		return ""
@@ -991,16 +997,28 @@ func sourceErrHint(err error) string {
 		return "cancelled"
 	case strings.Contains(msg, "ErrNotAuthed"), strings.Contains(msg, "not authed"):
 		return "no auth"
-	case strings.Contains(msg, "rate limit"):
+	case strings.Contains(strings.ToLower(msg), "rate limit"),
+		strings.Contains(msg, "API rate limit"):
 		return "rate-limited"
+	case strings.Contains(strings.ToLower(msg), "401"),
+		strings.Contains(strings.ToLower(msg), "unauthorized"):
+		return "401 expired?"
+	case strings.Contains(msg, "Nothing is copied"),
+		strings.Contains(msg, "No selection"):
+		return "empty"
 	}
-	// Fallback: first word, capped at 16 chars.
-	first := strings.SplitN(msg, " ", 2)[0]
-	first = strings.TrimSuffix(first, ":")
-	if len(first) > 16 {
-		first = first[:16]
+	// Fallback: drop everything up to and including the LAST `: ` so
+	// "/sbin/wl-paste: failed to bind" → "failed to bind". Cap at 24
+	// chars, single line.
+	tail := msg
+	if i := strings.LastIndex(msg, ": "); i >= 0 {
+		tail = strings.TrimSpace(msg[i+2:])
 	}
-	return first
+	tail = strings.ReplaceAll(tail, "\n", " ")
+	if len(tail) > 24 {
+		tail = tail[:24]
+	}
+	return tail
 }
 
 // =============================================================================
