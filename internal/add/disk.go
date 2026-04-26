@@ -11,10 +11,12 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 )
 
-// DiskSource walks the workspace's category directories looking for git
-// repositories that are not yet registered in workspace.toml. It is the
-// successor of `ws scan` (which Track A keeps but Phase 4 deletes once
-// this source is wired in).
+// DiskSource walks the workspace's category directories looking for
+// git repositories that are not yet registered in workspace.toml. It
+// is the successor of the standalone `ws scan` command — same walk,
+// same skip rules, same one-level recursion — but plugged into the
+// `ws add` TUI as a suggestion source instead of a print-and-exit
+// CLI.
 //
 // Behavior is intentionally identical to scan's directory walk:
 //

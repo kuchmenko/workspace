@@ -18,7 +18,7 @@ import (
 
 // AddModel is the bubbletea model for the `ws add` interactive flow.
 //
-// Lifecycle (per Track B issue #20 Subsystem 5):
+// Lifecycle:
 //
 //   gathering → browse | browseEmpty
 //   browse / browseEmpty → manual (i) | edit (⏎) | quit (esc)
@@ -29,11 +29,11 @@ import (
 //   branchPrompt → cloning
 //   done → quit
 //
-// Embedding (Phase 5 ws agent): AddModel never calls tea.Quit. When it
-// reaches done, it emits AddDoneMsg and waits for a key. Standalone
-// callers (Phase 3 ws add) wrap AddModel in a thin shell that converts
-// AddDoneMsg into tea.Quit; embedded callers (Phase 5 ws agent) keep
-// running their own Update loop.
+// Embedding: AddModel never calls tea.Quit. When it reaches done, it
+// emits AddDoneMsg and waits for a key. Standalone callers (`ws add`)
+// wrap AddModel and convert AddDoneMsg into tea.Quit; embedded
+// callers (the future agent integration) keep running their own
+// Update loop.
 type AddModel struct {
 	state addState
 	stateChangedAt time.Time
@@ -57,12 +57,6 @@ type AddModel struct {
 
 	// Window sizing.
 	width, height int
-
-	// Async glue to the running tea.Program. Set via SetProgram
-	// before tea.Run; used by the worker goroutines that need to
-	// post async messages back into the loop (gather done, clone
-	// done, branch needed).
-	program *tea.Program
 
 	// State for each step. Most fields belong to one state; see the
 	// comment headers below for which.
@@ -189,11 +183,6 @@ type AddModelOptions struct {
 	// hook for callers that want to launch the TUI with a starter list.
 	PreURLs []string
 }
-
-// SetProgram wires the running tea.Program into the model so worker
-// goroutines (gather, clone) can call program.Send to post async msgs.
-// Must be called once after tea.NewProgram and before tea.Run.
-func (m *AddModel) SetProgram(p *tea.Program) { m.program = p }
 
 // AddDoneMsg signals that the model has finished its work. Standalone
 // callers consume this and quit; embedded callers consume it to
@@ -840,10 +829,9 @@ func (m AddModel) filteredView() []Suggestion {
 
 func (m AddModel) editFromSuggestion(s Suggestion) editFields {
 	cat := config.CategoryPersonal
-	// Crude heuristic: if the inferred group looks like it could be a
-	// work org (anything other than the user's GitHub login or
-	// "personal"), default to Work. The user can flip on the edit
-	// screen. Phase 4 plans a richer signal.
+	// Crude heuristic: if the inferred group looks like a work org
+	// (anything other than the user's GitHub login or "personal"),
+	// default to Work. The user can flip on the edit screen.
 	grp := s.InferredGrp
 	if grp != "" && grp != "personal" {
 		cat = config.CategoryWork
@@ -1083,14 +1071,19 @@ func (m AddModel) startCloneJob(idx int) tea.Cmd {
 		return func() tea.Msg { return allClonesDoneMsg{} }
 	}
 	job := m.queue[idx]
-	prog := m.program
 	return func() tea.Msg {
-		// Build a per-iteration Options for Register. The TUI
-		// suppresses Register's --no-clone semantics — we always clone
-		// here. Disk-found suggestions could trigger migrate instead;
-		// Phase 1-C declared the per-source semantic and Phase 4 will
-		// fully implement the migrate path. For Phase 3 we skip the
-		// disk-already-cloned case via the FromDisk early-return below.
+		// Build a per-iteration Options for Register. Disk-found
+		// suggestions register-only (NoClone) since the repo is
+		// already on the user's machine; everything else clones into
+		// the bare+worktree layout via Register → CloneIntoLayout.
+		//
+		// Register is non-interactive: if the clone returns
+		// ErrNeedsBootstrap, we surface it as a per-job error and
+		// the user is told to run `ws bootstrap <name>` afterwards.
+		// The branchPrompt sub-state in the TUI is wired to handle
+		// a future needsBranchMsg flow if we ever decide to plumb
+		// the prompt through (the same answer-channel pattern
+		// bootstrap uses).
 		opts := Options{
 			URLs:      []string{job.URL},
 			Name:      job.Name,
@@ -1103,18 +1096,7 @@ func (m AddModel) startCloneJob(idx int) tea.Cmd {
 			NoClone:   job.FromDisk != "", // disk-found → register only
 		}
 
-		ch := make(chan branchAnswer, 1)
-		_ = ch // currently unused; reserved for Phase 4 wiring through
-		// Register handles the workspace.toml mutation atomically.
-		// branchprompt is reserved for future TUI wiring; Phase 3
-		// keeps the Register call non-interactive — if the clone
-		// returns ErrNeedsBootstrap, we surface it as a per-job
-		// error rather than block on a sub-step. That keeps the
-		// cloning loop deterministic; Phase 4 can layer the prompt
-		// in via the same channel pattern bootstrap uses.
-		_ = prog
-		regOpts := opts
-		regRes, err := Register(regOpts, job.URL)
+		regRes, err := Register(opts, job.URL)
 		out := cloneDoneMsg{idx: idx}
 		if err != nil {
 			if errors.Is(err, ErrAlreadyRegistered) {
@@ -1156,7 +1138,11 @@ func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startCloneJob(m.currentIdx)
 	case needsBranchMsg:
-		// Reserved for Phase 4; in Phase 3 we never produce this.
+		// Wired but unreachable today: no clone path emits
+		// needsBranchMsg. Kept so a future caller that wants to
+		// route clone.ErrNeedsBootstrap through the TUI prompt
+		// has the plumbing ready (same answer-channel pattern as
+		// bootstrap).
 		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		m.transitionTo(addStateBranchPrompt)
@@ -1191,7 +1177,12 @@ func (m AddModel) viewCloning() string {
 }
 
 // =============================================================================
-// Branch prompt (reserved — wiring complete for Phase 4)
+// Branch prompt
+//
+// Plumbing for routing clone.ErrNeedsBootstrap through the
+// branchprompt sub-state. Currently unreachable — no clone path
+// emits needsBranchMsg — but the wiring is complete so a future
+// caller can hook it up without restructuring the state machine.
 // =============================================================================
 
 func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {

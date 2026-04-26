@@ -2,25 +2,25 @@ package add
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
-// Source is a producer of Suggestions. Phase 1-C defines the contract;
-// Phase 3 adds the disk / clipboard / github_source implementations.
+// Source is a producer of Suggestions for the `ws add` TUI. Three
+// concrete implementations: DiskSource, ClipboardSource, GitHubSource.
 //
 // FetchSuggestions must:
 //   - Honor ctx cancellation promptly.
 //   - Never panic on transient errors — return (nil, err) and let
-//     Gather log + continue.
-//   - Return empty slice + nil error when the source has nothing to say
-//     (e.g. clipboard doesn't contain a URL). Nil slice is equivalent.
+//     the caller decide whether to surface or swallow.
+//   - Return empty slice + nil error when the source has nothing to
+//     say (e.g. clipboard doesn't contain a URL). Nil slice is
+//     equivalent.
 type Source interface {
-	// FetchSuggestions returns this source's offerings. Gather invokes
-	// each source in parallel with a per-source ctx deadline.
+	// FetchSuggestions returns this source's offerings. AddModel
+	// invokes each source in parallel as a separate tea.Cmd; results
+	// arrive incrementally and fold into the rendered tree.
 	FetchSuggestions(ctx context.Context) ([]Suggestion, error)
 
 	// Name is a short tag for diagnostics ("disk", "clipboard",
@@ -110,93 +110,21 @@ type Suggestion struct {
 	InferredGrp string
 }
 
-// GatherResult is the return value of Gather. We keep the per-source
-// diagnostics separate from the merged suggestion list so the TUI can
-// render accurate chips ("gh: 418ms, 47 repos / clip: 11ms, 0 / disk:
-// 342ms, 3") without reconstructing them from the suggestions alone.
-type GatherResult struct {
-	// Suggestions is the dedup-merged list, sorted by relevance.
-	Suggestions []Suggestion
-
-	// PerSource describes each source's outcome. Present for every
-	// source Gather was asked to query, even if it returned empty.
-	PerSource []SourceOutcome
-}
-
-// SourceOutcome is one row in GatherResult.PerSource.
+// SourceOutcome is the per-source status row tracked by AddModel as
+// each Source's FetchSuggestions call completes. Used by the TUI to
+// render the "disk:5  github:294" status chip line.
 type SourceOutcome struct {
 	Name     string
 	Count    int           // number of suggestions this source produced
-	Duration time.Duration // wall-clock time
-	Err      error         // nil on success; timeout/failure otherwise
+	Duration time.Duration // wall-clock time the fetch took
+	Err      error         // nil on success; timeout / failure otherwise
 }
 
-// GatherOptions configures a Gather call. SourceTimeout applies per
-// source and never to the aggregate — one slow source should not
-// block the others.
-type GatherOptions struct {
-	// SourceTimeout is the deadline for each individual FetchSuggestions
-	// call. 0 → DefaultSourceTimeout.
-	SourceTimeout time.Duration
-}
-
-// DefaultSourceTimeout is the out-of-the-box per-source deadline. 3s
-// is enough for disk walks and typical gh CLI paginations on small
-// accounts; Phase 1 sticks with this value because the sole user's
-// workspace has <50 repos. Revisit if users at 10× scale start seeing
-// timeouts in production (Open item #6 on issue #20).
+// DefaultSourceTimeout is the out-of-the-box per-source deadline.
+// AddModel's runTUI raises this to 10s to cover gh-CLI paginate at
+// scale; the constant is the lower-bound default for callers that
+// don't override.
 const DefaultSourceTimeout = 3 * time.Second
-
-// Gather runs all sources in parallel with a per-source ctx deadline,
-// merges their results via normalizeRemoteURL-based dedup, and sorts
-// by relevance. A source returning an error becomes a chip in
-// PerSource — it does NOT cause Gather itself to return an error.
-// Gather only returns (nil, err) when ctx itself is already cancelled.
-func Gather(ctx context.Context, sources []Source, opts GatherOptions) (*GatherResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	timeout := opts.SourceTimeout
-	if timeout <= 0 {
-		timeout = DefaultSourceTimeout
-	}
-
-	outcomes := make([]SourceOutcome, len(sources))
-	allRaw := make([][]Suggestion, len(sources))
-	var wg sync.WaitGroup
-
-	for i, src := range sources {
-		wg.Add(1)
-		go func(i int, src Source) {
-			defer wg.Done()
-			sctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-
-			start := time.Now()
-			got, err := src.FetchSuggestions(sctx)
-			elapsed := time.Since(start)
-
-			outcomes[i] = SourceOutcome{
-				Name:     src.Name(),
-				Count:    len(got),
-				Duration: elapsed,
-				Err:      err,
-			}
-			if err == nil {
-				allRaw[i] = got
-			}
-		}(i, src)
-	}
-	wg.Wait()
-
-	merged := mergeSuggestions(allRaw)
-	sortByRelevance(merged)
-
-	return &GatherResult{
-		Suggestions: merged,
-		PerSource:   outcomes,
-	}, nil
-}
 
 // mergeSuggestions deduplicates the union of all source outputs by
 // normalized URL. When two providers contribute the same repo, the
@@ -330,8 +258,3 @@ func hasSource(ss []SourceKind, k SourceKind) bool {
 	return false
 }
 
-// ErrAllSourcesFailed is returned by GatherResult helper methods when
-// every source errored. Gather itself does NOT return this — it lets
-// the TUI render whatever partial state it has. Exposed so callers
-// that want a stricter contract can check explicitly.
-var ErrAllSourcesFailed = errors.New("all suggestion sources failed")
