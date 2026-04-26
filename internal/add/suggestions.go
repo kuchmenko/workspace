@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -271,13 +272,40 @@ Outer:
 	return out
 }
 
-// sortByRelevance orders merged suggestions: disk-found first (local
-// context beats remote), then activity desc, then PushedAt desc, then
-// name asc. Stable so that otherwise-equal entries keep the order
-// from the first source they appeared in.
+// sortByRelevance orders merged suggestions so the in-memory slice
+// matches the order the TUI tree will render them. Critical: m.cursor
+// indexes this slice, and the tree's cursor marker is computed by
+// counting items in render order. If the two orderings drift, the
+// visual cursor and the actual selection point at different rows
+// (the bug observed in production: pressing Enter selected an item
+// several rows below the visible ▸).
+//
+// Sort axes, in descending precedence:
+//
+//  1. Group order  — Clipboard / Manual at top, then Local
+//     (unregistered), then GitHub orgs alphabetical. Mirrors what
+//     buildBrowseRows does for headers; pre-sorting here lets that
+//     function be a simple linear walk.
+//  2. Within group:
+//     a. Disk presence (a github repo also-on-disk floats above
+//        github-only ones in the same org)
+//     b. Activity desc
+//     c. PushedAt desc
+//     d. Name asc
+//
+// Stable so that otherwise-equal entries keep the order from the
+// first source they appeared in.
 func sortByRelevance(s []Suggestion) {
 	sort.SliceStable(s, func(i, j int) bool {
-		// Disk presence wins.
+		_, li, oi := groupKey(s[i])
+		_, lj, oj := groupKey(s[j])
+		if oi != oj {
+			return oi < oj
+		}
+		if li != lj {
+			return strings.ToLower(li) < strings.ToLower(lj)
+		}
+		// Same group. Disk presence wins.
 		diskI := hasSource(s[i].Sources, SourceDisk)
 		diskJ := hasSource(s[j].Sources, SourceDisk)
 		if diskI != diskJ {
