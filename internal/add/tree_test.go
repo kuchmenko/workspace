@@ -92,6 +92,12 @@ func TestBuildBrowseRows_GroupsAndOrders(t *testing.T) {
 		{Name: "e", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/e"},
 	}
 
+	// buildBrowseRows expects a sorted view (matches the production
+	// path where m.allSuggestions has already been through
+	// sortByRelevance). Without this, the row order falls out of
+	// the random map iteration in Go and m.cursor's view-index
+	// stops aligning with the rendered cursor row.
+	sortByRelevance(view)
 	rows := buildBrowseRows(view)
 
 	// Expected order:
@@ -120,6 +126,43 @@ func TestBuildBrowseRows_GroupsAndOrders(t *testing.T) {
 	// Item count: 5 items + 4 headers = 9 rows.
 	if len(rows) != 9 {
 		t.Errorf("rows: got %d, want 9", len(rows))
+	}
+}
+
+// TestSortByRelevance_GroupOrderMatchesTreeOrder is the regression
+// test for the cursor-offset bug: pressing Enter selected an item
+// rows below the visible ▸ because m.cursor (view-index) didn't
+// match the rendered tree's item order. After sortByRelevance, the
+// N-th item in the view MUST be the N-th rowItem in
+// buildBrowseRows(view).
+func TestSortByRelevance_GroupOrderMatchesTreeOrder(t *testing.T) {
+	view := []Suggestion{
+		// Deliberately scrambled across groups to force a real sort.
+		{Name: "myorg-a", Sources: []SourceKind{SourceGitHub}, InferredGrp: "myorg", GhActivity: 5},
+		{Name: "kuchmenko-b", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko", GhActivity: 50},
+		{Name: "clip-d", Sources: []SourceKind{SourceClipboard}, RemoteURL: "git@h:foo/d.git"},
+		{Name: "kuchmenko-c", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko", GhActivity: 10},
+		{Name: "disk-e", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/e"},
+	}
+
+	sortByRelevance(view)
+	rows := buildBrowseRows(view)
+
+	// Walk the rendered rows; each item's name must equal view[i].Name
+	// at the corresponding view index.
+	itemIdx := 0
+	for _, r := range rows {
+		if r.kind != rowItem {
+			continue
+		}
+		if r.suggestion.Name != view[itemIdx].Name {
+			t.Errorf("at view-index %d: rendered=%q, view=%q",
+				itemIdx, r.suggestion.Name, view[itemIdx].Name)
+		}
+		itemIdx++
+	}
+	if itemIdx != len(view) {
+		t.Errorf("rendered %d items, view has %d", itemIdx, len(view))
 	}
 }
 

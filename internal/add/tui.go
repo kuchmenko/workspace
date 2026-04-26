@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -556,11 +555,25 @@ func (m AddModel) viewBrowse() string {
 			fmt.Fprintf(&b, "  %s\n", r.text)
 		case rowItem:
 			s := r.suggestion
+			selected := i == cursorRow
 			cursor := "    "
-			if i == cursorRow {
+			if selected {
 				cursor = "  " + addCursor.Render("▸ ")
 			}
-			b.WriteString(renderItemLine(cursor, s))
+			line := strings.TrimRight(renderItemLine(cursor, s), "\n")
+			if selected {
+				// Pad the line out to terminal width and apply a
+				// background highlight so the entire row reads as
+				// "this is what Enter will select". Width(0) is a
+				// no-op when m.width hasn't been seen yet (pre
+				// WindowSizeMsg) — falls back to natural length.
+				rs := addCursorRow
+				if m.width > 0 {
+					rs = rs.Width(m.width)
+				}
+				line = rs.Render(line)
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 	if start > 0 || end < len(rows) {
@@ -686,55 +699,38 @@ type browseRow struct {
 	suggestion *Suggestion // non-nil for items
 }
 
-// buildBrowseRows groups the filtered suggestion list into a
-// header-and-items sequence. The grouping axis is the suggestion's
-// "natural home" — see groupKey for the precedence.
+// buildBrowseRows walks an already-sorted view (sortByRelevance puts
+// it in group → in-group order) and emits a header row each time the
+// group key changes. This keeps m.cursor's view-index aligned with
+// the position of the matching item row in the rendered tree —
+// critical for the cursor marker and Enter to point at the same
+// suggestion.
 func buildBrowseRows(view []Suggestion) []browseRow {
-	type bucket struct {
-		key    string
-		label  string
-		order  int
-		items  []*Suggestion
+	if len(view) == 0 {
+		return nil
 	}
-	bucketsByKey := make(map[string]*bucket)
-	var keysInOrder []string
 
+	// First pass: count items per group key for the header counts.
+	// Cheap because the view is small (≤ low hundreds even at scale).
+	groupCounts := map[string]int{}
 	for i := range view {
-		s := &view[i]
-		key, label, order := groupKey(*s)
-		bk, ok := bucketsByKey[key]
-		if !ok {
-			bk = &bucket{key: key, label: label, order: order}
-			bucketsByKey[key] = bk
-			keysInOrder = append(keysInOrder, key)
-		}
-		bk.items = append(bk.items, s)
+		k, _, _ := groupKey(view[i])
+		groupCounts[k]++
 	}
-
-	// Sort buckets by (order, label). Order pins fixed-priority
-	// groups (clipboard, local) above the GitHub orgs; alphabetical
-	// is the tie-breaker. Items inside a bucket keep the order from
-	// `view` (already relevance-sorted upstream).
-	buckets := make([]*bucket, 0, len(bucketsByKey))
-	for _, k := range keysInOrder {
-		buckets = append(buckets, bucketsByKey[k])
-	}
-	sort.SliceStable(buckets, func(i, j int) bool {
-		if buckets[i].order != buckets[j].order {
-			return buckets[i].order < buckets[j].order
-		}
-		return strings.ToLower(buckets[i].label) < strings.ToLower(buckets[j].label)
-	})
 
 	var rows []browseRow
-	for _, b := range buckets {
-		header := fmt.Sprintf("%s %s",
-			addGroupHdr.Render(b.label),
-			addDim.Render(fmt.Sprintf("(%d)", len(b.items))))
-		rows = append(rows, browseRow{kind: rowGroup, text: header})
-		for _, s := range b.items {
-			rows = append(rows, browseRow{kind: rowItem, suggestion: s})
+	var lastKey string
+	for i := range view {
+		s := &view[i]
+		key, label, _ := groupKey(*s)
+		if key != lastKey {
+			header := fmt.Sprintf("%s %s",
+				addGroupHdr.Render(label),
+				addDim.Render(fmt.Sprintf("(%d)", groupCounts[key])))
+			rows = append(rows, browseRow{kind: rowGroup, text: header})
+			lastKey = key
 		}
+		rows = append(rows, browseRow{kind: rowItem, suggestion: s})
 	}
 	return rows
 }
@@ -1453,4 +1449,12 @@ var (
 	addPreviewName = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("14")).
 			Bold(true)
+
+	// Cursor-row highlight: dark gray background, applied to the
+	// entire selected row (padded to terminal width). Lipgloss
+	// re-applies the bg around any inner ANSI sequences so chip
+	// colors, dim URLs, and the cursor arrow keep their fg styling
+	// while the bg stays continuous across the line.
+	addCursorRow = lipgloss.NewStyle().
+			Background(lipgloss.Color("237"))
 )
