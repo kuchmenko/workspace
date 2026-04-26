@@ -48,13 +48,14 @@ func (c *ghClient) FetchRepos() ([]Repo, error) {
 		}
 		pushed, _ := time.Parse(time.RFC3339, r.PushedAt)
 		repos = append(repos, Repo{
-			Name:     r.Name,
-			FullName: r.FullName,
-			Owner:    r.Owner.Login,
-			SSHURL:   r.SSHURL,
-			Private:  r.Private,
-			Fork:     r.Fork,
-			PushedAt: pushed,
+			Name:        r.Name,
+			FullName:    r.FullName,
+			Owner:       r.Owner.Login,
+			SSHURL:      r.SSHURL,
+			Description: r.Description,
+			Private:     r.Private,
+			Fork:        r.Fork,
+			PushedAt:    pushed,
 		})
 	}
 
