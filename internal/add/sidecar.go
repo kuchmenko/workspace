@@ -30,11 +30,12 @@ const sidecarPayloadKey = "__session__"
 // live sidecar already exists, returns an error describing the other
 // run. If a stale sidecar exists, deletes it before acquiring.
 //
-// Phase 1 does NOT prompt for stale-sidecar resume (as bootstrap does)
-// because `ws add` has no per-project mid-progress state to resume —
-// a failed run's partial clone is either recoverable via a re-run
-// (clone.ErrAlreadyCloned on the bare path) or leaves nothing behind
-// (if the sidecar was written before any clone started).
+// Stale sidecars are cleared silently rather than prompting for
+// resume (the way bootstrap does) because `ws add` has no
+// per-project mid-progress state to resume — a failed run's partial
+// clone is either recoverable via a re-run (clone.ErrAlreadyCloned
+// on the bare path) or leaves nothing behind (if the sidecar was
+// written before any clone started).
 func acquireSidecar(wsRoot string, mode Mode, urls []string) (*sidecar.Sidecar, error) {
 	existing, err := sidecar.Load(wsRoot, sidecar.KindAdd)
 	if err != nil {

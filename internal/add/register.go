@@ -25,9 +25,9 @@ type RegisterResult struct {
 }
 
 // Register materializes one URL into a workspace.toml entry (and, by
-// default, a bare+worktree clone). It is the single place in Phase 1-C
-// that writes workspace.toml — both Run's headless loop and the future
-// TUI edit→confirm path funnel through here.
+// default, a bare+worktree clone). It is the single place that writes
+// workspace.toml — both Run's headless loop and the TUI edit→confirm
+// path funnel through here.
 //
 // The caller is responsible for supplying Options with WsRoot,
 // Workspace, and Save set. Register does not acquire the sidecar — Run
@@ -91,9 +91,10 @@ func Register(opts Options, url string) (*RegisterResult, error) {
 	cloned := false
 	if !opts.NoClone {
 		// CloneIntoLayout mutates proj.DefaultBranch on success.
-		// Pass no PromptDefaultBranch — Phase 1-C is headless only,
-		// so ambiguous defaults surface as ErrNeedsBootstrap and the
-		// caller should tell the user to `ws bootstrap <name>`.
+		// Pass no PromptDefaultBranch — Register is non-interactive
+		// by contract; ambiguous defaults surface as
+		// clone.ErrNeedsBootstrap and the caller is told to run
+		// `ws bootstrap <name>` afterwards.
 		_, err := clone.CloneIntoLayout(opts.WsRoot, name, &proj, clone.Options{})
 		if err != nil {
 			return nil, fmt.Errorf("clone %s: %w", name, err)
@@ -119,17 +120,18 @@ func Register(opts Options, url string) (*RegisterResult, error) {
 	return &RegisterResult{Project: proj, Name: name, Cloned: cloned}, nil
 }
 
-// inferGroup is the tiny successor of the 314-line step_group.go from
-// internal/setup. The GitHub setup TUI auto-grouped repos by owner
-// (personal login → "personal", org logins → "<orgname>") and let the
-// user override in a dedicated screen. Track A confirmed zero groups
-// are in production, so the override UX is gone; the auto-infer rule
-// is preserved here as a one-function helper.
+// inferGroup picks a group label for a Suggestion when the caller
+// hasn't supplied an explicit Group. Called from headless registration
+// (where group is rarely set on the CLI). For TUI registrations the
+// edit screen pre-fills from the suggestion's InferredGrp (typically
+// the GitHub owner) and the user can override before confirm —
+// inferGroup is the fallback for when no signal is available.
 //
-// Current policy is simple: group == string(category). The owner-based
-// inference will return in Phase 3 once the TUI has access to the
-// GitHub suggestion that a URL came from; for headless `ws add <url>`,
-// the URL owner is parseable but carries less intent than the category.
+// Current policy is simple: group == string(category). The legacy
+// `ws setup` step_group.go grouped GitHub repos by owner; this
+// minimal version preserves the contract (every project has a
+// non-empty group) without dragging in the org-resolution
+// scaffolding. The TUI's edit screen handles richer cases.
 func inferGroup(_ string, cat config.Category) string {
 	return string(cat)
 }

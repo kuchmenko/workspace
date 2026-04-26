@@ -6,9 +6,6 @@ import (
 )
 
 // Mode controls whether Run presents a TUI or runs headless.
-//
-// Phase 1 implements only ModeHeadless. ModeAuto, ModeTUI, and
-// ModeEmbedded land with Phase 3 (TUI) and Phase 5 (agent embed).
 type Mode int
 
 const (
@@ -20,15 +17,16 @@ const (
 	// or selected automatically when stdin is not a TTY.
 	ModeHeadless
 
-	// ModeTUI forces the TUI. Errors in Phase 1-C with "TUI ships in
-	// Phase 3" — the skeleton accepts the value to lock the shape
-	// before the real implementation lands.
+	// ModeTUI forces the TUI even on a non-TTY (rarely useful;
+	// included for symmetry with --no-tui and to let the future
+	// embed path opt in explicitly).
 	ModeTUI
 
 	// ModeEmbedded is used when `ws add` is hosted inside another
-	// bubbletea program (the agent TUI in Phase 5). The caller is
-	// responsible for the parent tea.Program lifecycle; Run does
-	// not create its own. Phase 1-C returns ErrEmbedNotSupported.
+	// bubbletea program (the agent TUI). The caller is responsible
+	// for the parent tea.Program lifecycle; Run does not create its
+	// own. Currently returns ErrEmbedNotSupported — the embedded
+	// path lands with the agent integration.
 	ModeEmbedded
 )
 
@@ -41,8 +39,7 @@ type Options struct {
 	// Inputs.
 
 	// URLs lists positional git-remote URLs. Empty → Run gathers
-	// suggestions (TUI) or errors (headless). In Phase 1-C only the
-	// non-empty-URLs headless path is wired.
+	// suggestions (TUI) or errors (headless).
 	URLs []string
 
 	// Category is the `Projects[*].Category` field to write. Empty →
@@ -76,9 +73,9 @@ type Options struct {
 	// Injected for tests.
 	Save func(*config.Workspace) error
 
-	// GhProvider is the GitHub suggestion backend. nil → github.ResolveProvider().
-	// Not used in Phase 1-C (suggestions land in Phase 3), but the
-	// field is present so callers can wire it once and forget.
+	// GhProvider is the GitHub suggestion backend. nil →
+	// github.ResolveProvider(). Override in tests or to inject a
+	// stubbed provider.
 	GhProvider github.Provider
 }
 

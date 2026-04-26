@@ -2,23 +2,24 @@ package github
 
 import "context"
 
-// GhAppProvider is the Track C placeholder — a GitHub App-backed
+// GhAppProvider is a placeholder for the future GitHub App-backed
 // Provider that will ship with its own installation flow, encrypted
-// token storage, and rotation. In Phase 1 it is a pure stub: any
+// token storage, and rotation. Currently a pure stub: any
 // SuggestRepos call returns ErrNotImplemented.
 //
-// The stub exists so the Provider interface shape is locked down
-// before Track C starts, and so callers can write `case *GhAppProvider:`
-// switches that compile today.
+// The stub exists so the Provider interface shape stays stable
+// before the App integration lands, and so callers can write
+// `case *GhAppProvider:` switches that compile today.
 //
-// Phase 1 resolve logic does NOT wire this provider in. ResolveProvider
-// returns httpClient → ghClient → noop, never GhAppProvider. Track C
-// adds the reader for ~/.config/ws/github-app.toml and the install flow.
+// ResolveProvider does NOT wire this provider in — it picks
+// httpClient → ghClient → noop. The future App integration will
+// extend ResolveProvider to read ~/.config/ws/github-app.toml and
+// return a real GhAppProvider when configured.
 type GhAppProvider struct{}
 
-// NewGhAppProviderStub constructs the Phase 1 stub. Named with an
-// explicit "Stub" suffix so it's obvious at call sites that this does
-// not actually talk to GitHub.
+// NewGhAppProviderStub constructs the placeholder. Named with an
+// explicit "Stub" suffix so it's obvious at call sites that this
+// does not actually talk to GitHub.
 func NewGhAppProviderStub() *GhAppProvider { return &GhAppProvider{} }
 
 func (*GhAppProvider) Name() string { return "gh-app" }

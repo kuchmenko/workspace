@@ -19,10 +19,10 @@ import (
 // and Provider composes them into a single "give me N suggestions"
 // operation with sorting and limiting baked in.
 //
-// Phase 1 ships one real implementation (wraps either the OAuth
-// httpClient or the gh-CLI client, whichever ResolveProvider selects)
-// plus NoopProvider (no auth available) and GhAppProvider (Track C
-// stub).
+// Today there's one real implementation (wraps either the OAuth
+// httpClient or the gh-CLI client, whichever ResolveProvider picks)
+// plus NoopProvider for the no-auth-configured case and GhAppProvider
+// as a placeholder for the future GitHub App integration.
 type Provider interface {
 	// SuggestRepos returns up to `limit` repos sorted by recent activity.
 	// ctx is honored for cancellation; implementations should bail out
@@ -42,14 +42,14 @@ type Provider interface {
 // the `ws add` TUI degrades gracefully when GitHub is unavailable.
 var ErrNotAuthed = errors.New("no GitHub authentication configured")
 
-// ErrNotImplemented is returned by GhAppProvider in Phase 1. The App
-// provider lands with Track C; the stub exists now so callers can code
+// ErrNotImplemented is returned by GhAppProvider until the GitHub
+// App integration lands. The stub exists now so callers can code
 // against the interface without conditional compilation.
-var ErrNotImplemented = errors.New("not implemented (GitHub App: Track C)")
+var ErrNotImplemented = errors.New("not implemented (GitHub App)")
 
 // ResolveProvider picks the best available Provider for this environment.
 //
-// Resolution order (Phase 1):
+// Resolution order:
 //  1. ws OAuth token present → clientProvider wrapping the HTTP client
 //     (matches current github.ResolveClient behavior — keeps the
 //     `ws auth login` flow as primary).

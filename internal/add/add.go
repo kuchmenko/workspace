@@ -1,18 +1,15 @@
-// Package add is the shared core behind `ws add` (standalone),
-// `ws bootstrap` on an empty workspace.toml (Phase 4), and the
-// `ws agent` add screen (Phase 5). All three callers funnel through
-// Run(ctx, Options).
+// Package add is the shared core behind `ws add`. The same Run entry
+// point handles three flavors:
 //
-// Phase 1-C implements the headless path only: Run takes explicit URLs
-// via Options.URLs and registers each one via Register. The TUI path
-// (ModeTUI, ModeAuto with TTY) lands in Phase 3 and will reuse this
-// same Run entry point — a caller with Options.URLs=nil and Mode=ModeTUI
-// will transfer control to the future TUI model, which eventually calls
-// Register for each confirmed selection.
+//   - Standalone CLI: `ws add [url...]` and `ws add -` (stdin).
+//   - Interactive TUI when invoked without URLs on a TTY.
+//   - Embedded inside another bubbletea program (currently a stub
+//     returning ErrEmbedNotSupported; reserved for the planned `ws
+//     agent` add screen).
 //
 // The sidecar at ~/.local/state/ws/add/<sha>.toml is acquired before
 // any workspace.toml mutation and released on every exit path (defer).
-// The daemon reconciler's AnyActive sweep now includes KindAdd, so a
+// The daemon reconciler's AnyActive sweep includes KindAdd, so a
 // running `ws add` pauses the daemon for the affected workspace — no
 // interleaving writes.
 package add
@@ -31,9 +28,10 @@ import (
 )
 
 // ErrEmbedNotSupported is returned when a caller asks for ModeEmbedded.
-// Phase 5 (agent integration) will implement embed; the interface is
-// frozen now to lock the shape.
-var ErrEmbedNotSupported = errors.New("embedded mode ships in Phase 5 (ws agent)")
+// Reserved for a future `ws agent` add screen that will host AddModel
+// inside its own bubbletea program; the interface is frozen now so
+// the embedding contract is locked.
+var ErrEmbedNotSupported = errors.New("embedded mode not yet supported")
 
 // ErrNoURLs is returned by headless runs with Options.URLs empty.
 // The TUI is the usual answer to "I didn't bring URLs"; headless by
@@ -41,19 +39,14 @@ var ErrEmbedNotSupported = errors.New("embedded mode ships in Phase 5 (ws agent)
 var ErrNoURLs = errors.New("no URLs provided; pass one or more git remote URLs")
 
 // Run is the single entry point for every `ws add` style operation.
-// It owns the sidecar lifecycle and dispatches on Mode to the
-// appropriate implementation.
+// It owns the sidecar lifecycle and dispatches on Mode:
 //
-// Phase 1-C behavior:
-//
-//	ModeAuto     with URLs      → headless
-//	ModeAuto     without URLs   → ErrTUINotImplemented
-//	ModeHeadless with URLs      → headless
-//	ModeHeadless without URLs   → ErrNoURLs
-//	ModeTUI                      → ErrTUINotImplemented
-//	ModeEmbedded                 → ErrEmbedNotSupported
-//
-// Phase 3 promotes TUI + Auto-without-URLs. Phase 5 promotes Embedded.
+//	ModeAuto     with URLs    → headless
+//	ModeAuto     without URLs → TUI
+//	ModeHeadless with URLs    → headless
+//	ModeHeadless without URLs → ErrNoURLs
+//	ModeTUI                   → TUI
+//	ModeEmbedded              → ErrEmbedNotSupported (reserved)
 //
 // Per-URL errors accumulate in Result.Errors and do NOT abort the
 // loop; Run returns a non-nil error only when the whole operation
@@ -90,11 +83,12 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	// Sidecar acquire (blocks concurrent `ws add`, pauses the daemon).
-	sc, err := acquireSidecar(opts.WsRoot, opts.Mode, opts.URLs)
-	if err != nil {
+	// We don't read the returned sidecar struct — the file's mere
+	// presence with our pid is the contract; `defer releaseSidecar`
+	// removes it on every exit.
+	if _, err := acquireSidecar(opts.WsRoot, opts.Mode, opts.URLs); err != nil {
 		return nil, err
 	}
-	_ = sc // currently unused after acquire; progress tracking comes in Phase 3
 	defer releaseSidecar(opts.WsRoot)
 
 	if useTUI {
@@ -136,7 +130,6 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 		tea.WithAltScreen(),
 		tea.WithContext(ctx),
 	)
-	model.SetProgram(prog)
 
 	finalModel, err := prog.Run()
 	if err != nil {

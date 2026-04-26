@@ -1,6 +1,6 @@
 // Package clipboard reads system-clipboard contents via whichever
-// platform tool is available. It is used by the `ws add` TUI (Track B,
-// issue #20) as one of the suggestion sources.
+// platform tool is available. It is used by the `ws add` TUI as one
+// of the suggestion sources.
 //
 // The package is deliberately minimal:
 //

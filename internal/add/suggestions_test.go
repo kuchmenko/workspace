@@ -1,88 +1,39 @@
 package add
 
 import (
-	"context"
-	"errors"
 	"testing"
-	"time"
 )
 
-// fakeSource is a deterministic Source for Gather tests. It can simulate
-// a success (fixed list), a failure (err != nil), or a slow-then-done
-// behavior (delay > 0) so we can exercise per-source deadlines.
-type fakeSource struct {
-	name  string
-	items []Suggestion
-	err   error
-	delay time.Duration
-}
-
-func (f *fakeSource) Name() string { return f.name }
-func (f *fakeSource) FetchSuggestions(ctx context.Context) ([]Suggestion, error) {
-	if f.delay > 0 {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(f.delay):
-		}
+// TestMergeSuggestions_AcrossSources covers the dedup + accumulation
+// invariant that AddModel relies on whenever a new source's results
+// arrive: the same logical repo discovered in two providers folds
+// into one row with both source chips, and the first non-empty
+// scalar (DiskPath / GhActivity / etc) wins.
+//
+// Same shape as the production streaming flow, where each
+// sourceDoneMsg triggers mergeSuggestions(allSoFar, justArrived).
+func TestMergeSuggestions_AcrossSources(t *testing.T) {
+	disk := []Suggestion{
+		{Name: "shared", RemoteURL: "git@github.com:me/shared.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/shared"},
+		{Name: "only-disk", RemoteURL: "git@github.com:me/only-disk.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/only-disk"},
 	}
-	if f.err != nil {
-		return nil, f.err
-	}
-	return f.items, nil
-}
-
-func TestGather_MergesAcrossSources_OneFails(t *testing.T) {
-	disk := &fakeSource{
-		name: "disk",
-		items: []Suggestion{
-			{Name: "shared", RemoteURL: "git@github.com:me/shared.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/shared"},
-			{Name: "only-disk", RemoteURL: "git@github.com:me/only-disk.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/only-disk"},
-		},
-	}
-	clip := &fakeSource{
-		name: "clipboard",
-		err:  errors.New("no clipboard tool"), // forced failure
-	}
-	gh := &fakeSource{
-		name: "github",
-		items: []Suggestion{
-			{Name: "shared", RemoteURL: "https://github.com/me/shared", Sources: []SourceKind{SourceGitHub}, GhActivity: 42},
-			{Name: "only-gh", RemoteURL: "https://github.com/me/only-gh", Sources: []SourceKind{SourceGitHub}, GhActivity: 10},
-		},
+	gh := []Suggestion{
+		// Same logical repo as "shared" via a different URL form —
+		// must fold via normalizeRemoteURL into one entry.
+		{Name: "shared", RemoteURL: "https://github.com/me/shared", Sources: []SourceKind{SourceGitHub}, GhActivity: 42},
+		{Name: "only-gh", RemoteURL: "https://github.com/me/only-gh", Sources: []SourceKind{SourceGitHub}, GhActivity: 10},
 	}
 
-	res, err := Gather(context.Background(), []Source{disk, clip, gh}, GatherOptions{})
-	if err != nil {
-		t.Fatalf("Gather returned error: %v", err)
+	merged := mergeSuggestions([][]Suggestion{disk, gh})
+
+	if got := len(merged); got != 3 {
+		t.Errorf("merged count: want 3 (shared merged + 2 unique), got %d (%+v)", got, sugNames(merged))
 	}
 
-	// One source failing must not fail the whole gather.
-	if got := len(res.Suggestions); got != 3 {
-		t.Errorf("merged count: want 3 (shared merged + 2 unique), got %d (%+v)", got, names(res.Suggestions))
-	}
-
-	// Per-source outcomes: all three represented.
-	if len(res.PerSource) != 3 {
-		t.Fatalf("expected 3 per-source outcomes, got %d", len(res.PerSource))
-	}
-
-	// The failed source must carry its error in PerSource.
-	var clipOutcome *SourceOutcome
-	for i := range res.PerSource {
-		if res.PerSource[i].Name == "clipboard" {
-			clipOutcome = &res.PerSource[i]
-		}
-	}
-	if clipOutcome == nil || clipOutcome.Err == nil {
-		t.Errorf("clipboard outcome missing or without error: %+v", clipOutcome)
-	}
-
-	// shared appears once, with both chips.
 	var shared *Suggestion
-	for i := range res.Suggestions {
-		if res.Suggestions[i].Name == "shared" {
-			shared = &res.Suggestions[i]
+	for i := range merged {
+		if merged[i].Name == "shared" {
+			shared = &merged[i]
 		}
 	}
 	if shared == nil {
@@ -99,86 +50,32 @@ func TestGather_MergesAcrossSources_OneFails(t *testing.T) {
 	}
 }
 
-func TestGather_SortsDiskFirstThenActivity(t *testing.T) {
-	src := &fakeSource{
-		name: "all",
-		items: []Suggestion{
-			{Name: "c", RemoteURL: "g@h:a/c", Sources: []SourceKind{SourceGitHub}, GhActivity: 100},
-			{Name: "a", RemoteURL: "g@h:a/a", Sources: []SourceKind{SourceDisk}},
-			{Name: "b", RemoteURL: "g@h:a/b", Sources: []SourceKind{SourceGitHub}, GhActivity: 50},
-		},
+func TestMergeSuggestions_EmptyInputsReturnEmpty(t *testing.T) {
+	merged := mergeSuggestions(nil)
+	if len(merged) != 0 {
+		t.Errorf("nil input: got %d", len(merged))
 	}
-	res, _ := Gather(context.Background(), []Source{src}, GatherOptions{})
-	want := []string{"a", "c", "b"} // disk wins over activity-100, activity desc
+	merged = mergeSuggestions([][]Suggestion{nil, {}, nil})
+	if len(merged) != 0 {
+		t.Errorf("empty arrays: got %d", len(merged))
+	}
+}
+
+func TestSortByRelevance_DiskFirstWithinGroup(t *testing.T) {
+	// Same group (github org "me"), different sources. Disk presence
+	// must float to the top within the group; activity is the
+	// tiebreaker among github-only entries.
+	view := []Suggestion{
+		{Name: "c", RemoteURL: "g@h:me/c", Sources: []SourceKind{SourceGitHub}, GhActivity: 100, InferredGrp: "me"},
+		{Name: "a", RemoteURL: "g@h:me/a", Sources: []SourceKind{SourceDisk, SourceGitHub}, InferredGrp: "me"},
+		{Name: "b", RemoteURL: "g@h:me/b", Sources: []SourceKind{SourceGitHub}, GhActivity: 50, InferredGrp: "me"},
+	}
+	sortByRelevance(view)
+	want := []string{"a", "c", "b"}
 	for i, n := range want {
-		if res.Suggestions[i].Name != n {
-			t.Errorf("pos %d: want %s, got %s (full: %v)", i, n, res.Suggestions[i].Name, names(res.Suggestions))
+		if view[i].Name != n {
+			t.Errorf("pos %d: want %s, got %s (full: %v)", i, n, view[i].Name, sugNames(view))
 		}
-	}
-}
-
-func TestGather_PerSourceDeadlineDoesNotBlockOthers(t *testing.T) {
-	fast := &fakeSource{
-		name:  "fast",
-		items: []Suggestion{{Name: "quick", RemoteURL: "g@h:a/quick"}},
-	}
-	slow := &fakeSource{
-		name:  "slow",
-		delay: 200 * time.Millisecond, // exceeds our test timeout
-	}
-
-	start := time.Now()
-	res, err := Gather(context.Background(), []Source{fast, slow}, GatherOptions{
-		SourceTimeout: 20 * time.Millisecond,
-	})
-	elapsed := time.Since(start)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Must not wait the full 200ms — slow times out at 20ms.
-	if elapsed > 150*time.Millisecond {
-		t.Errorf("Gather waited %v, expected ≤150ms (slow source should have been cut off)", elapsed)
-	}
-
-	// Fast source's result must make it through.
-	if len(res.Suggestions) != 1 || res.Suggestions[0].Name != "quick" {
-		t.Errorf("unexpected merged: %v", names(res.Suggestions))
-	}
-
-	// Slow source's outcome carries a deadline error.
-	var slowOut *SourceOutcome
-	for i := range res.PerSource {
-		if res.PerSource[i].Name == "slow" {
-			slowOut = &res.PerSource[i]
-		}
-	}
-	if slowOut == nil || slowOut.Err == nil {
-		t.Errorf("slow outcome: %+v", slowOut)
-	}
-}
-
-func TestGather_EmptySourcesReturnsEmpty(t *testing.T) {
-	res, err := Gather(context.Background(), nil, GatherOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Suggestions) != 0 {
-		t.Errorf("expected empty, got %v", names(res.Suggestions))
-	}
-	if len(res.PerSource) != 0 {
-		t.Errorf("expected empty per-source, got %d entries", len(res.PerSource))
-	}
-}
-
-func TestGather_CancelledCtxShortCircuits(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	src := &fakeSource{name: "s"}
-	_, err := Gather(ctx, []Source{src}, GatherOptions{})
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("want context.Canceled, got %v", err)
 	}
 }
 
@@ -210,7 +107,11 @@ func TestUnionSources_Idempotent(t *testing.T) {
 	}
 }
 
-func names(ss []Suggestion) []string {
+// sugNames is a local helper. The other test files (disk_test.go,
+// tree_test.go) define their own suggestionNames / names functions
+// for the same purpose; keeping a third name avoids collisions
+// without restructuring fixture sharing.
+func sugNames(ss []Suggestion) []string {
 	out := make([]string, len(ss))
 	for i, s := range ss {
 		out[i] = s.Name
