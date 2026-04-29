@@ -108,6 +108,7 @@ ws sync                           Run one reconciler tick: clone missing, fetch,
 ws sync resolve                   Inspect and act on unresolved sync conflicts
 ws add <url>...                   Register and clone projects (bare+worktree layout)
 ws add -                          Read URLs from stdin, one per line
+ws create                         TUI: create a new GitHub repo (any accessible org) and register+clone
 ws bootstrap [name]               Clone projects listed in workspace.toml that are missing locally
 ws migrate [name]                 Convert plain git checkouts into the bare+worktree layout
 ws status                         Table: project / group / status / branch / last commit / layout
@@ -176,9 +177,23 @@ echo url | ws add -                            # stdin, one URL per line
 ws add --no-clone url                          # register only, defer clone
 ```
 
-While `ws add` is running it holds an `add/<sha>.toml` sidecar so the daemon
-pauses both `workspace.toml` sync and project reconcile for the affected workspace
-— your in-progress edits never race the reconciler.
+When you want a *new* repo on GitHub instead of cloning an existing one, use
+`ws create`. It picks an owner (your account or any org you can push to via
+`gh`), creates the repo with `--add-readme` so it has a default branch + first
+commit, and then runs the same register + clone path as `ws add`:
+
+```sh
+ws create                                      # TUI: pick owner, name, visibility, description
+ws create --owner kuchmenko --name foo         # headless; --private is default
+ws create --owner my-org --name bar --public --description "..."
+```
+
+`ws create` requires `gh auth login` because it shells out to `gh repo create`.
+
+While `ws add` or `ws create` is running each holds a kind-specific sidecar
+(`add/<sha>.toml` or `create/<sha>.toml`) so the daemon pauses both
+`workspace.toml` sync and project reconcile for the affected workspace — your
+in-progress edits never race the reconciler.
 
 ### Starting a feature
 

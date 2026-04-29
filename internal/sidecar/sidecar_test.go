@@ -172,6 +172,18 @@ func TestAnyActiveFindsBoth(t *testing.T) {
 		t.Errorf("AnyActive after add save: %+v", got)
 	}
 	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
+
+	// Create sidecar: same contract as the others — `ws create` must
+	// pause the reconciler while a new repo is being materialized.
+	sc4 := sidecar.New(wsRoot, sidecar.KindCreate)
+	if err := sidecar.Save(sc4); err != nil {
+		t.Fatalf("Save create: %v", err)
+	}
+	got = sidecar.AnyActive(wsRoot)
+	if got == nil || got.Meta.Kind != sidecar.KindCreate {
+		t.Errorf("AnyActive after create save: %+v", got)
+	}
+	_ = sidecar.Delete(wsRoot, sidecar.KindCreate)
 }
 
 func TestAnyActiveIgnoresStale(t *testing.T) {
