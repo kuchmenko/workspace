@@ -79,6 +79,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newSyncCmd(),
 		newAddCmd(),
+		newCreateCmd(),
 		newPathCmd(),
 		newStatusCmd(),
 		newScanCmd(),
