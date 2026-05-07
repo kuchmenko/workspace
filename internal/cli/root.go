@@ -80,6 +80,7 @@ func NewRootCmd() *cobra.Command {
 		newSyncCmd(),
 		newAddCmd(),
 		newCreateCmd(),
+		newPathCmd(),
 		newStatusCmd(),
 		newScanCmd(),
 		newSetupCmd(),
