@@ -97,7 +97,7 @@ func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
 	for {
 		fmt.Println("Options:")
 		fmt.Println("  (d) drop [[branches]] entry and remove the local worktree (merged-PR cleanup)")
-		fmt.Println("  (k) keep local — clear conflict but keep the branch and worktree")
+		fmt.Println("  (k) keep local — clear last_pushed_* so the orphan check stops firing")
 		fmt.Println("  (s) skip — leave for later")
 		fmt.Print("> ")
 		choice := strings.TrimSpace(readLine())
@@ -111,6 +111,27 @@ func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
 			}
 			return true, nil
 		case "k":
+			// Persistence: clearing the conflict store entry alone is
+			// not enough — the reconciler keys orphan detection off
+			// LastPushedAt, so the next tick would re-record the same
+			// orphan. Clearing the push fields tells the reconciler
+			// "this branch is intentionally local-only from now on";
+			// the next ws worktree push reinstates them and normal
+			// orphan detection resumes.
+			if ws != nil && c.Project != "" && c.Branch != "" {
+				proj := ws.Projects[c.Project]
+				if meta := proj.LookupBranch(c.Branch); meta != nil {
+					if meta.LastPushedAt != "" || meta.LastPushedMachine != "" {
+						meta.LastPushedAt = ""
+						meta.LastPushedMachine = ""
+						ws.Projects[c.Project] = proj
+						if err := saveWorkspace(); err != nil {
+							fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+							return false, nil
+						}
+					}
+				}
+			}
 			return true, nil
 		case "s", "":
 			return false, nil
