@@ -20,8 +20,11 @@ laptop and a desktop). They want:
    `merge`, `rebase`, `reset`, or `force` inside a project. The worst it
    can do is decline to act and surface a conflict.
 4. **Worktree-first layout** so two machines never fight over the same
-   checked-out branch — each machine works in its own per-branch worktree
-   under a `wt/<machine>/<topic>` namespace.
+   checked-out branch — each machine has its own per-branch worktree;
+   `[[projects.X.branches]]` records which machines hold a copy. Branch
+   names are repo-native (`feat/foo`, `fix/bar`) from the start; the
+   legacy `wt/<machine>/<topic>` namespace still resolves but is no
+   longer the default.
 
 If you are an agent picking this up: read this whole file before changing
 anything. Many design decisions were deliberate trade-offs and are non-obvious.
@@ -56,22 +59,42 @@ personal/
   the user into a working repo. Tooling that doesn't understand worktrees
   generally still works because `.git` is a valid pointer file.
 - `<project>.bare/` is the only place git objects live. Worktrees share it.
-- `<project>-wt-<machine>-<topic>/` is the convention for extra worktrees
-  created by `ws worktree new`. The directory name has dashes only (no
-  slashes), but the underlying branch name preserves slashes:
-  `wt/<machine>/<topic>`.
+- `<project>-wt-<machine>-<branch-slug>/` is the convention for extra
+  worktrees created by `ws worktree add`. The directory name has dashes
+  only (no slashes); slug collisions get a deterministic `-<sha8>`
+  suffix from `SHA-1(branch)`. The underlying branch name is whatever
+  the user typed (e.g. `feat/auth-refactor`).
 
 ### Branch naming convention
 
-- `wt/<machine>/<topic>` — feature/WIP branches owned by one machine.
-  These are the **only** branches the reconciler will push automatically.
-  Any other local branch is the user's private business and is never
-  touched by the daemon.
-- The `<machine>` segment is taken from `~/.config/ws/config.toml` field
-  `machine_name`. The user is prompted to set it on first use; the default
-  is a sanitized version of `os.Hostname()`.
-- `<topic>` may contain slashes. Slashes are preserved in the branch name
-  but flattened to dashes in directory names.
+- Branch names are **literal user input.** `ws worktree add <project>
+  <branch>` accepts the branch name verbatim — no `wt/<machine>/`
+  injection, no slug rewrite, no pattern templating. The CLI validates
+  with `git check-ref-format --branch` and surfaces git's error on
+  rejection. Type whatever your project convention is from the start
+  (`feat/auth-refactor`, `fix/prod-1234`, `chore/cleanup`).
+- The reconciler **never auto-pushes project branches.** Pushes are
+  explicit via `ws worktree push <project> <branch>` (which also stamps
+  `last_active_*` in `workspace.toml`) or plain `git push` from inside
+  the worktree (which skips the metadata stamp).
+- Per-branch ownership lives in `[[projects.X.branches]]` blocks in
+  `workspace.toml`. `ws worktree add` appends this machine to the
+  branch's `machines` slice; `ws worktree rm` removes it. When the
+  slice becomes empty, the entry is GC'd on the next save — there are
+  no `[[branches]]` orphan tombstones on disk.
+- Legacy `wt/<machine>/<topic>` branches still work: `ws worktree add
+  myapp wt/linux/legacy-foo` attaches to the existing local branch and
+  registers it in `[[branches]]`. The reconciler ignores branches that
+  are not in the registry, so unregistered legacy worktrees keep
+  functioning without any forced migration.
+- `<topic>` may still contain slashes (`feat/auth-refactor`). Slashes
+  are preserved in the branch name; the worktree directory uses
+  `<project>-wt-<machine>-<branch-slug>` with `/` flattened to `-`.
+  Distinct branches whose slugs collide get a deterministic `-<sha8>`
+  suffix from `SHA-1(branch)`.
+- `~/.config/ws/config.toml` field `machine_name` still identifies this
+  machine in `branches.<name>.machines` and `last_active_machine`. The
+  user is prompted to set it on first use.
 
 ### Reconciler (the daemon's brain)
 
@@ -117,13 +140,27 @@ the configured interval, plus on `config_changed` IPC notifications) it:
      per-project exponential backoff (base = poll interval, cap = 1h).
    - For each worktree returned by `git worktree list`:
      - Skip if `index.lock` is present (the user is mid-edit).
-     - **Owned branches** (`wt/<this-machine>/*`): push if ahead. Diverged
-       → record `branch-divergence` and stop touching it.
      - **Main worktree** (the one at `proj.path`): if clean and only
        behind, `git pull --ff-only`. Diverged → record `main-divergence`
        and leave it. Dirty → silently skip.
-     - **Other machines' branches**: no-op. Fetch already updated their
-       refs in the bare.
+     - **Sibling worktrees on a registered branch**: if local is ahead
+       of origin, stamp `last_active_machine = me` /
+       `last_active_at = now()` on the `[[branches]]` entry. No push.
+     - **Sibling worktrees on an unregistered branch** (legacy
+       `wt/<machine>/*` checkouts that pre-date the redesign): no-op.
+       The user can re-register via `ws worktree add <project> <branch>`.
+   - For every `[[branches]]` entry whose `last_active_at` is set,
+     check `refs/remotes/origin/<name>` post-fetch. Missing → record
+     `branch-orphan` (PR-merge auto-delete is the typical cause; user
+     resolves via `ws sync resolve`). Re-appearance → clears the
+     conflict on the next tick.
+   - `ws.Validate()` runs after `config.Load` and emits
+     `branch-duplicate` for any project that has two `[[branches]]`
+     entries sharing the same `name` (typical race: two machines did
+     `ws worktree add` on the same branch in the same Phase 1 cycle).
+   - If anything changed in-memory during the loop (metadata refresh,
+     orphan clearing), `config.Save` writes the fresh `workspace.toml`
+     so Phase 1 of the next tick commits and pushes it.
    - `auto_sync = false` on a project limits the work to fetch-only.
 
 3. **Phase 3 — conflict bookkeeping.** New conflicts are persisted to
@@ -252,7 +289,22 @@ category       = "personal"
 default_branch = "main"             # determined at migrate time, prompt fallback
 auto_sync      = true               # default true; false = fetch only
 group          = "..."              # optional grouping
+
+# One [[branches]] block per branch this project knows about, populated
+# by `ws worktree add` and updated by `ws worktree push` / the reconciler's
+# metadata refresh. Empty-machines entries never persist across saves.
+[[projects.myapp.branches]]
+  name                = "feat/auth-refactor"
+  machines            = ["linux", "archlinux"]   # who currently has a worktree
+  last_active_machine = "linux"                  # last to push or commit
+  last_active_at      = "2026-05-08T12:00:00Z"
+  created_by          = "linux"                  # original creator
+  created_at          = "2026-04-08T13:59:04Z"
 ```
+
+Legacy `[[autopush.owned]]` and `autopush.branches []string` from
+pre-0.7.0 workspace.toml files are auto-migrated on `config.Load` and
+removed on the next `config.Save`. No manual edit is required.
 
 ## Commands
 
@@ -263,7 +315,7 @@ group          = "..."              # optional grouping
 | `ws add [remote-url...]` | Register and clone one or more new repos into `workspace.toml`, directly into the bare+worktree layout (no follow-up `ws migrate` needed). Accepts positional URLs, `-` for stdin (one URL per line, `#` comments allowed), and the legacy single-URL invocation. Flags: `-c`/`--category` personal\|work, `-g`/`--group`, `-n`/`--name` (single-URL only), `--no-clone` register-only, `--no-tui` force headless, `--tui` force TUI (Phase 3). Crash-safe via a sidecar at `~/.local/state/ws/add/`; daemon pauses while running. |
 | `ws bootstrap [name]` | Interactive TUI: clone projects listed in `workspace.toml` that are missing on this machine, directly into the bare+worktree layout. Crash-safe via a sidecar at `~/.local/state/ws/bootstrap/`. While running, the daemon pauses all sync for this workspace. `--dry-run` shows the plan without cloning. |
 | `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. Default: interactive TUI with per-project decisions for `dirty / stash / detached HEAD`. Pass any flag (`--all`, `--check`, `--wip`, `--no-tui`) or run without a TTY to switch to non-interactive mode. Crash-safe via a sidecar at `~/.local/state/ws/migrate/`; daemon pauses while running. See "Migration" below for the worktree-attach strategy. |
-| `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, push owned `wt/<machine>/*` branches). Same work as a daemon tick. |
+| `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, refresh `last_active_*` for branches with local-ahead commits, detect origin-deleted branches as `branch-orphan`). The reconciler does NOT push project branches — `ws worktree push` is the user-driven path. Same work as a daemon tick. |
 | `ws sync resolve` | Inspect and act on unresolved conflicts from `~/.local/state/ws/conflicts.json`. Prompt-based; never auto-merges. |
 | `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
 | `ws scan` | Find git repos under `personal/`, `work/`, `playground/`, `researches/`, `tools/` that are not in `workspace.toml`. **Ignores `*.bare/` and `*-wt-*/` siblings** so the worktree layout doesn't show up as orphans. |
@@ -277,9 +329,10 @@ group          = "..."              # optional grouping
 | `ws migrate --all` | Migrate every active project. Skips already-migrated. |
 | `ws migrate --check [name...]` | Preview without changes. Shows state and any blockers (dirty, stash, detached HEAD, hook count). |
 | `ws migrate <name> --wip` | Snapshot dirty working tree to a `wt/<machine>/migration-wip-<ts>` branch and attach as a sibling worktree. |
-| `ws worktree new <project> <topic> [--from <base>]` | Create a worktree on branch `wt/<machine>/<topic>`. Base is `proj.default_branch` unless `--from` is given. The branch must not already exist. |
-| `ws worktree list [project]` | Table: PROJECT / WORKTREE / BRANCH / STATE. STATE includes clean/dirty, ahead/behind, and an owner tag (`main`, `mine`, `remote`, `shared`). |
-| `ws worktree rm <project> <topic> [--force]` | Remove a worktree. Refuses if dirty or has unpushed commits unless `--force`. Does not delete the underlying branch (intentional — prevents accidental loss of unpushed work). |
+| `ws worktree add <project> <branch> [--from <base>]` | Create or attach a worktree for the literal `<branch>`. Auto-detects existing remote (fetches and checks out) and existing local-only branches (attaches; covers legacy `wt/<machine>/*` re-registration). Records this machine in `[[branches]].machines` and stamps `last_active_*`. Slug collisions get `-<sha8>` deterministic suffix. |
+| `ws worktree list [project]` | Table: PROJECT / WORKTREE / BRANCH / STATE. STATE includes clean/dirty, ahead/behind, ownership (`main`, `mine`, `shared with <machines>`, `remote`, `legacy-wt`), and `last: <machine> <date>` from the registry. |
+| `ws worktree rm <project> <branch> [--force]` | Remove a worktree and release this machine from `[[branches]].machines`. Refuses dirty or unpushed unless `--force`. Empty `machines` causes the entry to be GC'd on save. |
+| `ws worktree push <project> <branch> [--force-dirty]` | Push the branch to origin via `git push -u origin <branch>` and stamp `last_active_machine` / `last_active_at` in `workspace.toml`. Refuses dirty without `--force-dirty`; refuses branches missing from `[[branches]]` (sign of out-of-band creation). |
 | `ws wt …` | Alias for `ws worktree`. |
 
 ### Aliases
@@ -338,10 +391,15 @@ group          = "..."              # optional grouping
 - No secrets in this repo.
 - `workspace.toml` is the only file that changes during normal operation
   (plus `.gitattributes` once, on the reconciler's first run).
-- The daemon **never** runs `merge`, `rebase`, `reset`, or `force` inside
-  a project repo. The worst it does is record a conflict and stop.
-- Branches outside the `wt/<machine>/*` namespace are private to the user
-  and are **never** pushed by the reconciler.
+- The daemon **never** runs `merge`, `rebase`, `reset`, `force`, **or
+  `push`** inside a project repo. The worst it does is record a
+  conflict and stop. Project pushes are user-driven via
+  `ws worktree push` or plain `git push`.
+- Do **not** hand-edit `[[projects.X.branches]]` blocks unless you are
+  reconciling a `branch-duplicate` conflict. The CLI helpers
+  (`ClaimBranch` / `ReleaseBranch` / `TouchActive`) are the only
+  sanctioned writers; manual edits race against the reconciler's
+  metadata refresh.
 
 ## Commits
 
