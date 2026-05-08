@@ -56,11 +56,6 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 		machine = mc.MachineName
 	}
 
-	wtPath := layout.WorktreePathForBranch(p.Path, machine, branch)
-	if _, err := os.Stat(wtPath); err == nil {
-		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
-	}
-
 	// Pre-0.5.1 bares were created without remote.origin.fetch; the
 	// fetch below would only update FETCH_HEAD without it. Mirror the
 	// reconciler's repair step.
@@ -77,11 +72,39 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 	localExists := git.HasBranch(barePath, branch)
 	remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
 
+	// Re-registration short-circuit: if the branch is already checked
+	// out in some existing worktree (legacy wt/<machine>/* dir, or a
+	// previous CreateWorktree whose registry save failed), don't try
+	// to materialize another worktree — git worktree add refuses
+	// without --force, and the user's intent is to repair metadata.
+	if existingPath := findWorktreeForBranch(barePath, branch); existingPath != "" {
+		if wsRoot != "" && projID != "" {
+			if ws, err := config.Load(wsRoot); err == nil {
+				if proj, ok := ws.Projects[projID]; ok {
+					proj.ClaimBranch(branch, machine)
+					if remoteExists {
+						proj.MarkPushed(branch, machine, time.Now())
+					}
+					ws.Projects[projID] = proj
+					if err := config.Save(wsRoot, ws); err != nil {
+						return nil, fmt.Errorf("registry update failed: %w", err)
+					}
+				}
+			}
+		}
+		return &WorktreeResult{Path: existingPath, Branch: branch}, nil
+	}
+
+	wtPath := layout.WorktreePathForBranch(p.Path, machine, branch)
+	if _, err := os.Stat(wtPath); err == nil {
+		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
+	}
+
 	attachedToRemote := false
 	switch {
 	case localExists:
-		// Attach to existing local branch (covers re-registration of legacy
-		// wt/<machine>/* checkouts and branches already pulled from origin).
+		// Attach to existing local branch (covers branches already pulled
+		// from origin into refs/heads/<branch>).
 		if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
 			return nil, fmt.Errorf("git worktree add: %w", err)
 		}
@@ -165,6 +188,25 @@ func DeleteWorktreeWithRegistry(mainPath, wtPath string, force bool, wsRoot, pro
 		_ = config.Save(wsRoot, ws)
 	}
 	return nil
+}
+
+// findWorktreeForBranch returns the absolute path of the existing
+// worktree on `branch`, or "" if no worktree is checked out on it.
+// Mirrors locateWorktreeForBranch in the cli package.
+func findWorktreeForBranch(barePath, branch string) string {
+	wts, err := git.WorktreeList(barePath)
+	if err != nil {
+		return ""
+	}
+	for _, wt := range wts {
+		if wt.Bare {
+			continue
+		}
+		if wt.Branch == branch {
+			return wt.Path
+		}
+	}
+	return ""
 }
 
 // worktreeDisplayName returns a human-readable short name for a worktree.

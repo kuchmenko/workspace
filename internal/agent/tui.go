@@ -180,7 +180,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.String() == "y" && m.deleteItem != nil {
 			it := m.deleteItem
 			m.deleteItem = nil
-			if err := DeleteWorktree(it.parentProj.Path, it.worktree.Path, false); err != nil {
+			// Use the registry-aware variant so the [[branches]] entry
+			// is released alongside the worktree directory; otherwise
+			// this machine stays listed as owner with stale
+			// last_pushed_* and the reconciler keeps recreating
+			// branch-orphan after the on-disk worktree is gone.
+			projID := ""
+			if it.parentProj != nil {
+				projID = it.parentProj.ID
+			}
+			wsRoot := m.workspaceRootFor(it.parentProj)
+			if err := DeleteWorktreeWithRegistry(it.parentProj.Path, it.worktree.Path, false, wsRoot, projID, it.worktree.Branch); err != nil {
 				m.statusMsg = err.Error()
 				return m, nil
 			}

@@ -233,6 +233,58 @@ func TestWorktreeAdd_PreservesLocalCommitsWhenBranchAlsoOnOrigin(t *testing.T) {
 	}
 }
 
+// TestWorktreeAdd_ReRegistersExistingCheckout guards against the P2
+// Codex flagged: when the branch is already checked out in some other
+// worktree (legacy wt/<machine>/* dir, or a previous add whose
+// saveWorkspace step failed), `git worktree add` would refuse without
+// --force. The fix is a re-registration short-circuit that updates
+// metadata without trying to create a duplicate checkout.
+func TestWorktreeAdd_ReRegistersExistingCheckout(t *testing.T) {
+	root := setupTestWorkspace(t, "linux", "myapp", "main")
+	barePath := layout.BarePath(filepath.Join(root, "personal", "myapp"))
+
+	// Pre-create a worktree at a NON-canonical path (legacy wt/* style).
+	legacyPath := filepath.Join(root, "personal", "myapp-wt-linux-leg-foo")
+	testutil.RunGit(t, barePath, "worktree", "add", "-b", "feat/leg-foo", legacyPath, "main")
+
+	cmd := newWorktreeAddCmd()
+	cmd.SetArgs([]string{"myapp", "feat/leg-foo"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("re-registration should succeed, got: %v", err)
+	}
+
+	// No new worktree dir should appear at the canonical path.
+	canonical := filepath.Join(root, "personal", "myapp-wt-linux-feat-leg-foo")
+	if _, err := os.Stat(canonical); err == nil {
+		t.Errorf("re-registration should not create a duplicate worktree at %s", canonical)
+	}
+	// The existing worktree must still be there.
+	if _, err := os.Stat(legacyPath); err != nil {
+		t.Errorf("existing worktree was removed: %v", err)
+	}
+	// Metadata must be repaired.
+	reloaded, _ := config.Load(root)
+	rp := reloaded.Projects["myapp"]
+	meta := rp.LookupBranch("feat/leg-foo")
+	if meta == nil {
+		t.Fatal("re-registration did not write [[branches]] entry")
+	}
+	if !contains(meta.Machines, "linux") {
+		t.Errorf("machines did not include linux: %v", meta.Machines)
+	}
+}
+
+func contains(s []string, want string) bool {
+	for _, v := range s {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestWorktreeAdd_RejectsInvalidName(t *testing.T) {
 	setupTestWorkspace(t, "linux", "myapp", "main")
 	cmd := newWorktreeAddCmd()
