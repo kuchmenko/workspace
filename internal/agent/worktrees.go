@@ -26,24 +26,24 @@ type WorktreeResult struct {
 	Branch string
 }
 
-// CreateWorktree creates a new worktree for the given project. Mirrors
-// the logic of `ws worktree new` but callable from the TUI.
+// CreateWorktree creates a new worktree for `branch` in project p. The
+// branch name is taken from the user verbatim — no prefix injection,
+// no slug rewriting beyond what `git check-ref-format` accepts. If
+// `branch` already exists locally in the bare repo, the new worktree
+// attaches to it (the path that re-registers legacy wt/<machine>/*
+// branches under the new schema). Otherwise it's created from the
+// project's default branch.
 //
-// topic:        required — the worktree topic name (e.g. "fix-login")
-// customBranch: optional — overrides the default wt/<machine>/<topic>
-// autoPush:     whether to add the branch to daemon auto-push
-// CreateWorktree creates a new worktree for the given project.
+// On success the workspace.toml registry is updated: this machine is
+// claimed against the branch with ClaimBranch, last_active_* are set,
+// and on first claim CreatedBy/CreatedAt are recorded.
 //
-// When customBranch is set, the topic is IGNORED — the worktree directory
-// name is derived from the slugified branch name instead:
-//
-//	branch "feat/buddy" → dir "myapp-wt-linux-feat-buddy"
-//	branch "" + topic "buddy" → dir "myapp-wt-linux-buddy"  (default wt/<machine>/buddy)
-//
-// This matches the convention in CLAUDE.md: worktree dirs flatten
-// slashes to dashes, and the branch name is the source of truth when
-// explicitly provided.
-func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*WorktreeResult, error) {
+// wsRoot and projID are required for the workspace.toml update; pass
+// empty strings to skip persistence (best-effort fallback used by tests).
+func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult, error) {
+	if strings.TrimSpace(branch) == "" {
+		return nil, fmt.Errorf("branch name required")
+	}
 	barePath := layout.BarePath(p.Path)
 	if _, err := os.Stat(barePath); err != nil {
 		return nil, fmt.Errorf("project not migrated (no bare repo at %s)", barePath)
@@ -55,161 +55,110 @@ func CreateWorktree(p *Project, topic, customBranch string, autoPush bool) (*Wor
 		machine = mc.MachineName
 	}
 
-	var branch string
-	var pathTopic string // what goes into the worktree directory name
-	if customBranch != "" {
-		branch = customBranch
-		// Derive path topic from branch: feat/buddy → feat-buddy
-		pathTopic = layout.SlugifyBranch(customBranch)
-	} else {
-		branch = layout.BranchName(machine, topic)
-		pathTopic = topic
-	}
-
-	wtPath := layout.WorktreePath(p.Path, machine, pathTopic)
+	wtPath := layout.WorktreePathForBranch(p.Path, machine, branch)
 	if _, err := os.Stat(wtPath); err == nil {
 		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
 	}
+
 	if git.HasBranch(barePath, branch) {
-		return nil, fmt.Errorf("branch %s already exists", branch)
+		// Attach to existing local branch (covers re-registration of legacy
+		// wt/<machine>/* checkouts and branches fetched from origin).
+		if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
+			return nil, fmt.Errorf("git worktree add: %w", err)
+		}
+	} else {
+		base := p.DefaultBranch
+		if base == "" {
+			base = "main"
+		}
+		if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
+			return nil, fmt.Errorf("git worktree add: %w", err)
+		}
 	}
 
-	base := p.DefaultBranch
-	if base == "" {
-		base = "main"
-	}
-
-	if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
-		return nil, fmt.Errorf("git worktree add: %w", err)
-	}
-
-	_ = autoPush
-	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
-}
-
-
-// DeleteWorktree removes a worktree. Refuses if it's the main worktree.
-func DeleteWorktree(mainPath, wtPath string, force bool) error {
-	if wtPath == mainPath {
-		return fmt.Errorf("cannot delete main worktree")
-	}
-	barePath := layout.BarePath(mainPath)
-	return git.WorktreeRemove(barePath, wtPath, force)
-}
-
-// PromoteWorktree renames a wt/<machine>/<topic> branch to a
-// repository-native branch name (e.g. feat/fix-login) AND moves the
-// worktree directory to match, so the on-disk name reflects the new
-// branch.
-//
-// Steps (matching the CLI `ws worktree promote` flow):
-//  1. Move worktree directory: old-path → new-path (git worktree move)
-//  2. Rename branch: old-branch → new-branch (git branch -m)
-//  3. If branch rename fails, roll back the directory move.
-//  4. Update autopush in workspace.toml (release old, claim new).
-//  5. Delete old remote ref, push new branch (best-effort).
-//
-// wsRoot and projID are needed for step 4 (workspace.toml update).
-// Pass empty strings to skip autopush update.
-func PromoteWorktree(mainPath string, wt Worktree, newBranch, wsRoot, projID string) error {
-	if wt.IsMain {
-		return fmt.Errorf("cannot promote main worktree")
-	}
-	if newBranch == "" {
-		return fmt.Errorf("new branch name required")
-	}
-
-	barePath := layout.BarePath(mainPath)
-	if !git.HasBranch(barePath, wt.Branch) {
-		return fmt.Errorf("branch %s does not exist", wt.Branch)
-	}
-	if git.HasBranch(barePath, newBranch) {
-		return fmt.Errorf("branch %s already exists", newBranch)
-	}
-
-	mc, _ := config.LoadMachineConfig()
-	machine := "unknown"
-	if mc != nil && mc.MachineName != "" {
-		machine = mc.MachineName
-	}
-
-	// New directory path derived from slugified new branch name.
-	newPath := filepath.Join(
-		filepath.Dir(mainPath),
-		layout.WorktreeDirName(filepath.Base(mainPath), machine, layout.SlugifyBranch(newBranch)),
-	)
-	if _, err := os.Stat(newPath); err == nil {
-		return fmt.Errorf("target path already exists: %s", newPath)
-	}
-
-	// Step 1: move worktree directory.
-	if err := git.WorktreeMove(barePath, wt.Path, newPath); err != nil {
-		return fmt.Errorf("move worktree: %w", err)
-	}
-
-	// Step 2: rename branch inside the new worktree path (same as CLI
-	// promote). On failure, roll back the move.
-	if err := git.BranchRename(newPath, wt.Branch, newBranch); err != nil {
-		// Roll back directory move.
-		_ = git.WorktreeMove(barePath, newPath, wt.Path)
-		return fmt.Errorf("rename branch: %w", err)
-	}
-
-	// Step 3: update autopush in workspace.toml.
-	// Claim the new branch first — if it's owned by another machine the
-	// call returns an error and we skip the release so we never persist a
-	// half-transferred state.
+	// Persist branch metadata. Best-effort: a failure here leaves the
+	// worktree on disk; the user can re-run `ws worktree add` to fix the
+	// registry, or the next reconciler tick will note the branch is
+	// missing from [[branches]] and silently no-op (legacy-friendly path).
 	if wsRoot != "" && projID != "" {
 		if ws, err := config.Load(wsRoot); err == nil {
 			if proj, ok := ws.Projects[projID]; ok {
-				if _, claimErr := proj.ClaimAutopushBranch(newBranch, machine, false); claimErr == nil {
-					proj.ReleaseAutopushBranch(wt.Branch)
-					ws.Projects[projID] = proj
-					if saveErr := config.Save(wsRoot, ws); saveErr != nil {
-						return fmt.Errorf("autopush saved failed: %w", saveErr)
-					}
+				proj.ClaimBranch(branch, machine)
+				ws.Projects[projID] = proj
+				if err := config.Save(wsRoot, ws); err != nil {
+					return nil, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
 				}
 			}
 		}
 	}
 
-	// Step 4: push the renamed branch first, then delete the old remote
-	// ref. If push fails, keep the old ref so there's always at least one
-	// reachable branch on origin.
-	if err := git.PushBranch(barePath, newBranch); err == nil {
-		_ = git.DeleteRemoteBranch(barePath, wt.Branch)
-	}
+	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
+}
 
+// DeleteWorktree removes a worktree. Refuses if it's the main worktree.
+// The workspace.toml [[branches]] entry is updated when wsRoot/projID
+// are non-empty: this machine is released from the branch's machines
+// slice; an empty machines slice causes the entry to be GC'd on Save.
+func DeleteWorktree(mainPath, wtPath string, force bool) error {
+	return DeleteWorktreeWithRegistry(mainPath, wtPath, force, "", "", "")
+}
+
+// DeleteWorktreeWithRegistry is the registry-aware variant. Pass empty
+// strings for wsRoot/projID/branch to skip the workspace.toml update.
+func DeleteWorktreeWithRegistry(mainPath, wtPath string, force bool, wsRoot, projID, branch string) error {
+	if wtPath == mainPath {
+		return fmt.Errorf("cannot delete main worktree")
+	}
+	barePath := layout.BarePath(mainPath)
+	if err := git.WorktreeRemove(barePath, wtPath, force); err != nil {
+		return err
+	}
+	if wsRoot == "" || projID == "" || branch == "" {
+		return nil
+	}
+	mc, _ := config.LoadMachineConfig()
+	machine := "unknown"
+	if mc != nil && mc.MachineName != "" {
+		machine = mc.MachineName
+	}
+	ws, err := config.Load(wsRoot)
+	if err != nil {
+		return nil // best-effort
+	}
+	proj, ok := ws.Projects[projID]
+	if !ok {
+		return nil
+	}
+	if changed, _ := proj.ReleaseBranch(branch, machine); changed {
+		ws.Projects[projID] = proj
+		_ = config.Save(wsRoot, ws)
+	}
 	return nil
 }
 
 // worktreeDisplayName returns a human-readable short name for a worktree.
-// For main it's "main". For wt/<machine>/<topic> it extracts the topic.
-// For custom branches it shows the branch. For long directory-derived
-// names it extracts the meaningful suffix.
+// For main it's "main". For wt/<machine>/<topic> (legacy) it extracts the
+// topic. For everything else it shows the branch name (the new default).
 func worktreeDisplayName(wt Worktree) string {
 	if wt.IsMain {
 		return "main"
 	}
-	// Try to extract topic from wt/<machine>/<topic> branch name.
 	if strings.HasPrefix(wt.Branch, "wt/") {
 		parts := strings.SplitN(wt.Branch, "/", 3)
 		if len(parts) == 3 {
-			return parts[2] // topic
+			return parts[2]
 		}
 	}
-	// Custom branch — show as-is.
 	if wt.Branch != "" {
 		return wt.Branch
 	}
-	// Fallback to directory base name.
 	return filepath.Base(wt.Path)
 }
 
 // WorktreeCache is a lazy, map-based cache for worktree listings.
 // Worktrees are loaded from git on first access for a given project
 // and served from memory on subsequent accesses. Invalidate after
-// create/delete/promote operations.
+// create/delete operations.
 type WorktreeCache struct {
 	data map[string][]Worktree // mainPath → worktrees
 }
