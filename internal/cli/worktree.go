@@ -51,6 +51,27 @@ func resolveProject(name string) (config.Project, string, string, error) {
 	return proj, mainPath, barePath, nil
 }
 
+// locateWorktreeForBranch finds the existing worktree directory whose
+// HEAD points at `branch`. Returns "" when no such worktree exists.
+// Used by `ws worktree rm` and `ws worktree push` to find the path
+// independent of the directory-naming heuristic used by `ws worktree
+// add` (which may have applied a `-<sha8>` collision suffix).
+func locateWorktreeForBranch(barePath, branch string) string {
+	wts, err := git.WorktreeList(barePath)
+	if err != nil {
+		return ""
+	}
+	for _, wt := range wts {
+		if wt.Bare {
+			continue
+		}
+		if wt.Branch == branch {
+			return wt.Path
+		}
+	}
+	return ""
+}
+
 // validateBranchName asks git itself whether a branch name is valid.
 // Centralized so add/push/list all reject malformed names with the
 // canonical message instead of letting later git operations fail with
@@ -335,13 +356,13 @@ func newWorktreeRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, mainPath, barePath, err := resolveProject(projectName)
+			_, _, barePath, err := resolveProject(projectName)
 			if err != nil {
 				return err
 			}
-			wtPath := layout.WorktreePathForBranch(mainPath, machine, branch)
-			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-				return fmt.Errorf("worktree not found: %s", wtPath)
+			wtPath := locateWorktreeForBranch(barePath, branch)
+			if wtPath == "" {
+				return fmt.Errorf("no worktree on branch %s in project %s", branch, projectName)
 			}
 
 			if !force {
@@ -397,7 +418,7 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			if err != nil {
 				return err
 			}
-			proj, mainPath, _, err := resolveProject(projectName)
+			proj, _, barePath, err := resolveProject(projectName)
 			if err != nil {
 				return err
 			}
@@ -410,9 +431,9 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 					branch, projectName, branch)
 			}
 
-			wtPath := layout.WorktreePathForBranch(mainPath, machine, branch)
-			if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-				return fmt.Errorf("worktree not found: %s", wtPath)
+			wtPath := locateWorktreeForBranch(barePath, branch)
+			if wtPath == "" {
+				return fmt.Errorf("no worktree on branch %s; create one first with ws worktree add %s %s", branch, projectName, branch)
 			}
 			if !forceDirty && git.IsDirty(wtPath) {
 				return fmt.Errorf("worktree %s is dirty; commit or stash, or rerun with --force-dirty", wtPath)
