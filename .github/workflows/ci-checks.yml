@@ -78,12 +78,12 @@ jobs:
       - name: golangci-lint (SARIF + console)
         # v8 of the action defaults to golangci-lint v2 binaries, which are
         # built with Go 1.25+ and therefore can typecheck a Go 1.26 module
-        # (v1.64.x is built with Go 1.24 and refuses). Output flags use v2
-        # syntax: --output.formats=text:stdout,sarif:<path>.
+        # (v1.64.x is built with Go 1.24 and refuses). Output flags use the
+        # v2 per-format path syntax: --output.<format>.path=...
         uses: golangci/golangci-lint-action@v8
         with:
           version: latest
-          args: --timeout=5m --output.formats=text:stdout,sarif:golangci-lint.sarif
+          args: --timeout=5m --output.text.path=stdout --output.sarif.path=golangci-lint.sarif
       - name: Upload SARIF to GitHub Code Scanning
         if: success() || failure()
         uses: github/codeql-action/upload-sarif@v3
