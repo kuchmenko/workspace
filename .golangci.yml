@@ -1,0 +1,135 @@
+# golangci-lint configuration. Tier-1 quality gate, mirrored from
+# tkach's clippy.toml + ci-checks.yml combo.
+#
+# Equivalents:
+#   tkach cognitive_complexity_threshold = 7  → gocyclo min-complexity 15
+#                                               + funlen lines 80 (Go is more verbose than Rust)
+#   tkach too_many_lines_threshold = 200      → funlen lines 200
+#   tkach `set -eo pipefail`-strict CI         → fail-fast on every linter
+#
+# Adjust thresholds with care — they are the project's current pressure
+# point against complexity drift, not a starting cap.
+
+run:
+  timeout: 5m
+  # Pin one minor below go.mod (currently go.mod = 1.26, golangci-lint
+  # tracks one stable release behind). Lints don't care about the
+  # exact stdlib minor; this is just feature-availability gating.
+  go: "1.25"
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  disable-all: true
+  enable:
+    # Default-recommended set
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+    # Tier-1 additions
+    - gosec        # security scanner
+    - gocyclo      # cyclomatic complexity
+    - funlen       # function length
+    - gocritic     # opinionated correctness/style/perf checks
+    - revive       # successor to golint
+    - misspell     # spelling
+    - unconvert    # unnecessary type conversions
+    - prealloc     # slice preallocation hints
+    - bodyclose    # http response body close
+    - rowserrcheck # database/sql Rows.Err()
+    - sqlclosecheck
+    - durationcheck
+    - errorlint    # errors.As / errors.Is hygiene
+    - exhaustive   # switch/map exhaustiveness on enums
+    - gocheckcompilerdirectives
+    - nilerr       # return nil even though err is non-nil
+    - noctx        # http.Request without Context
+    - predeclared  # shadowing predeclared identifiers
+    - reassign     # reassigning package-level vars
+    - thelper      # t.Helper() in test helpers
+    - tparallel    # t.Parallel() correctness
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+
+  funlen:
+    lines: 200
+    statements: 80
+
+  gosec:
+    excludes:
+      # G104 (errcheck duplicate) — already handled by errcheck.
+      - G104
+
+  govet:
+    enable-all: true
+    disable:
+      # fieldalignment is style not correctness; surfaces a lot of
+      # false-positive "fix this for 8 bytes" noise on small structs.
+      - fieldalignment
+
+  revive:
+    rules:
+      - name: var-declaration
+      - name: package-comments
+      - name: dot-imports
+      - name: blank-imports
+      - name: context-as-argument
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: indent-error-flow
+      - name: superfluous-else
+      - name: unreachable-code
+      - name: redefines-builtin-id
+      - name: unused-parameter
+        disabled: true # noisy on cobra command callbacks
+
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  exhaustive:
+    default-signifies-exhaustive: true
+
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    # Test helpers legitimately have long table-driven setups.
+    - path: _test\.go
+      linters:
+        - funlen
+        - gocyclo
+        - gosec       # G404 random in tests, etc.
+        - errcheck    # close/cleanup paths in tests
+        - gocritic
+    # Generated agent docs JSON / cobra glue is naturally repetitive.
+    - path: internal/docs/
+      linters:
+        - funlen
+    # Bubble Tea reducer-style update funcs are switch-heavy by design.
+    - path: internal/(agent|aliasmgr|setup|migrate)/.*tui.*\.go
+      linters:
+        - gocyclo
+        - funlen
+        - gocognit
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -7,9 +7,23 @@ on:
 
 permissions:
   contents: write
+  security-events: write
+  actions: read
 
 jobs:
+  # Re-run the full quality gate as a publish gate. release-please's
+  # tag-push lands directly on main without a PR cycle, so this is the
+  # last line of defense against shipping a bad cut.
+  checks:
+    uses: ./.github/workflows/ci-checks.yml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    secrets: inherit
+
   build:
+    needs: checks
     runs-on: ubuntu-latest
     strategy:
       matrix:
