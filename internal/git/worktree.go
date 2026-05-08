@@ -116,30 +116,6 @@ func WorktreeMove(repoPath, oldPath, newPath string) error {
 	return nil
 }
 
-// BranchRename renames a local branch. Wraps `git branch -m`. The
-// rename preserves reflog. Fails if the new name already exists.
-func BranchRename(repoPath, oldName, newName string) error {
-	cmd := exec.Command("git", "-C", repoPath, "branch", "-m", oldName, newName)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git branch -m %s %s in %s: %s", oldName, newName, repoPath, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// DeleteRemoteBranch deletes a branch on origin via `git push origin
-// :<ref>`. Used by `ws worktree promote` to remove the stale
-// wt/<machine>/<topic> ref after renaming. Non-fatal for callers when
-// the ref does not exist remotely — they should log and continue.
-func DeleteRemoteBranch(repoPath, branch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "push", "origin", "--delete", branch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git push origin --delete %s: %s", branch, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 // WorktreeList parses `git worktree list --porcelain` output. Works on either
 // a bare repo or a regular checkout — git resolves to the same shared list.
 func WorktreeList(repoPath string) ([]Worktree, error) {
