@@ -245,6 +245,33 @@ func TestWorktreeAdd_RejectsInvalidName(t *testing.T) {
 	}
 }
 
+// TestWorktreeRm_RefusesMainWorktreeByBranch guards against the P1
+// Codex flagged after the locateWorktreeForBranch refactor: when the
+// user passes the project's default branch (or any branch that happens
+// to be checked out at proj.path), the lookup returns the main worktree
+// and the rm path no longer carried the mainPath guard. Without this
+// check, `ws worktree rm myapp main` deletes the primary checkout.
+func TestWorktreeRm_RefusesMainWorktreeByBranch(t *testing.T) {
+	root := setupTestWorkspace(t, "linux", "myapp", "main")
+
+	cmd := newWorktreeRmCmd()
+	cmd.SetArgs([]string{"myapp", "main"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("ws worktree rm myapp main should fail; the main worktree must not be deletable by branch")
+	}
+	if !strings.Contains(err.Error(), "refusing to remove main worktree") {
+		t.Errorf("error should explain the refusal, got: %v", err)
+	}
+	// Main worktree must still exist on disk.
+	mainPath := filepath.Join(root, "personal", "myapp")
+	if _, err := os.Stat(mainPath); err != nil {
+		t.Errorf("main worktree was removed despite the guard: %v", err)
+	}
+}
+
 func TestWorktreePush_RefusesUnknownBranch(t *testing.T) {
 	setupTestWorkspace(t, "linux", "myapp", "main")
 
