@@ -357,25 +357,16 @@ func (r *Runner) checkIndexLock(name, barePath string) []Finding {
 			Message:  fmt.Sprintf("cannot enumerate worktrees: %v", err),
 		}}
 	}
-	var out []Finding
-	var locked []string
-	for _, wt := range wts {
-		if wt.Bare {
-			continue
-		}
-		if git.HasIndexLock(wt.Path) {
-			locked = append(locked, wt.Path)
-		}
-	}
+	locked := lockedWorktrees(wts)
 	if len(locked) == 0 {
-		out = append(out, Finding{
+		return []Finding{{
 			Scope:    name,
 			Check:    "index-lock",
 			Severity: OK,
 			Message:  "no stale index locks",
-		})
-		return out
+		}}
 	}
+	out := make([]Finding, 0, len(locked))
 	for _, p := range locked {
 		out = append(out, Finding{
 			Scope:    name,
@@ -384,6 +375,22 @@ func (r *Runner) checkIndexLock(name, barePath string) []Finding {
 			Message:  fmt.Sprintf("index.lock present at %s", p),
 			FixHint:  "verify no git process is running there, then remove .git/index.lock by hand",
 		})
+	}
+	return out
+}
+
+// lockedWorktrees returns the absolute paths of non-bare worktrees
+// whose index.lock is present. Hides the bare-skip + path collection
+// loop from checkIndexLock.
+func lockedWorktrees(wts []git.Worktree) []string {
+	var out []string
+	for _, wt := range wts {
+		if wt.Bare {
+			continue
+		}
+		if git.HasIndexLock(wt.Path) {
+			out = append(out, wt.Path)
+		}
 	}
 	return out
 }

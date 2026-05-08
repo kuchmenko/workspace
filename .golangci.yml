@@ -32,7 +32,9 @@ linters:
 
     # Tier-1 additions that earn their keep on this codebase
     - gosec        # security; with explicit excludes for inherent-CLI patterns
-    - gocyclo      # cyclomatic complexity, raised threshold + path excludes
+    - gocognit     # cognitive complexity (mirrors tkach's clippy threshold)
+    - gocyclo      # cyclomatic complexity (secondary signal — different metric)
+    - funlen       # function length (mirrors tkach's too-many-lines)
     - bodyclose    # http response body close
     - durationcheck
     - errorlint    # errors.As / errors.Is hygiene
@@ -62,10 +64,23 @@ linters:
     #               errors; case-by-case audit deferred.
 
   settings:
+    gocognit:
+      # tkach's clippy.toml: cognitive-complexity-threshold = 7. Same
+      # metric as Sonar's cognitive complexity — penalizes nested control
+      # flow more heavily than cyclomatic. 7 is strict; offending files
+      # are path-excluded below (Bubble Tea reducers, MigrateProject,
+      # syncProject) where the switch-on-state pattern is the design.
+      min-complexity: 7
+
     gocyclo:
-      # Default is 30; lower to keep complexity drift in check while
-      # tolerating today's TUI-heavy update funcs (path-excluded below).
-      min-complexity: 25
+      # Cyclomatic complexity (decision-point count) — a secondary signal
+      # since gocognit is the primary cognitive-complexity check.
+      min-complexity: 20
+
+    funlen:
+      # tkach's clippy.toml: too-many-lines-threshold = 200.
+      lines: 200
+      statements: 80
 
     gosec:
       excludes:
@@ -159,6 +174,8 @@ linters:
       - path: _test\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
           - gosec
           - errcheck
           - noctx
@@ -166,37 +183,64 @@ linters:
       - path: internal/docs/
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       # Bubble Tea reducer-style update funcs are switch-heavy by
       # design. Path glob covers every TUI file: agent, aliasmgr,
       # add, create, setup, migrate, bootstrap.
       - path: internal/(agent|aliasmgr|add|create|setup|migrate)/.*\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       - path: internal/cli/.*tui.*\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       - path: internal/cli/(bootstrap|migrate_tui)\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       # MigrateProject is a 280-line orchestration that fans out to
       # the strategy decisions for dirty / stash / detached HEAD; the
       # design is deliberate. Reconciler.syncProject likewise routes
       # every project state class to its handler in a single switch.
       # Both have inline comments explaining each case; refactoring
-      # for cyclomatic complexity alone would obscure the logic.
+      # for cognitive complexity alone would obscure the logic.
       - path: internal/migrate/migrate\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       - path: internal/daemon/reconciler\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       # Worktree add command resolves three input cases (existing
       # worktree / existing branch / fresh) plus collision suffix and
       # remote upstream wiring; the switch is the spec.
       - path: internal/cli/worktree\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
       # Long cobra command setup with many flags.
       - path: internal/cli/(migrate|root)\.go
         linters:
           - gocyclo
+          - gocognit
+          - funlen
+      # Cobra command-builder funcs (newXxxCmd) wrap argument
+      # validation + RunE closures + flag wiring. Cognitive cost
+      # comes from the framework shape, not from logic drift.
+      # gocyclo / funlen / gocognit on cli/*.go are too punitive
+      # for boilerplate that the framework dictates.
+      - path: internal/cli/.*\.go
+        source: '^func new\w+Cmd\('
+        linters:
+          - gocyclo
+          - gocognit
+          - funlen
