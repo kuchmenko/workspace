@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 )
@@ -19,6 +20,7 @@ const (
 	viewFlash                       // flash search with jump labels
 	viewPromptInput                 // optional prompt input before launching claude
 	viewWhichKey                    // which-key action panel (? or space)
+	viewEditProject                 // edit project group/category
 )
 
 // Nerd Font icons.
@@ -78,6 +80,12 @@ type Model struct {
 	wtBranch   string // user-typed branch name (no prefix injection)
 	wtNoLaunch bool   // true when "create only", false when "create + launch"
 	wtField    int    // 0=branch, 1=confirm
+
+	// Edit-project form state.
+	editGroup    string
+	editCategory config.Category
+	editField    int // 0=group, 1=category, 2=save
+	editErr      string
 
 	// Prompt input state (optional prompt before launch).
 	pendingLaunch *LaunchRequest // set before entering prompt input
@@ -156,6 +164,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == viewNewWorktree {
 			return m.updateNewWorktree(msg)
+		}
+		if m.mode == viewEditProject {
+			return m.updateEditProject(msg)
 		}
 		return m.updateList(msg)
 	}
@@ -246,6 +257,21 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.wtField = 0
 			m.popupProj = item.project
 			m.mode = viewNewWorktree
+			return m, nil
+		}
+
+	case "e":
+		// Edit project metadata (group / category) — only on projects.
+		if item != nil && item.kind == KindProject && item.project != nil {
+			m.popupProj = item.project
+			m.editGroup = item.project.Group
+			m.editCategory = config.Category(item.project.Category)
+			if m.editCategory == "" {
+				m.editCategory = config.CategoryPersonal
+			}
+			m.editField = 0
+			m.editErr = ""
+			m.mode = viewEditProject
 			return m, nil
 		}
 
@@ -388,6 +414,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 			{"\u23ce", "open claude"},
 			{"p", "+prompt"},
 			{"w", "worktree \u203a"},
+			{"e", "edit"},
 			{"l", "shell"},
 			{"tab", "expand"},
 			{"", ""},
@@ -463,6 +490,9 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewList
 		return m.updateList(msg)
 	case "m":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "e":
 		m.mode = viewList
 		return m.updateList(msg)
 	case "tab":
@@ -870,7 +900,7 @@ func (m *Model) footerHints() (actions, nav string) {
 	case KindGroup:
 		actions = "\u23ce:claude  p:+prompt  l:shell"
 	case KindProject:
-		actions = "\u23ce:claude  p:+prompt  w:worktree  l:shell"
+		actions = "\u23ce:claude  p:+prompt  w:worktree  e:edit  l:shell"
 	case KindWorktree:
 		if item.worktree != nil && !item.worktree.IsMain {
 			actions = "\u23ce:claude  p:+prompt  l:shell  m:promote  d:delete"
@@ -991,6 +1021,9 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewNewWorktree {
 		return m.viewNewWorktree()
+	}
+	if m.mode == viewEditProject {
+		return m.viewEditProject()
 	}
 	if m.mode == viewWhichKey {
 		return m.viewWhichKey()
