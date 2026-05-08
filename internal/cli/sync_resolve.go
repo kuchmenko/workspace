@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 // openConflictStore is a tiny shim around conflict.Open so the cli package
@@ -38,8 +40,12 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 	switch c.Kind {
 	case conflict.KindTOMLMerge, conflict.KindTOMLPushFailed:
 		return resolveTOMLConflict(c)
-	case conflict.KindBranchDivergence, conflict.KindMainDivergence:
+	case conflict.KindMainDivergence:
 		return resolveProjectConflict(c)
+	case conflict.KindBranchDuplicate:
+		return resolveBranchDuplicate(c)
+	case conflict.KindBranchOrphan:
+		return resolveBranchOrphan(c)
 	case conflict.KindNeedsMigration:
 		fmt.Println("This project needs migration. Run:")
 		fmt.Printf("  ws migrate %s\n", c.Project)
@@ -50,6 +56,124 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 		fmt.Println("Unknown conflict kind. Press enter to continue.")
 		_ = readLine()
 		return false, nil
+	}
+}
+
+// resolveBranchDuplicate handles two [[branches]] entries with the same
+// name in the same project — typically caused by two machines adding
+// the same branch concurrently. Offers to open workspace.toml in $EDITOR
+// for manual reconciliation; auto-merge is intentionally not offered
+// because correctness depends on knowing which CreatedBy/CreatedAt to
+// trust, which the tool cannot decide.
+func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
+	for {
+		fmt.Println("Options:")
+		fmt.Println("  (e) open workspace.toml in $EDITOR — pick which entry to keep")
+		fmt.Println("  (k) skip — leave for later")
+		fmt.Print("> ")
+		choice := strings.TrimSpace(readLine())
+		switch choice {
+		case "e":
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+			if err := runInTerm(c.Workspace, editor, "workspace.toml"); err != nil {
+				return false, err
+			}
+			fmt.Println("returned from editor. Mark conflict resolved? (y/N)")
+			if strings.EqualFold(strings.TrimSpace(readLine()), "y") {
+				return true, nil
+			}
+		case "k", "":
+			return false, nil
+		}
+	}
+}
+
+// resolveBranchOrphan handles a registered branch whose origin ref has
+// disappeared (typical: PR merged with auto-delete-branch on GitHub).
+// Two clean exits: drop the entry+worktree (the merged-PR case) or
+// keep the local branch (rare; the user wants to preserve unmerged work).
+func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
+	// Determine whether THIS machine has a local worktree on the orphan.
+	// Two distinct scenarios converge into "drop":
+	//   - We have a worktree → user must run `ws worktree rm` themselves
+	//     to remove it from disk; then we still drop the [[branches]]
+	//     entry to stop the reconciler re-recording the orphan.
+	//   - We never had a worktree (the [[branches]] entry arrived via
+	//     workspace.toml sync from another machine) → there's nothing
+	//     on disk to remove; just drop the registry entry.
+	wtPath := ""
+	if ws != nil && c.Project != "" {
+		if proj, ok := ws.Projects[c.Project]; ok {
+			barePath := layout.BarePath(filepath.Join(c.Workspace, proj.Path))
+			wtPath = locateWorktreeForBranch(barePath, c.Branch)
+		}
+	}
+
+	for {
+		fmt.Println("Options:")
+		if wtPath != "" {
+			fmt.Println("  (d) drop [[branches]] entry (run ws worktree rm first)")
+		} else {
+			fmt.Println("  (d) drop [[branches]] entry — no local worktree on this machine")
+		}
+		fmt.Println("  (k) keep local — clear last_pushed_* so the orphan check stops firing")
+		fmt.Println("  (s) skip — leave for later")
+		fmt.Print("> ")
+		choice := strings.TrimSpace(readLine())
+		switch choice {
+		case "d":
+			if wtPath != "" {
+				fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
+				fmt.Println("Press enter once removed (or 's' to skip).")
+				ack := strings.TrimSpace(readLine())
+				if ack == "s" {
+					return false, nil
+				}
+			}
+			// Remove the [[branches]] entry directly so the next
+			// reconciler tick has nothing to evaluate against the
+			// missing origin ref. Works whether or not this machine
+			// had a worktree.
+			if ws != nil && c.Project != "" && c.Branch != "" {
+				proj := ws.Projects[c.Project]
+				if proj.RemoveBranch(c.Branch) {
+					ws.Projects[c.Project] = proj
+					if err := saveWorkspace(); err != nil {
+						fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+						return false, nil
+					}
+				}
+			}
+			return true, nil
+		case "k":
+			// Persistence: clearing the conflict store entry alone is
+			// not enough — the reconciler keys orphan detection off
+			// LastPushedAt, so the next tick would re-record the same
+			// orphan. Clearing the push fields tells the reconciler
+			// "this branch is intentionally local-only from now on";
+			// the next ws worktree push reinstates them and normal
+			// orphan detection resumes.
+			if ws != nil && c.Project != "" && c.Branch != "" {
+				proj := ws.Projects[c.Project]
+				if meta := proj.LookupBranch(c.Branch); meta != nil {
+					if meta.LastPushedAt != "" || meta.LastPushedMachine != "" {
+						meta.LastPushedAt = ""
+						meta.LastPushedMachine = ""
+						ws.Projects[c.Project] = proj
+						if err := saveWorkspace(); err != nil {
+							fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+							return false, nil
+						}
+					}
+				}
+			}
+			return true, nil
+		case "s", "":
+			return false, nil
+		}
 	}
 }
 

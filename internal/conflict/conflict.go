@@ -4,9 +4,6 @@
 // inspect them via `ws sync resolve`. The reconciler is the only writer; the
 // resolve CLI is the only reader/mutator. There is no IPC between them — they
 // coordinate via the file alone, with a best-effort O_EXCL lock.
-//
-// Phase 4 ships the recording side. Phase 5 adds the resolve TUI and
-// notify-send wiring.
 package conflict
 
 import (
@@ -24,14 +21,15 @@ import (
 type Kind string
 
 const (
-	KindTOMLMerge        Kind = "toml-merge"        // workspace.toml rebase failed
-	KindTOMLPushFailed   Kind = "toml-push-failed"  // toml push rejected and pull-rebase did not help
-	KindBranchDivergence Kind = "branch-divergence" // a wt/<machine>/* branch diverged from origin
-	KindMainDivergence   Kind = "main-divergence"   // main worktree cannot fast-forward
-	KindNeedsMigration   Kind = "needs-migration"   // project on disk is plain checkout, not yet migrated
-	KindNeedsBootstrap   Kind = "needs-bootstrap"   // missing project couldn't be auto-cloned (default branch ambiguous)
-	KindPathBlocked      Kind = "path-blocked"      // non-repo files at project path; can't bootstrap
-	KindCloneFailed      Kind = "clone-failed"      // git clone of a missing project failed (network/auth/etc)
+	KindTOMLMerge       Kind = "toml-merge"       // workspace.toml rebase failed
+	KindTOMLPushFailed  Kind = "toml-push-failed" // toml push rejected and pull-rebase did not help
+	KindMainDivergence  Kind = "main-divergence"  // main worktree cannot fast-forward
+	KindNeedsMigration  Kind = "needs-migration"  // project on disk is plain checkout, not yet migrated
+	KindNeedsBootstrap  Kind = "needs-bootstrap"  // missing project couldn't be auto-cloned (default branch ambiguous)
+	KindPathBlocked     Kind = "path-blocked"     // non-repo files at project path; can't bootstrap
+	KindCloneFailed     Kind = "clone-failed"     // git clone of a missing project failed (network/auth/etc)
+	KindBranchDuplicate Kind = "branch-duplicate" // two [[branches]] entries share the same name in one project
+	KindBranchOrphan    Kind = "branch-orphan"    // [[branches]] entry's published branch was deleted on origin
 )
 
 // Conflict is one row in the persisted store.
