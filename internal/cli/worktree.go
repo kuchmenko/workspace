@@ -189,8 +189,16 @@ EXAMPLES
 			}
 
 			// Update the registry: claim this machine against the branch.
+			// When we attached to a branch that was already on origin
+			// ("fetched" path), also mark it as pushed — the branch was
+			// observed on origin at this exact moment, so the orphan
+			// detector should treat it as published from now on.
 			p := ws.Projects[projectName]
-			if changed, _ := p.ClaimBranch(branch, machine); changed {
+			changed, _ := p.ClaimBranch(branch, machine)
+			if source == "fetched" && p.MarkPushed(branch, machine, time.Now()) {
+				changed = true
+			}
+			if changed {
 				ws.Projects[projectName] = p
 				if err := saveWorkspace(); err != nil {
 					return fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
@@ -446,7 +454,7 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			_ = git.SetBranchUpstream(wtPath, branch, "origin")
 
 			p := ws.Projects[projectName]
-			if p.TouchActive(branch, machine, time.Now()) {
+			if p.MarkPushed(branch, machine, time.Now()) {
 				ws.Projects[projectName] = p
 				if err := saveWorkspace(); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: push succeeded but workspace.toml save failed: %v\n", err)
@@ -454,8 +462,8 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			}
 			meta := p.LookupBranch(branch)
 			if meta != nil {
-				fmt.Printf("updated workspace.toml: last_active_machine=%s, last_active_at=%s\n",
-					meta.LastActiveMachine, meta.LastActiveAt)
+				fmt.Printf("updated workspace.toml: last_pushed_machine=%s, last_pushed_at=%s\n",
+					meta.LastPushedMachine, meta.LastPushedAt)
 			}
 			return nil
 		},

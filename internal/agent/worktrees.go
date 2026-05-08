@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -60,12 +61,17 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
 	}
 
+	attachedToRemote := false
 	if git.HasBranch(barePath, branch) {
 		// Attach to existing local branch (covers re-registration of legacy
 		// wt/<machine>/* checkouts and branches fetched from origin).
 		if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
 			return nil, fmt.Errorf("git worktree add: %w", err)
 		}
+		// If the branch is also on origin, this attach amounts to "I just
+		// observed it as published" — let the orphan detector treat it
+		// as such.
+		attachedToRemote = git.HasRemoteBranch(barePath, "origin", branch)
 	} else {
 		base := p.DefaultBranch
 		if base == "" {
@@ -84,6 +90,9 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 		if ws, err := config.Load(wsRoot); err == nil {
 			if proj, ok := ws.Projects[projID]; ok {
 				proj.ClaimBranch(branch, machine)
+				if attachedToRemote {
+					proj.MarkPushed(branch, machine, time.Now())
+				}
 				ws.Projects[projID] = proj
 				if err := config.Save(wsRoot, ws); err != nil {
 					return nil, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
