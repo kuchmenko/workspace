@@ -65,25 +65,34 @@ func (w *Watcher) Run(quit <-chan struct{}) {
 		<-quit
 		return
 	}
-
 	for {
-		select {
-		case <-quit:
+		if !w.dispatchOne(quit) {
 			return
-		case event, ok := <-w.fsw.Events:
-			if !ok {
-				return
-			}
-			if event.Op&fsnotify.Create == 0 {
-				continue
-			}
-			w.handleCreate(event.Name)
-		case err, ok := <-w.fsw.Errors:
-			if !ok {
-				return
-			}
-			w.logger.Printf("watcher: error: %v", err)
 		}
+	}
+}
+
+// dispatchOne reads one event from the watcher and dispatches it.
+// Returns false to signal "stop the Run loop" (quit closed or one of
+// the fsnotify channels closed); true to keep going.
+func (w *Watcher) dispatchOne(quit <-chan struct{}) bool {
+	select {
+	case <-quit:
+		return false
+	case event, ok := <-w.fsw.Events:
+		if !ok {
+			return false
+		}
+		if event.Op&fsnotify.Create != 0 {
+			w.handleCreate(event.Name)
+		}
+		return true
+	case err, ok := <-w.fsw.Errors:
+		if !ok {
+			return false
+		}
+		w.logger.Printf("watcher: error: %v", err)
+		return true
 	}
 }
 
