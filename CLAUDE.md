@@ -149,11 +149,13 @@ the configured interval, plus on `config_changed` IPC notifications) it:
      - **Sibling worktrees on an unregistered branch** (legacy
        `wt/<machine>/*` checkouts that pre-date the redesign): no-op.
        The user can re-register via `ws worktree add <project> <branch>`.
-   - For every `[[branches]]` entry whose `last_active_at` is set,
+   - For every `[[branches]]` entry whose `last_pushed_at` is set,
      check `refs/remotes/origin/<name>` post-fetch. Missing → record
      `branch-orphan` (PR-merge auto-delete is the typical cause; user
      resolves via `ws sync resolve`). Re-appearance → clears the
-     conflict on the next tick.
+     conflict on the next tick. Branches with empty `last_pushed_at`
+     are local-only (created via `ws worktree add`, never pushed)
+     and are intentionally skipped — origin's missing ref is expected.
    - `ws.Validate()` runs after `config.Load` and emits
      `branch-duplicate` for any project that has two `[[branches]]`
      entries sharing the same `name` (typical race: two machines did
@@ -298,6 +300,8 @@ group          = "..."              # optional grouping
   machines            = ["linux", "archlinux"]   # who currently has a worktree
   last_active_machine = "linux"                  # last to push or commit
   last_active_at      = "2026-05-08T12:00:00Z"
+  last_pushed_machine = "linux"                  # last to ws worktree push
+  last_pushed_at      = "2026-05-07T16:30:00Z"   # absent until first push
   created_by          = "linux"                  # original creator
   created_at          = "2026-04-08T13:59:04Z"
 ```
@@ -333,7 +337,7 @@ removed on the next `config.Save`. No manual edit is required.
 | `ws worktree add <project> <branch> [--from <base>]` | Create or attach a worktree for the literal `<branch>`. Auto-detects existing remote (fetches and checks out) and existing local-only branches (attaches; covers legacy `wt/<machine>/*` re-registration). Records this machine in `[[branches]].machines` and stamps `last_active_*`. Slug collisions get `-<sha8>` deterministic suffix. |
 | `ws worktree list [project]` | Table: PROJECT / WORKTREE / BRANCH / STATE. STATE includes clean/dirty, ahead/behind, ownership (`main`, `mine`, `shared with <machines>`, `remote`, `legacy-wt`), and `last: <machine> <date>` from the registry. |
 | `ws worktree rm <project> <branch> [--force]` | Remove a worktree and release this machine from `[[branches]].machines`. Refuses dirty or unpushed unless `--force`. Empty `machines` causes the entry to be GC'd on save. |
-| `ws worktree push <project> <branch> [--force-dirty]` | Push the branch to origin via `git push -u origin <branch>` and stamp `last_active_machine` / `last_active_at` in `workspace.toml`. Refuses dirty without `--force-dirty`; refuses branches missing from `[[branches]]` (sign of out-of-band creation). |
+| `ws worktree push <project> <branch> [--force-dirty]` | Push the branch to origin via `git push -u origin <branch>` and stamp `last_pushed_*` (and bump `last_active_*`) in `workspace.toml`. Refuses dirty without `--force-dirty`; refuses branches missing from `[[branches]]` (sign of out-of-band creation). |
 | `ws wt …` | Alias for `ws worktree`. |
 
 ### Aliases

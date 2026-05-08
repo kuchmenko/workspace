@@ -82,6 +82,8 @@ since = "2026-04-09T10:00:00Z"
 			Machines:          []string{"linux"},
 			LastActiveMachine: "linux",
 			LastActiveAt:      "2026-04-08T13:59:04Z",
+			LastPushedMachine: "linux",
+			LastPushedAt:      "2026-04-08T13:59:04Z",
 			CreatedBy:         "linux",
 			CreatedAt:         "2026-04-08T13:59:04Z",
 		},
@@ -90,6 +92,8 @@ since = "2026-04-09T10:00:00Z"
 			Machines:          []string{"archlinux"},
 			LastActiveMachine: "archlinux",
 			LastActiveAt:      "2026-04-09T10:00:00Z",
+			LastPushedMachine: "archlinux",
+			LastPushedAt:      "2026-04-09T10:00:00Z",
 			CreatedBy:         "archlinux",
 			CreatedAt:         "2026-04-09T10:00:00Z",
 		},
@@ -259,6 +263,39 @@ func TestClaimBranch_FirstClaim(t *testing.T) {
 	}
 	if !reflect.DeepEqual(b.Machines, []string{"linux"}) {
 		t.Errorf("machines: want [linux], got %v", b.Machines)
+	}
+	// First claim must NOT mark the branch as pushed — that signal is
+	// reserved for `ws worktree push` and the attach-to-existing-remote
+	// path. Otherwise the reconciler treats every fresh local branch as
+	// "previously published" and false-flags it as orphan once fetch
+	// returns no origin ref. This guards against the codex P2 bug fix.
+	if b.LastPushedMachine != "" || b.LastPushedAt != "" {
+		t.Errorf("first claim must leave push fields empty, got machine=%q at=%q",
+			b.LastPushedMachine, b.LastPushedAt)
+	}
+}
+
+func TestMarkPushed_SetsPushFieldsAndBumpsActive(t *testing.T) {
+	p := Project{}
+	p.ClaimBranch("feat/foo", "linux")
+	when := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
+	if !p.MarkPushed("feat/foo", "linux", when) {
+		t.Fatal("first MarkPushed must report changed")
+	}
+	b := p.LookupBranch("feat/foo")
+	if b.LastPushedMachine != "linux" || b.LastPushedAt != "2026-05-08T12:00:00Z" {
+		t.Errorf("push fields not set: %+v", b)
+	}
+	// Active fields must mirror because a push is also activity.
+	if b.LastActiveMachine != "linux" || b.LastActiveAt != "2026-05-08T12:00:00Z" {
+		t.Errorf("active fields not bumped on push: %+v", b)
+	}
+}
+
+func TestMarkPushed_UnknownBranch_NoOp(t *testing.T) {
+	p := Project{}
+	if p.MarkPushed("ghost", "linux", time.Now()) {
+		t.Error("MarkPushed on unknown branch should be no-op")
 	}
 }
 

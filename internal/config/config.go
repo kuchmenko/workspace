@@ -58,8 +58,18 @@ type BranchMeta struct {
 	Machines          []string `toml:"machines,omitempty"`
 	LastActiveMachine string   `toml:"last_active_machine,omitempty"`
 	LastActiveAt      string   `toml:"last_active_at,omitempty"`
-	CreatedBy         string   `toml:"created_by,omitempty"`
-	CreatedAt         string   `toml:"created_at,omitempty"`
+	// LastPushedMachine and LastPushedAt are written only when the
+	// branch is observed on origin — either by `ws worktree push`
+	// (after a successful push) or by `ws worktree add` attaching
+	// to an already-existing remote branch. They are the orphan-
+	// detection signal: the reconciler only treats a branch as
+	// "should exist on origin" if at least one machine has pushed
+	// it. A locally-created branch with no pushes never trips
+	// branch-orphan even though LastActiveAt is set on add.
+	LastPushedMachine string `toml:"last_pushed_machine,omitempty"`
+	LastPushedAt      string `toml:"last_pushed_at,omitempty"`
+	CreatedBy         string `toml:"created_by,omitempty"`
+	CreatedAt         string `toml:"created_at,omitempty"`
 }
 
 // legacyAutopush is the pre-0.7.0 schema, kept only for Load-time
@@ -184,6 +194,32 @@ func (p *Project) TouchActive(name, machine string, when time.Time) bool {
 	if b.LastActiveMachine == machine && b.LastActiveAt == stamp {
 		return false
 	}
+	b.LastActiveMachine = machine
+	b.LastActiveAt = stamp
+	return true
+}
+
+// MarkPushed records that `machine` published `name` to origin at `when`.
+// Also bumps LastActiveMachine / LastActiveAt because a push is an
+// activity. No-op if the branch is not registered. Returns true when
+// state changed.
+//
+// The push fields are the orphan-detection signal: they distinguish
+// "this branch was on origin and should still be" (push fields set →
+// origin disappearance is meaningful) from "this branch is brand-new
+// and never published" (push fields empty → origin absence is normal).
+func (p *Project) MarkPushed(name, machine string, when time.Time) bool {
+	b := p.LookupBranch(name)
+	if b == nil {
+		return false
+	}
+	stamp := when.UTC().Format(time.RFC3339)
+	if b.LastPushedMachine == machine && b.LastPushedAt == stamp &&
+		b.LastActiveMachine == machine && b.LastActiveAt == stamp {
+		return false
+	}
+	b.LastPushedMachine = machine
+	b.LastPushedAt = stamp
 	b.LastActiveMachine = machine
 	b.LastActiveAt = stamp
 	return true
@@ -355,11 +391,17 @@ func migrateLegacyAutopush(p *Project) {
 		if o.Machine != "" {
 			machines = []string{o.Machine}
 		}
+		// Legacy autopush.owned entries were always pushed by definition
+		// (the daemon pushed them). Carry that signal forward to the
+		// new push fields so the reconciler's orphan check treats them
+		// correctly post-migration.
 		p.Branches = append(p.Branches, BranchMeta{
 			Name:              o.Branch,
 			Machines:          machines,
 			LastActiveMachine: o.Machine,
 			LastActiveAt:      o.Since,
+			LastPushedMachine: o.Machine,
+			LastPushedAt:      o.Since,
 			CreatedBy:         o.Machine,
 			CreatedAt:         o.Since,
 		})

@@ -437,15 +437,18 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 		}
 	}
 
-	// Branch-orphan detection: any registered branch whose last_active_at
-	// is set has been published at least once, so its origin ref should
-	// exist post-fetch. If not — branch was deleted on origin (typical:
-	// PR merged with auto-delete-branch). Record the orphan and let the
-	// user decide via `ws sync resolve`. Re-appearance on the next tick
-	// auto-clears the conflict.
+	// Branch-orphan detection: any registered branch whose last_pushed_at
+	// is set was observed on origin at least once, so its origin ref
+	// should still exist post-fetch. If it doesn't — the branch was
+	// deleted on origin (typical: PR merged with auto-delete-branch).
+	// Record the orphan and let the user decide via `ws sync resolve`.
+	// Re-appearance on the next tick auto-clears the conflict.
+	//
+	// Branches with empty last_pushed_at are local-only (created via
+	// `ws worktree add` and never pushed) — origin's missing ref is
+	// expected and must NOT trip orphan detection.
 	for _, b := range proj.Branches {
-		if b.LastActiveAt == "" {
-			// Never pushed → nothing to be orphaned from.
+		if b.LastPushedAt == "" {
 			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
 			continue
 		}
@@ -453,8 +456,8 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
 			continue
 		}
-		details := fmt.Sprintf("origin ref refs/remotes/origin/%s missing post-fetch (last seen on %s at %s)",
-			b.Name, b.LastActiveMachine, b.LastActiveAt)
+		details := fmt.Sprintf("origin ref refs/remotes/origin/%s missing post-fetch (last pushed by %s at %s)",
+			b.Name, b.LastPushedMachine, b.LastPushedAt)
 		r.recordProjectConflict(name, b.Name, conflict.KindBranchOrphan, details)
 	}
 
