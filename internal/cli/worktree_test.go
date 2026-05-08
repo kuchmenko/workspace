@@ -182,6 +182,57 @@ func TestWorktreeAdd_AttachesToExistingLocalBranch(t *testing.T) {
 	}
 }
 
+// TestWorktreeAdd_PreservesLocalCommitsWhenBranchAlsoOnOrigin guards
+// against the regression Codex flagged on the first revision of this
+// PR: a force-fetch into refs/heads/<branch> was silently rewinding
+// local branches that had unpushed commits. The fixed code uses the
+// standard remote-tracking refspec instead.
+func TestWorktreeAdd_PreservesLocalCommitsWhenBranchAlsoOnOrigin(t *testing.T) {
+	root := setupTestWorkspace(t, "linux", "myapp", "main")
+	barePath := layout.BarePath(filepath.Join(root, "personal", "myapp"))
+
+	// Create a branch locally on top of main and add a unique commit on it
+	// that is not on origin. We do this by checking the branch out into a
+	// scratch worktree, committing, then removing the worktree (the branch
+	// remains in the bare).
+	scratch := filepath.Join(t.TempDir(), "scratch")
+	testutil.RunGit(t, barePath, "worktree", "add", "-b", "feat/local-only", scratch, "main")
+	if err := os.WriteFile(filepath.Join(scratch, "local.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	testutil.RunGit(t, scratch, "add", "local.txt")
+	testutil.RunGit(t, scratch, "commit", "-m", "unpushed commit on local branch")
+	localTip := testutil.RunGit(t, scratch, "rev-parse", "feat/local-only")
+	testutil.RunGit(t, barePath, "worktree", "remove", scratch)
+
+	// Now publish the SAME branch name to origin from a completely
+	// different commit (origin/main, no extra commit), to manufacture
+	// the divergence the codex bug exploited.
+	originPath := testutil.RunGit(t, barePath, "config", "remote.origin.url")
+	pushClone := filepath.Join(t.TempDir(), "push-clone")
+	testutil.RunGit(t, t.TempDir(), "clone", originPath, pushClone)
+	testutil.RunGit(t, pushClone, "checkout", "-b", "feat/local-only", "origin/main")
+	testutil.RunGit(t, pushClone, "push", "origin", "feat/local-only")
+
+	// Run ws worktree add. Old (buggy) code would force-fetch
+	// refs/heads/feat/local-only := origin/feat/local-only and lose
+	// the local commit. New code only updates refs/remotes/origin/*
+	// and attaches to the local-existing branch.
+	cmd := newWorktreeAddCmd()
+	cmd.SetArgs([]string{"myapp", "feat/local-only"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Tip of refs/heads/feat/local-only must still be the unpushed commit.
+	gotTip := testutil.RunGit(t, barePath, "rev-parse", "feat/local-only")
+	if gotTip != localTip {
+		t.Errorf("local branch was rewound by the fetch\n  before: %s\n  after:  %s", localTip, gotTip)
+	}
+}
+
 func TestWorktreeAdd_RejectsInvalidName(t *testing.T) {
 	setupTestWorkspace(t, "linux", "myapp", "main")
 	cmd := newWorktreeAddCmd()

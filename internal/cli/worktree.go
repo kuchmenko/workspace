@@ -154,28 +154,40 @@ EXAMPLES
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
 
-			// Best-effort fetch the named branch directly into refs/heads/<branch>.
-			// If origin has the branch, we land it as a local ref so the
-			// subsequent WorktreeAdd checks it out without a separate -b step.
-			refspec := "+refs/heads/" + branch + ":refs/heads/" + branch
-			_ = git.FetchRefspec(barePath, "origin", refspec)
-			branchExists := git.HasBranch(barePath, branch)
+			// Best-effort fetch the named branch via the standard remote-
+			// tracking refspec so refs/remotes/origin/<branch> reflects
+			// the latest origin state. We deliberately do NOT force-fetch
+			// into refs/heads/<branch> here: that would silently rewind a
+			// local branch with unpushed commits (e.g. legacy
+			// wt/<machine>/* re-registration with work-in-progress) to
+			// origin's tip.
+			_ = git.FetchRefspec(barePath, "origin", branch)
+			localExists := git.HasBranch(barePath, branch)
+			remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
 
-			source := "" // "fetched", "local", or ""
-			if branchExists {
+			source := "" // "fetched", "local", or "" for new
+			switch {
+			case localExists:
 				if fromBase != "" {
-					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists\n", branch)
+					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists locally\n", branch)
 				}
 				if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
 					return err
 				}
-				_ = git.SetBranchUpstream(barePath, branch, "origin")
-				if git.HasRemoteBranch(barePath, "origin", branch) {
+				if remoteExists {
 					source = "fetched"
 				} else {
 					source = "local"
 				}
-			} else {
+			case remoteExists:
+				if fromBase != "" {
+					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists on origin\n", branch)
+				}
+				if err := git.WorktreeAdd(barePath, wtPath, branch, "origin/"+branch); err != nil {
+					return err
+				}
+				source = "fetched"
+			default:
 				base := fromBase
 				if base == "" {
 					base = proj.DefaultBranch
@@ -186,6 +198,9 @@ EXAMPLES
 				if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
 					return err
 				}
+			}
+			if source != "" {
+				_ = git.SetBranchUpstream(wtPath, branch, "origin")
 			}
 
 			// Update the registry: claim this machine against the branch.
