@@ -20,14 +20,14 @@ import (
 //
 // Lifecycle:
 //
-//   gathering → browse | browseEmpty
-//   browse / browseEmpty → manual (i) | edit (⏎) | quit (esc)
-//   manual → edit (valid URL) | browse (esc)
-//   edit → confirm (⏎) | browse (esc)
-//   confirm → cloning (y) | browse (esc)
-//   cloning → branchPrompt (clone.ErrNeedsBootstrap) | done
-//   branchPrompt → cloning
-//   done → quit
+//	gathering → browse | browseEmpty
+//	browse / browseEmpty → manual (i) | edit (⏎) | quit (esc)
+//	manual → edit (valid URL) | browse (esc)
+//	edit → confirm (⏎) | browse (esc)
+//	confirm → cloning (y) | browse (esc)
+//	cloning → branchPrompt (clone.ErrNeedsBootstrap) | done
+//	branchPrompt → cloning
+//	done → quit
 //
 // Embedding: AddModel never calls tea.Quit. When it reaches done, it
 // emits AddDoneMsg and waits for a key. Standalone callers (`ws add`)
@@ -35,7 +35,7 @@ import (
 // callers (the future agent integration) keep running their own
 // Update loop.
 type AddModel struct {
-	state addState
+	state          addState
 	stateChangedAt time.Time
 
 	// Inputs from the caller.
@@ -71,10 +71,10 @@ type AddModel struct {
 	sourcesDone    int
 
 	// browse.
-	cursor int        // index into filteredView()
+	cursor         int // index into filteredView()
 	allSuggestions []Suggestion
-	filterMode bool
-	filterInput textinput.Model
+	filterMode     bool
+	filterInput    textinput.Model
 
 	// selectedURLs holds RemoteURLs of suggestions the user marked
 	// for bulk add via space-toggle in browse. Stable across filter
@@ -87,14 +87,14 @@ type AddModel struct {
 	manualErr   string
 
 	// edit (also reused by confirm).
-	editFields  editFields
-	editFocus   int // 0=Name 1=Category 2=Group
-	editErr     string
+	editFields editFields
+	editFocus  int // 0=Name 1=Category 2=Group
+	editErr    string
 
 	// cloning.
-	queue       []editFields // resolved selections waiting to clone
-	currentIdx  int          // index into queue
-	currentName string       // for spinner header
+	queue        []editFields      // resolved selections waiting to clone
+	currentIdx   int               // index into queue
+	currentName  string            // for spinner header
 	branchAnswer chan branchAnswer // unblocks worker goroutines
 
 	// branchPrompt.
@@ -122,12 +122,12 @@ const (
 )
 
 type editFields struct {
-	Name      string
-	URL       string
-	Category  config.Category
-	Group     string
-	Path      string // computed from Category/Group/Name
-	FromDisk  string // non-empty → migrate path, not clone
+	Name     string
+	URL      string
+	Category config.Category
+	Group    string
+	Path     string // computed from Category/Group/Name
+	FromDisk string // non-empty → migrate path, not clone
 }
 
 type branchAnswer struct {
@@ -156,17 +156,17 @@ func NewAddModel(opts AddModelOptions) AddModel {
 	filter.Width = 50
 
 	return AddModel{
-		state:        addStateGathering,
-		wsRoot:       opts.WsRoot,
-		ws:           opts.Workspace,
-		saveFn:       opts.Save,
-		sources:      opts.Sources,
-		gatherTO:     opts.GatherTimeout,
-		standalone:   opts.Standalone,
-		preURLs:      opts.PreURLs,
-		spinner:      sp,
-		manualInput:  manual,
-		filterInput:  filter,
+		state:       addStateGathering,
+		wsRoot:      opts.WsRoot,
+		ws:          opts.Workspace,
+		saveFn:      opts.Save,
+		sources:     opts.Sources,
+		gatherTO:    opts.GatherTimeout,
+		standalone:  opts.Standalone,
+		preURLs:     opts.PreURLs,
+		spinner:     sp,
+		manualInput: manual,
+		filterInput: filter,
 	}
 }
 
@@ -1473,9 +1473,10 @@ func shortURL(s Suggestion) string {
 // view (where it lives above the tree as a status bar).
 //
 // Color rules:
-//   green (2): source returned a non-empty result
-//   dim   (8): source returned 0 (empty but successful)
-//   amber (3): source errored
+//
+//	green (2): source returned a non-empty result
+//	dim   (8): source returned 0 (empty but successful)
+//	amber (3): source errored
 func renderSourceChipsLive(outcomes []SourceOutcome) string {
 	var chips []string
 	for _, o := range outcomes {
@@ -1567,8 +1568,8 @@ var (
 			Bold(true)
 
 	addErr = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1")).
-			Bold(true)
+		Foreground(lipgloss.Color("1")).
+		Bold(true)
 
 	addCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 

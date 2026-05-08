@@ -25,10 +25,10 @@ const (
 
 // Nerd Font icons.
 const (
-	iconProject  = "\uf487"  //  nf-oct-package
-	iconWorktree = "\ue725"  //  nf-dev-git_branch
-	iconSession  = "\uf4a6"  //  nf-md-message_text_outline
-	iconSearch   = "\uf002"  //  nf-fa-search
+	iconProject  = "\uf487" //  nf-oct-package
+	iconWorktree = "\ue725" //  nf-dev-git_branch
+	iconSession  = "\uf4a6" //  nf-md-message_text_outline
+	iconSearch   = "\uf002" //  nf-fa-search
 )
 
 // listItem is one row in the nested list.
@@ -57,7 +57,7 @@ type LaunchRequest struct {
 type Model struct {
 	workspaces []WorkspaceData
 	mode       viewMode
-	items      []listItem   // flattened visible items
+	items      []listItem // flattened visible items
 	cursor     int
 	expanded   map[string]bool // group/project name → expanded
 	scroll     int             // scroll offset for long lists
@@ -92,10 +92,10 @@ type Model struct {
 	promptInput   string
 
 	// Flash search state.
-	flashQuery   string
-	flashMatches []int  // indices into m.items that match
-	flashLabels  []rune // one label per match (a, b, c, ...)
-	flashGlobal  bool   // S = global search (all items, even collapsed)
+	flashQuery    string
+	flashMatches  []int           // indices into m.items that match
+	flashLabels   []rune          // one label per match (a, b, c, ...)
+	flashGlobal   bool            // S = global search (all items, even collapsed)
 	savedExpanded map[string]bool // expansion state before global flash
 
 	// Which-key state.

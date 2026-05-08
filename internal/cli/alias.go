@@ -155,7 +155,7 @@ func newAliasInitCmd() *cobra.Command {
 			"capability": "organisation",
 			"agent:when": "Output shell init snippet for sourcing aliases (eval in .zshrc)",
 		},
-		Args:  cobra.MaximumNArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shell := "zsh"
 			if len(args) == 1 {

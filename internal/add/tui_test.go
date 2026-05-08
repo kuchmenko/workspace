@@ -470,8 +470,8 @@ func TestAddModel_Cloning_CloneDoneError(t *testing.T) {
 // testutilFailErr returns an error fixture for cloneDoneMsg tests.
 type testFailErr struct{ msg string }
 
-func (e *testFailErr) Error() string                                  { return e.msg }
-func testutilFailErr(s string) error                                  { return &testFailErr{msg: s} }
+func (e *testFailErr) Error() string { return e.msg }
+func testutilFailErr(s string) error { return &testFailErr{msg: s} }
 
 func TestAddModel_Done_AnyKeyQuits_Standalone(t *testing.T) {
 	m := newTestModel(t, nil)
@@ -599,4 +599,3 @@ func TestAddModel_FullHappyPath(t *testing.T) {
 		t.Error("workspace.Projects missing 'happy'")
 	}
 }
-

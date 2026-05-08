@@ -175,10 +175,10 @@ func TestBuildBrowseRows_EmptyInput(t *testing.T) {
 
 func TestWindowAround(t *testing.T) {
 	cases := []struct {
-		name     string
-		cursor   int
-		total    int
-		size     int
+		name         string
+		cursor       int
+		total        int
+		size         int
 		wantS, wantE int
 	}{
 		{"total fits in window", 5, 10, 16, 0, 10},

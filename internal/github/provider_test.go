@@ -20,8 +20,8 @@ type fakeClient struct {
 	activityOk bool
 }
 
-func (f *fakeClient) CurrentUser() (string, error)     { return f.user, f.userErr }
-func (f *fakeClient) FetchRepos() ([]Repo, error)      { return f.repos, f.reposErr }
+func (f *fakeClient) CurrentUser() (string, error) { return f.user, f.userErr }
+func (f *fakeClient) FetchRepos() ([]Repo, error)  { return f.repos, f.reposErr }
 func (f *fakeClient) FetchActivity(string) (map[string]int, error) {
 	if !f.activityOk {
 		return nil, f.actErr

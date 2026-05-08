@@ -24,11 +24,11 @@ import (
 //   - scheme is one of https, http, ssh, git (plus the git@host:owner
 //     shorthand), AND
 //   - one of:
-//     - path ends in `.git`
-//     - host is in the known-forge whitelist (github / gitlab /
-//       bitbucket / codeberg + $WS_GIT_HOSTS, colon-separated)
-//     - path matches `^/<owner>/<repo>$` shape (single segment owner +
-//       repo, no deeper path)
+//   - path ends in `.git`
+//   - host is in the known-forge whitelist (github / gitlab /
+//     bitbucket / codeberg + $WS_GIT_HOSTS, colon-separated)
+//   - path matches `^/<owner>/<repo>$` shape (single segment owner +
+//     repo, no deeper path)
 //
 // Anything else returns no suggestion (empty slice, nil error). The
 // source never fails fatally — clipboard tool missing is silent
@@ -177,7 +177,7 @@ func looksLikeGitURL(s string, allowedHosts map[string]bool) bool {
 		// Belt + braces: even on a known forge, require something
 		// resembling owner/repo. `https://github.com/` alone is the
 		// forge front page, not a repo.
-		if ownerRepoPath.MatchString(pathTrimmed + "/") || ownerRepoPath.MatchString(pathTrimmed) {
+		if ownerRepoPath.MatchString(pathTrimmed+"/") || ownerRepoPath.MatchString(pathTrimmed) {
 			return true
 		}
 		return false
