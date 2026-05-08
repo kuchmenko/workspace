@@ -1,0 +1,205 @@
+name: CI Checks
+
+# Reusable workflow. Called by:
+#   - ci.yml          on push/PR
+#   - release.yml     as a publish gate when release-please cuts a release
+#
+# Keep all check jobs in this file so PR-time CI and release-time CI run the
+# exact same suite. Single source of truth, no copy-paste drift.
+
+on:
+  workflow_call:
+
+env:
+  GO_VERSION_FILE: go.mod
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: gofmt -l (must be empty)
+        run: |
+          set -eo pipefail
+          out=$(gofmt -l .)
+          if [[ -n "$out" ]]; then
+            echo "::error::gofmt found unformatted files"
+            echo "$out" | sed 's/^/  /'
+            exit 1
+          fi
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - run: go vet ./...
+
+  mod-tidy:
+    name: go mod tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Verify modules tidy
+        run: |
+          set -eo pipefail
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo "::error::go.mod / go.sum diverged from `go mod tidy`. Run `go mod tidy` locally and commit the changes."
+            exit 1
+          fi
+
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: false  # golangci-lint-action manages its own cache
+      - name: golangci-lint (SARIF + console)
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m --out-format=colored-line-number,sarif:golangci-lint.sarif
+      - name: Upload SARIF to GitHub Code Scanning
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: golangci-lint.sarif
+          category: golangci-lint
+          wait-for-processing: true
+
+  test:
+    name: Test (race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Configure git for tests
+        # Tests run real git in t.TempDir(); they pass GIT_AUTHOR_*/EMAIL via
+        # env so identity isn't strictly required, but recent git versions
+        # complain on `git init` without a global config.
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "ws-ci"
+          git config --global init.defaultBranch main
+      - name: Test (race + coverage)
+        run: |
+          go test -race -timeout 5m -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Generate per-package coverage summary
+        if: always()
+        run: |
+          set -eo pipefail
+          if [[ ! -f coverage.out ]]; then
+            echo "_coverage.out was not generated._" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          go tool cover -func=coverage.out > coverage.txt
+          go tool cover -html=coverage.out -o coverage.html
+          {
+            echo "## Coverage"
+            echo
+            echo '| Package | Coverage |'
+            echo '|---|---:|'
+            # Aggregate the per-function lines into a per-package mean.
+            awk '
+              /^total:/ { next }
+              {
+                split($1, a, ":")
+                pkg = a[1]
+                # Strip filename: keep dir up to last "/"
+                n = split(pkg, parts, "/")
+                if (n > 1) { sub(/[^/]+$/, "", pkg); sub(/\/$/, "", pkg) }
+                pct = $NF
+                gsub(/%/, "", pct)
+                sum[pkg] += pct
+                cnt[pkg] += 1
+              }
+              END {
+                for (p in sum) {
+                  printf "| `%s` | %.1f%% |\n", p, sum[p] / cnt[p]
+                }
+              }
+            ' coverage.txt | sort
+            echo
+            total=$(awk '/^total:/ { print $NF }' coverage.txt)
+            echo "**Total: ${total}**"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+            coverage.html
+          retention-days: 14
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          output-format: sarif
+          output-file: govulncheck.sarif
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck
+          wait-for-processing: true
+
+  build:
+    name: Build (cross-OS smoke)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Build (all packages)
+        run: go build ./...
+      - name: Install smoke (cmd/ws)
+        # Catches packaging issues — if `go install ./cmd/ws` fails or the
+        # produced binary can't print --help, the release workflow's full
+        # cross-compile would fail too. Cheaper to catch it here.
+        run: |
+          set -eo pipefail
+          go install ./cmd/ws
+          "$(go env GOPATH)/bin/ws" --help > /dev/null
