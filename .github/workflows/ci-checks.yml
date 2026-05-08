@@ -76,10 +76,14 @@ jobs:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache: false  # golangci-lint-action manages its own cache
       - name: golangci-lint (SARIF + console)
-        uses: golangci/golangci-lint-action@v6
+        # v8 of the action defaults to golangci-lint v2 binaries, which are
+        # built with Go 1.25+ and therefore can typecheck a Go 1.26 module
+        # (v1.64.x is built with Go 1.24 and refuses). Output flags use v2
+        # syntax: --output.formats=text:stdout,sarif:<path>.
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
-          args: --timeout=5m --out-format=colored-line-number,sarif:golangci-lint.sarif
+          args: --timeout=5m --output.formats=text:stdout,sarif:golangci-lint.sarif
       - name: Upload SARIF to GitHub Code Scanning
         if: success() || failure()
         uses: github/codeql-action/upload-sarif@v3
