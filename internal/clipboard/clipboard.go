@@ -77,31 +77,39 @@ func (systemReader) Read(ctx context.Context) (string, error) {
 func detect() (string, []string, error) {
 	switch runtime.GOOS {
 	case "linux":
-		// Wayland first: if the compositor is running wl-paste should
-		// exist. WAYLAND_DISPLAY is the idiomatic probe — checking for
-		// XDG_SESSION_TYPE would also work but is less reliable across
-		// distros.
-		if os.Getenv("WAYLAND_DISPLAY") != "" {
-			if p, err := exec.LookPath("wl-paste"); err == nil {
-				return p, []string{"--no-newline"}, nil
-			}
-		}
-		if os.Getenv("DISPLAY") != "" {
-			if p, err := exec.LookPath("xclip"); err == nil {
-				return p, []string{"-o", "-selection", "clipboard"}, nil
-			}
-		}
-		return "", nil, ErrUnavailable
-
+		return detectLinuxClipboard()
 	case "darwin":
-		if p, err := exec.LookPath("pbpaste"); err == nil {
-			return p, nil, nil
-		}
-		return "", nil, ErrUnavailable
-
-	default:
-		return "", nil, ErrUnavailable
+		return detectDarwinClipboard()
 	}
+	return "", nil, ErrUnavailable
+}
+
+// detectLinuxClipboard prefers Wayland (wl-paste) when WAYLAND_DISPLAY
+// is set, falls back to X11 (xclip) when DISPLAY is set. Returns
+// ErrUnavailable when neither display server is active or its tool
+// is missing from PATH.
+func detectLinuxClipboard() (string, []string, error) {
+	if os.Getenv("WAYLAND_DISPLAY") != "" {
+		if p, err := exec.LookPath("wl-paste"); err == nil {
+			return p, []string{"--no-newline"}, nil
+		}
+	}
+	if os.Getenv("DISPLAY") != "" {
+		if p, err := exec.LookPath("xclip"); err == nil {
+			return p, []string{"-o", "-selection", "clipboard"}, nil
+		}
+	}
+	return "", nil, ErrUnavailable
+}
+
+// detectDarwinClipboard returns the pbpaste binary path. macOS
+// always ships it but on minimal images (CI runners) the lookup
+// can fail; ErrUnavailable preserves that.
+func detectDarwinClipboard() (string, []string, error) {
+	if p, err := exec.LookPath("pbpaste"); err == nil {
+		return p, nil, nil
+	}
+	return "", nil, ErrUnavailable
 }
 
 // runTool executes cmd with args and returns trimmed stdout. ctx
