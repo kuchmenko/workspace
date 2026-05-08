@@ -76,8 +76,8 @@ func runMigrateTUI(args []string) error {
 	}
 	final := finalRaw.(migrateModel)
 
-	if final.cancelled {
-		fmt.Println("Migrate cancelled by user.")
+	if final.canceled {
+		fmt.Println("Migrate canceled by user.")
 		return nil
 	}
 
@@ -203,9 +203,9 @@ const (
 	mstDirty
 	mstStash
 	mstDetached
-	mstAlready  // already migrated, skip
-	mstMissing  // not on disk, skip
-	mstNotRepo  // garbage, skip
+	mstAlready // already migrated, skip
+	mstMissing // not on disk, skip
+	mstNotRepo // garbage, skip
 )
 
 func (s migrateState) label() string {
@@ -256,9 +256,9 @@ func (p *migratePlan) Bucket(s migrateState) []migratePlanItem {
 type migrateStep int
 
 const (
-	mStepPlan migrateStep = iota
-	mStepDecision    // per-project decision (dirty/stash/detached)
-	mStepMigrating   // running migrate.MigrateProject
+	mStepPlan      migrateStep = iota
+	mStepDecision              // per-project decision (dirty/stash/detached)
+	mStepMigrating             // running migrate.MigrateProject
 	mStepDone
 )
 
@@ -283,7 +283,7 @@ type migrateModel struct {
 	successes []string
 	errors    []migrateError
 	skipped   int
-	cancelled bool
+	canceled  bool
 
 	spinner spinner.Model
 	sidecar *migrate.Sidecar
@@ -338,7 +338,7 @@ func (m migrateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	}
@@ -380,7 +380,7 @@ func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 				fmt.Sprintf("%s: %d projects", wsRoot, len(m.queue)))
 			return m.advance()
 		case "n", "N", "escape":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	}
@@ -430,7 +430,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dec.Skip = true
 			resolved = true
 		case "a", "A":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	case mstStash:
@@ -442,7 +442,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dec.Skip = true
 			resolved = true
 		case "a", "A":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	case mstDetached:
@@ -454,7 +454,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			dec.Skip = true
 			resolved = true
 		case "a", "A":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	}

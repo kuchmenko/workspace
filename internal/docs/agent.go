@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Annotation keys recognised by the collector. Commands without at least
+// Annotation keys recognized by the collector. Commands without at least
 // "capability" and "agent:when" are excluded from agent output.
 const (
 	KeyCapability  = "capability"
@@ -27,7 +27,7 @@ var capabilityMeta = map[string]struct {
 	"sync":          {"Synchronize workspace state and resolve conflicts", 2},
 	"worktree":      {"Create, list, remove, and promote per-feature worktrees", 3},
 	"observability": {"Project status and health checks", 4},
-	"organisation":  {"Shell aliases and project filtering", 5},
+	"organization":  {"Shell aliases and project filtering", 5},
 	"daemon":        {"Background daemon that auto-syncs projects", 6},
 	"auth":          {"GitHub authentication for repo discovery", 7},
 	"agent":         {"Launch and manage Claude Code sessions", 8},
@@ -154,7 +154,7 @@ func collectFlags(cmd *cobra.Command) []string {
 // toSortedMap converts the accumulator into the final map, preserving
 // the order defined in capabilityMeta. JSON object key order is not
 // guaranteed, but the struct fields are ordered for deterministic output
-// in tests when marshalled with sorted keys.
+// in tests when marshaled with sorted keys.
 func toSortedMap(groups map[string]*CapabilityGroup) map[string]CapabilityGroup {
 	out := make(map[string]CapabilityGroup, len(groups))
 	for k, v := range groups {

@@ -10,7 +10,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-
 const (
 	// markerStart and markerEnd delimit the ws-managed block in the user's rc file.
 	markerStart = "# >>> ws aliases >>>"

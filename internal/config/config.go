@@ -111,24 +111,7 @@ func (p *Project) ClaimBranch(name, machine string) (changed bool, isNew bool) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if b := p.LookupBranch(name); b != nil {
-		// Existing entry: append machine if missing, bump activity.
-		appended := false
-		if !contains(b.Machines, machine) {
-			b.Machines = sortedDedup(append(b.Machines, machine))
-			appended = true
-		}
-		if b.LastActiveMachine != machine || b.LastActiveAt == "" {
-			b.LastActiveMachine = machine
-			b.LastActiveAt = now
-			return true, false
-		}
-		if appended {
-			b.LastActiveAt = now
-			return true, false
-		}
-		// Same machine, same active state → still bump LastActiveAt so
-		// "I just added a worktree" is observable.
-		b.LastActiveAt = now
+		updateBranchClaim(b, machine, now)
 		return true, false
 	}
 	p.Branches = append(p.Branches, BranchMeta{
@@ -142,6 +125,19 @@ func (p *Project) ClaimBranch(name, machine string) (changed bool, isNew bool) {
 	return true, true
 }
 
+// updateBranchClaim re-claims an already-registered branch on `machine`:
+// adds the machine to the per-branch fleet (idempotent, sorted) and
+// bumps last_active_*. Always considered a change because every claim
+// is an explicit "I'm active here, now" stamp the cross-machine view
+// relies on.
+func updateBranchClaim(b *BranchMeta, machine, now string) {
+	if !contains(b.Machines, machine) {
+		b.Machines = sortedDedup(append(b.Machines, machine))
+	}
+	b.LastActiveMachine = machine
+	b.LastActiveAt = now
+}
+
 // ReleaseBranch removes `machine` from the entry's Machines slice. When
 // the slice becomes empty the entry is dropped entirely — empty-machines
 // blocks never persist across a Save, by acceptance criterion.
@@ -150,37 +146,49 @@ func (p *Project) ClaimBranch(name, machine string) (changed bool, isNew bool) {
 // dropped from p.Branches.
 func (p *Project) ReleaseBranch(name, machine string) (changed bool, removed bool) {
 	for i := range p.Branches {
-		if p.Branches[i].Name != name {
-			continue
+		if p.Branches[i].Name == name {
+			return p.releaseAt(i, machine)
 		}
-		machines := p.Branches[i].Machines
-		filtered := make([]string, 0, len(machines))
-		dropped := false
-		for _, m := range machines {
-			if m == machine {
-				dropped = true
-				continue
-			}
-			filtered = append(filtered, m)
-		}
-		if !dropped {
-			return false, false
-		}
-		if len(filtered) == 0 {
-			p.Branches = append(p.Branches[:i], p.Branches[i+1:]...)
-			return true, true
-		}
-		p.Branches[i].Machines = filtered
-		// Releasing a machine that was the last_active_machine clears the
-		// field — the next push or commit on the branch will repopulate
-		// it. Keeping a stale machine name there would be misleading.
-		if p.Branches[i].LastActiveMachine == machine {
-			p.Branches[i].LastActiveMachine = ""
-			p.Branches[i].LastActiveAt = ""
-		}
-		return true, false
 	}
 	return false, false
+}
+
+// releaseAt is the per-entry release path: removes `machine` from the
+// entry at `idx`, dropping the entry entirely when no machines remain.
+// Called by ReleaseBranch after it has located the matching entry.
+func (p *Project) releaseAt(idx int, machine string) (changed bool, removed bool) {
+	b := &p.Branches[idx]
+	filtered, dropped := removeMachine(b.Machines, machine)
+	if !dropped {
+		return false, false
+	}
+	if len(filtered) == 0 {
+		p.Branches = append(p.Branches[:idx], p.Branches[idx+1:]...)
+		return true, true
+	}
+	b.Machines = filtered
+	// Releasing a machine that was the last_active_machine clears the
+	// field — the next push or commit on the branch will repopulate
+	// it. Keeping a stale machine name there would be misleading.
+	if b.LastActiveMachine == machine {
+		b.LastActiveMachine = ""
+		b.LastActiveAt = ""
+	}
+	return true, false
+}
+
+// removeMachine returns `machines` with all occurrences of `target`
+// stripped, plus a flag indicating whether at least one was removed.
+func removeMachine(machines []string, target string) (filtered []string, dropped bool) {
+	out := make([]string, 0, len(machines))
+	for _, m := range machines {
+		if m == target {
+			dropped = true
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, dropped
 }
 
 // TouchActive bumps LastActiveMachine / LastActiveAt for `name`. No-op
@@ -299,22 +307,7 @@ type ValidationIssue struct {
 func (w *Workspace) Validate() []ValidationIssue {
 	var issues []ValidationIssue
 	for projName, proj := range w.Projects {
-		seen := make(map[string]int, len(proj.Branches))
-		for _, b := range proj.Branches {
-			if b.Name == "" {
-				continue
-			}
-			if prev, ok := seen[b.Name]; ok {
-				issues = append(issues, ValidationIssue{
-					Kind:    ValidationDuplicateBranch,
-					Project: projName,
-					Branch:  b.Name,
-					Detail:  fmt.Sprintf("branch %q has %d entries (first at index %d)", b.Name, prev+1, prev),
-				})
-				continue
-			}
-			seen[b.Name] = len(seen)
-		}
+		issues = append(issues, duplicateBranchIssues(projName, proj.Branches)...)
 	}
 	sort.Slice(issues, func(i, j int) bool {
 		if issues[i].Project != issues[j].Project {
@@ -325,32 +318,72 @@ func (w *Workspace) Validate() []ValidationIssue {
 	return issues
 }
 
+// duplicateBranchIssues reports duplicate-name [[branches]] entries
+// within one project. The first occurrence is tracked silently; every
+// subsequent occurrence yields a ValidationIssue.
+func duplicateBranchIssues(projName string, branches []BranchMeta) []ValidationIssue {
+	seen := make(map[string]int, len(branches))
+	var out []ValidationIssue
+	for _, b := range branches {
+		if b.Name == "" {
+			continue
+		}
+		prev, isDup := seen[b.Name]
+		if !isDup {
+			seen[b.Name] = len(seen)
+			continue
+		}
+		out = append(out, ValidationIssue{
+			Kind:    ValidationDuplicateBranch,
+			Project: projName,
+			Branch:  b.Name,
+			Detail:  fmt.Sprintf("branch %q has %d entries (first at index %d)", b.Name, prev+1, prev),
+		})
+	}
+	return out
+}
+
 // FindRoot walks up from cwd (or uses WS_ROOT env) to find workspace.toml.
 func FindRoot() (string, error) {
 	if env := os.Getenv("WS_ROOT"); env != "" {
-		if _, err := os.Stat(filepath.Join(env, "workspace.toml")); err == nil {
-			return env, nil
-		}
-		return "", fmt.Errorf("WS_ROOT=%s does not contain workspace.toml", env)
+		return rootFromEnv(env)
 	}
-
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
+	if root, ok := rootByWalkUp(dir); ok {
+		return root, nil
+	}
+	return "", fmt.Errorf("workspace.toml not found (set WS_ROOT or run from workspace directory)")
+}
 
+// rootFromEnv validates a WS_ROOT override: returns the path if it
+// holds a workspace.toml, otherwise an error explaining which dir
+// failed the check (so the user doesn't chase a typo blind).
+func rootFromEnv(env string) (string, error) {
+	if _, err := os.Stat(filepath.Join(env, "workspace.toml")); err == nil {
+		return env, nil
+	}
+	return "", fmt.Errorf("WS_ROOT=%s does not contain workspace.toml", env)
+}
+
+// rootByWalkUp walks upward from `start` to the filesystem root,
+// returning the first directory that contains workspace.toml. Returns
+// (root, true) on hit; ("", false) when the walk hit the root dir
+// without finding one.
+func rootByWalkUp(start string) (string, bool) {
+	dir := start
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "workspace.toml")); err == nil {
-			return dir, nil
+			return dir, true
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			break
+			return "", false
 		}
 		dir = parent
 	}
-
-	return "", fmt.Errorf("workspace.toml not found (set WS_ROOT or run from workspace directory)")
 }
 
 func Load(root string) (*Workspace, error) {
@@ -393,48 +426,50 @@ func migrateLegacyAutopush(p *Project) {
 		return
 	}
 	defer func() { p.LegacyAutopush = nil }()
-
-	// Owned entries carry machine attribution → become full BranchMeta.
 	for _, o := range p.LegacyAutopush.Owned {
-		if o.Branch == "" {
-			continue
-		}
-		if existing := p.LookupBranch(o.Branch); existing != nil {
-			// Already migrated on a previous load; preserve the new entry.
-			continue
-		}
-		machines := []string{}
-		if o.Machine != "" {
-			machines = []string{o.Machine}
-		}
-		// Legacy autopush.owned entries were always pushed by definition
-		// (the daemon pushed them). Carry that signal forward to the
-		// new push fields so the reconciler's orphan check treats them
-		// correctly post-migration.
-		p.Branches = append(p.Branches, BranchMeta{
-			Name:              o.Branch,
-			Machines:          machines,
-			LastActiveMachine: o.Machine,
-			LastActiveAt:      o.Since,
-			LastPushedMachine: o.Machine,
-			LastPushedAt:      o.Since,
-			CreatedBy:         o.Machine,
-			CreatedAt:         o.Since,
-		})
+		p.appendLegacyOwned(o)
 	}
-
-	// Bare branches []string have no machine attribution → BranchMeta
-	// with empty Machines. These are GC'd on the next Save unless a
-	// `ws worktree add` claims them first.
 	for _, name := range p.LegacyAutopush.Branches {
-		if name == "" {
-			continue
-		}
-		if existing := p.LookupBranch(name); existing != nil {
-			continue
-		}
-		p.Branches = append(p.Branches, BranchMeta{Name: name})
+		p.appendLegacyBare(name)
 	}
+}
+
+// appendLegacyOwned converts one [[autopush.owned]] entry into the
+// new [[branches]] shape. Owned entries always carry machine
+// attribution and are always known-pushed (the legacy daemon pushed
+// them by definition), so the migration sets every metadata field.
+// Idempotent: re-loads of an already-migrated workspace.toml skip
+// any branch that already has a [[branches]] entry.
+func (p *Project) appendLegacyOwned(o legacyOwnedBranch) {
+	if o.Branch == "" || p.LookupBranch(o.Branch) != nil {
+		return
+	}
+	machines := []string{}
+	if o.Machine != "" {
+		machines = []string{o.Machine}
+	}
+	p.Branches = append(p.Branches, BranchMeta{
+		Name:              o.Branch,
+		Machines:          machines,
+		LastActiveMachine: o.Machine,
+		LastActiveAt:      o.Since,
+		LastPushedMachine: o.Machine,
+		LastPushedAt:      o.Since,
+		CreatedBy:         o.Machine,
+		CreatedAt:         o.Since,
+	})
+}
+
+// appendLegacyBare converts one autopush.branches []string entry into
+// a placeholder [[branches]] block with empty Machines. Save's empty-
+// machines GC drops it on the next write — the user loses no actual
+// git data because the underlying ref is still in the bare repo, and
+// `ws worktree add` re-registers it properly when the user picks it up.
+func (p *Project) appendLegacyBare(name string) {
+	if name == "" || p.LookupBranch(name) != nil {
+		return
+	}
+	p.Branches = append(p.Branches, BranchMeta{Name: name})
 }
 
 // LoadOrCreate loads workspace.toml if it exists, otherwise creates a default one.
@@ -474,23 +509,38 @@ func cleanForSave(ws *Workspace) *Workspace {
 	out := *ws
 	out.Projects = make(map[string]Project, len(ws.Projects))
 	for name, p := range ws.Projects {
-		if len(p.Branches) > 0 {
-			kept := make([]BranchMeta, 0, len(p.Branches))
-			for _, b := range p.Branches {
-				if len(b.Machines) > 0 {
-					kept = append(kept, b)
-				}
-			}
-			if len(kept) == 0 {
-				p.Branches = nil
-			} else {
-				p.Branches = kept
-			}
-		}
-		p.LegacyAutopush = nil
-		out.Projects[name] = p
+		out.Projects[name] = projectForSave(p)
 	}
 	return &out
+}
+
+// projectForSave returns a copy of `p` with the on-disk-only invariants
+// applied: empty-machines [[branches]] entries are dropped (the orphan-
+// tombstone GC), and the legacy autopush field is nil-ed so it never
+// round-trips back into workspace.toml after a Load → Save migration.
+func projectForSave(p Project) Project {
+	p.Branches = filterEmptyMachines(p.Branches)
+	p.LegacyAutopush = nil
+	return p
+}
+
+// filterEmptyMachines drops every BranchMeta whose Machines slice is
+// empty. Returns nil when nothing survives so the encoder omits the
+// [[branches]] block entirely (rather than emitting an empty array).
+func filterEmptyMachines(branches []BranchMeta) []BranchMeta {
+	if len(branches) == 0 {
+		return branches
+	}
+	kept := make([]BranchMeta, 0, len(branches))
+	for _, b := range branches {
+		if len(b.Machines) > 0 {
+			kept = append(kept, b)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 func contains(slice []string, want string) bool {

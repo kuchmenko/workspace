@@ -254,14 +254,13 @@ func TestCheckIndexLock(t *testing.T) {
 	}
 
 	// Plant an index.lock in the main worktree and re-run.
-	mainWT := filepath.Join(wsRoot, proj.Path)
-	lockFile := filepath.Join(mainWT, ".git")
 	// .git in a worktree is a file pointing to gitdir; resolve real gitdir.
+	mainWT := filepath.Join(wsRoot, proj.Path)
 	gitDir := git.RevParse(mainWT, "--git-dir")
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(mainWT, gitDir)
 	}
-	lockFile = filepath.Join(gitDir, "index.lock")
+	lockFile := filepath.Join(gitDir, "index.lock")
 	if err := os.WriteFile(lockFile, []byte{}, 0o644); err != nil {
 		t.Fatalf("plant lock: %v", err)
 	}

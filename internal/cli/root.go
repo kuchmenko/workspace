@@ -112,9 +112,11 @@ func saveWorkspace() error {
 	if err := alias.WriteStateFile(ws, wsRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not update alias state file: %v\n", err)
 	}
-	// Best-effort daemon notification
+	// Best-effort daemon notification. If the daemon is down or busy
+	// the next reconciler tick still picks up the workspace.toml diff
+	// from disk; the IPC kick just shortens the wait.
 	if client, err := daemon.Dial(); err == nil {
-		client.Notify(wsRoot, "config_changed")
+		_ = client.Notify(wsRoot, "config_changed")
 		client.Close()
 	}
 	return nil

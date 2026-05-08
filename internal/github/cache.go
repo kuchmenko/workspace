@@ -71,27 +71,45 @@ func LoadCache() ([]Repo, time.Duration, error) {
 		}
 		return nil, 0, err
 	}
-	var cf cacheFile
-	if err := json.Unmarshal(data, &cf); err != nil {
-		// Corrupt cache → treat as miss, don't surface to caller.
+	cf, ok := parseCacheFile(data)
+	if !ok {
 		return nil, 0, nil
-	}
-	if cf.Version != cacheVersion {
-		return nil, 0, nil
-	}
-	// Sanity guard against malformed / test-polluted caches: a real
-	// GitHub repo always has Owner + SSHURL populated. If even one
-	// cached entry is missing both, the file is junk (a partial
-	// write, a schema-drift accident, or — observed in development —
-	// tests that wrote Name-only Repo fixtures into the user's real
-	// cache before t.Setenv was added). Treat as a miss; the next
-	// live fetch will overwrite cleanly.
-	for _, r := range cf.Repos {
-		if r.Owner == "" && r.SSHURL == "" {
-			return nil, 0, nil
-		}
 	}
 	return cf.Repos, time.Since(cf.StoredAt), nil
+}
+
+// parseCacheFile decodes a cache blob and applies the schema-version
+// + sanity-shape gates. Returns ok=false when the file is corrupt,
+// uses a stale schema, or contains entries whose Owner+SSHURL are
+// both empty (a real GitHub repo always has at least one). The
+// false branch is the documented cache-miss path: callers act as if
+// no cache existed and let the next live fetch overwrite cleanly.
+func parseCacheFile(data []byte) (cacheFile, bool) {
+	var cf cacheFile
+	if err := json.Unmarshal(data, &cf); err != nil {
+		return cacheFile{}, false
+	}
+	if cf.Version != cacheVersion {
+		return cacheFile{}, false
+	}
+	if !cacheReposLookSane(cf.Repos) {
+		return cacheFile{}, false
+	}
+	return cf, true
+}
+
+// cacheReposLookSane is the "real GitHub repo" shape gate: every
+// entry must carry at least one of Owner or SSHURL. Empty-and-empty
+// rows have been observed from partial writes and test fixtures
+// landing in the user's real cache before t.Setenv() isolation was
+// added; the gate stops them from being served as live data.
+func cacheReposLookSane(repos []Repo) bool {
+	for _, r := range repos {
+		if r.Owner == "" && r.SSHURL == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // SaveCache atomically writes the repo list to the cache file. Writes

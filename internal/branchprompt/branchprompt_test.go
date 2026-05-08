@@ -45,8 +45,7 @@ func TestModel_PickFromCandidates_Enter(t *testing.T) {
 	}
 
 	// Enter picks it.
-	var cmd tea.Cmd
-	m, cmd = m.Update(keyMsg("enter"))
+	_, cmd := m.Update(keyMsg("enter"))
 	msg := collectMsg(cmd)
 
 	picked, ok := msg.(PickedMsg)
@@ -124,8 +123,7 @@ func TestModel_InputMode_EnterEmitsPicked(t *testing.T) {
 	// textinput.Model handles KeyRunes internally.
 	m, _ = m.Update(keyMsg("develop"))
 
-	var cmd tea.Cmd
-	m, cmd = m.Update(keyMsg("enter"))
+	_, cmd := m.Update(keyMsg("enter"))
 	msg := collectMsg(cmd)
 
 	picked, ok := msg.(PickedMsg)
@@ -143,12 +141,12 @@ func TestModel_Escape_EmitsCancelled(t *testing.T) {
 	_, cmd = m.Update(keyMsg("esc"))
 	msg := collectMsg(cmd)
 
-	cancelled, ok := msg.(CancelledMsg)
+	canceled, ok := msg.(CancelledMsg)
 	if !ok {
 		t.Fatalf("expected CancelledMsg, got %T", msg)
 	}
-	if cancelled.Project != "proj" {
-		t.Errorf("cancelled = %+v", cancelled)
+	if canceled.Project != "proj" {
+		t.Errorf("canceled = %+v", canceled)
 	}
 }
 

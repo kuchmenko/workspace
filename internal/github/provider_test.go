@@ -20,8 +20,8 @@ type fakeClient struct {
 	activityOk bool
 }
 
-func (f *fakeClient) CurrentUser() (string, error)     { return f.user, f.userErr }
-func (f *fakeClient) FetchRepos() ([]Repo, error)      { return f.repos, f.reposErr }
+func (f *fakeClient) CurrentUser() (string, error) { return f.user, f.userErr }
+func (f *fakeClient) FetchRepos() ([]Repo, error)  { return f.repos, f.reposErr }
 func (f *fakeClient) FetchActivity(string) (map[string]int, error) {
 	if !f.activityOk {
 		return nil, f.actErr
@@ -282,7 +282,7 @@ func TestClientProvider_RespectsCancelledContext(t *testing.T) {
 	p := &clientProvider{client: fc, name: "fake"}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancelled
+	cancel() // pre-canceled
 
 	_, err := p.SuggestRepos(ctx, 10)
 	if !errors.Is(err, context.Canceled) {

@@ -216,7 +216,7 @@ Outer:
 //     function be a simple linear walk.
 //  2. Within group:
 //     a. Disk presence (a github repo also-on-disk floats above
-//        github-only ones in the same org)
+//     github-only ones in the same org)
 //     b. Activity desc
 //     c. PushedAt desc
 //     d. Name asc
@@ -257,4 +257,3 @@ func hasSource(ss []SourceKind, k SourceKind) bool {
 	}
 	return false
 }
-

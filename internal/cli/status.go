@@ -115,28 +115,3 @@ func humanizeTime(t time.Time) string {
 		return t.Format("2006-01-02")
 	}
 }
-
-// staleness returns a human-readable staleness indicator.
-func staleness(t time.Time, threshold string) string {
-	threshDur := parseDuration(threshold)
-	if threshDur == 0 {
-		threshDur = 30 * 24 * time.Hour
-	}
-	d := time.Since(t)
-	if d > threshDur {
-		return fmt.Sprintf("stale (%s)", humanizeTime(t))
-	}
-	return ""
-}
-
-func parseDuration(s string) time.Duration {
-	s = strings.TrimSpace(s)
-	if strings.HasSuffix(s, "d") {
-		s = strings.TrimSuffix(s, "d")
-		var days int
-		fmt.Sscanf(s, "%d", &days)
-		return time.Duration(days) * 24 * time.Hour
-	}
-	d, _ := time.ParseDuration(s)
-	return d
-}

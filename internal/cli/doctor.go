@@ -11,8 +11,8 @@ import (
 // Exit codes. Documented in the --help text so the acceptance criteria
 // is self-describing and scriptable.
 const (
-	exitDoctorOK        = 0
-	exitDoctorIssues    = 1
+	exitDoctorOK         = 0
+	exitDoctorIssues     = 1
 	exitDoctorFixApplied = 2
 )
 
@@ -42,9 +42,9 @@ batch (no prompts). Fixes that require judgement — resolving conflicts,
 clearing index.lock — are never auto-applied; the report prints a hint
 and leaves the action to the user.`,
 		Annotations: map[string]string{
-			"capability":    "observability",
-			"agent:when":    "Diagnose workspace health; surface missing refspecs, stale sidecars, conflicts, config issues.",
-			"agent:safety":  "Read-only unless --fix is set. --fix only applies safe, idempotent mutations (refspec, remote URL, branch upstream, default_branch, stale sidecars).",
+			"capability":   "observability",
+			"agent:when":   "Diagnose workspace health; surface missing refspecs, stale sidecars, conflicts, config issues.",
+			"agent:safety": "Read-only unless --fix is set. --fix only applies safe, idempotent mutations (refspec, remote URL, branch upstream, default_branch, stale sidecars).",
 		},
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {

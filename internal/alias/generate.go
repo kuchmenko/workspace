@@ -35,27 +35,35 @@ func generateBase(name string) string {
 	if name == "" {
 		return ""
 	}
-
 	parts := splitParts(name)
 	if len(parts) >= 2 {
-		// Rule 1: two short parts → join
-		if len(parts) == 2 && len(parts[0]) <= 4 && len(parts[1]) <= 4 {
-			return parts[0] + parts[1]
-		}
-		// Rule 2: first letters
-		var b strings.Builder
-		for _, p := range parts {
-			if p == "" {
-				continue
-			}
-			b.WriteByte(p[0])
-		}
-		return b.String()
+		return multiPartName(parts)
 	}
+	return consonantSqueeze(name)
+}
 
-	// Rule 3: consonants from single word
+// multiPartName applies Rule 1 + Rule 2: two short parts (each ≤4
+// chars) join verbatim ("co-op" → "coop"); anything else collapses to
+// the per-part first-letter acronym ("api-gateway" → "ag").
+func multiPartName(parts []string) string {
+	if len(parts) == 2 && len(parts[0]) <= 4 && len(parts[1]) <= 4 {
+		return parts[0] + parts[1]
+	}
 	var b strings.Builder
-	// always keep first character even if vowel
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		b.WriteByte(p[0])
+	}
+	return b.String()
+}
+
+// consonantSqueeze applies Rule 3 to a single-word name: keep the
+// first character (even if vowel) and append up to four more
+// consonants, capping output at five chars total.
+func consonantSqueeze(name string) string {
+	var b strings.Builder
 	b.WriteByte(name[0])
 	for i := 1; i < len(name) && b.Len() < 5; i++ {
 		c := name[i]
@@ -66,24 +74,15 @@ func generateBase(name string) string {
 	return b.String()
 }
 
+// splitParts splits `s` on '-' or '_' separators, dropping empty
+// fragments. Equivalent to strings.FieldsFunc with a hand-rolled
+// predicate that only treats '-' and '_' as separators.
 func splitParts(s string) []string {
-	var parts []string
-	var cur strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '-' || c == '_' {
-			if cur.Len() > 0 {
-				parts = append(parts, cur.String())
-				cur.Reset()
-			}
-			continue
-		}
-		cur.WriteByte(c)
-	}
-	if cur.Len() > 0 {
-		parts = append(parts, cur.String())
-	}
-	return parts
+	return strings.FieldsFunc(s, isSeparator)
+}
+
+func isSeparator(r rune) bool {
+	return r == '-' || r == '_'
 }
 
 func isVowel(c byte) bool {

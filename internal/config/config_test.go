@@ -207,10 +207,10 @@ since = "2026-04-08T13:59:04Z"
 func TestSave_DropsEmptyMachinesEntries(t *testing.T) {
 	dir := t.TempDir()
 	ws := &Workspace{
-		Meta:     Meta{Version: 1, Root: dir},
-		Daemon:   Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
-		Groups:   map[string]Group{},
-		Aliases:  map[string]string{},
+		Meta:    Meta{Version: 1, Root: dir},
+		Daemon:  Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
+		Groups:  map[string]Group{},
+		Aliases: map[string]string{},
 		Projects: map[string]Project{
 			"app": {
 				Remote:   "git@github.com:me/app.git",

@@ -2,11 +2,11 @@ package docs
 
 // AgentCapabilityMap is the top-level JSON structure emitted by `ws docs --agent`.
 type AgentCapabilityMap struct {
-	Tool         string                       `json:"tool"`
-	Version      string                       `json:"version,omitempty"`
-	Description  string                       `json:"description"`
-	Capabilities map[string]CapabilityGroup   `json:"capabilities"`
-	Constraints  []string                     `json:"constraints"`
+	Tool         string                     `json:"tool"`
+	Version      string                     `json:"version,omitempty"`
+	Description  string                     `json:"description"`
+	Capabilities map[string]CapabilityGroup `json:"capabilities"`
+	Constraints  []string                   `json:"constraints"`
 }
 
 // CapabilityGroup clusters related commands under a human-readable label.

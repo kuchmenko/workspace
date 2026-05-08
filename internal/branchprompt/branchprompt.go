@@ -63,27 +63,38 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-
-	// Free-text mode: collect input, confirm on enter, back out on esc.
 	if m.inputMode {
-		switch key.String() {
-		case "enter":
-			val := strings.TrimSpace(m.input.Value())
-			if val == "" {
-				return m, nil
-			}
-			picked := PickedMsg{Project: m.project, Branch: val}
-			return m, func() tea.Msg { return picked }
-		case "esc":
-			m.inputMode = false
+		return m.updateInputMode(msg, key)
+	}
+	return m.updateListMode(key)
+}
+
+// updateInputMode handles keystrokes while the user is typing a
+// free-text branch name. Enter confirms (emits PickedMsg with the
+// trimmed value, no-op on empty), Esc returns to the candidate list,
+// any other key forwards to the underlying textinput.
+func (m Model) updateInputMode(msg tea.Msg, key tea.KeyMsg) (Model, tea.Cmd) {
+	switch key.String() {
+	case "enter":
+		val := strings.TrimSpace(m.input.Value())
+		if val == "" {
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m, emitPickedCmd(m.project, val)
+	case "esc":
+		m.inputMode = false
+		return m, nil
 	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
 
-	// Candidate-list mode.
+// updateListMode handles keystrokes while the user is browsing the
+// candidate-branch list. j/k or up/down move the cursor; Enter
+// confirms (or falls through to input mode when the list is empty);
+// i opens input mode unconditionally; Esc cancels the prompt.
+func (m Model) updateListMode(key tea.KeyMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "up", "k":
 		if m.cursor > 0 {
@@ -94,20 +105,39 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "enter":
-		if len(m.candidates) == 0 {
-			m.inputMode = true
-			return m, m.input.Focus()
-		}
-		picked := PickedMsg{Project: m.project, Branch: m.candidates[m.cursor]}
-		return m, func() tea.Msg { return picked }
+		return m.confirmListSelection()
 	case "i":
 		m.inputMode = true
 		return m, m.input.Focus()
 	case "esc":
-		cancelled := CancelledMsg{Project: m.project}
-		return m, func() tea.Msg { return cancelled }
+		return m, emitCancelledCmd(m.project)
 	}
 	return m, nil
+}
+
+// confirmListSelection commits the highlighted candidate as the
+// picked branch. When the candidate list is empty the user is
+// dropped into input mode so they can type one.
+func (m Model) confirmListSelection() (Model, tea.Cmd) {
+	if len(m.candidates) == 0 {
+		m.inputMode = true
+		return m, m.input.Focus()
+	}
+	return m, emitPickedCmd(m.project, m.candidates[m.cursor])
+}
+
+// emitPickedCmd builds a tea.Cmd that emits PickedMsg. Centralized
+// so the closure form lives in one place rather than scattered
+// across two return sites.
+func emitPickedCmd(project, branch string) tea.Cmd {
+	picked := PickedMsg{Project: project, Branch: branch}
+	return func() tea.Msg { return picked }
+}
+
+// emitCancelledCmd is the symmetric helper for CancelledMsg.
+func emitCancelledCmd(project string) tea.Cmd {
+	canceled := CancelledMsg{Project: project}
+	return func() tea.Msg { return canceled }
 }
 
 // Project returns the project name this prompt is for — useful for

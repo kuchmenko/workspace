@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"sort"
 	"text/tabwriter"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,7 +16,7 @@ func newAliasCmd() *cobra.Command {
 		Use:   "alias",
 		Short: "Manage shell aliases for projects and groups",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "Manage shell aliases (cd shortcuts) for projects and groups via TUI or subcommands",
 		},
 		RunE: runAliasTUI,
@@ -41,7 +40,7 @@ func runAliasTUI(cmd *cobra.Command, args []string) error {
 	}
 	final := res.(aliasmgr.Model)
 	r := final.GetResult()
-	if r.Cancelled || !r.Confirmed {
+	if r.Canceled || !r.Confirmed {
 		fmt.Println("Aliases unchanged.")
 		return nil
 	}
@@ -58,7 +57,7 @@ func newAliasListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List configured aliases",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "List all configured shell aliases with their targets and resolved paths",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -89,7 +88,7 @@ func newAliasAddCmd() *cobra.Command {
 		Use:   "add <alias> <target>",
 		Short: "Add an alias for a project or group",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "Create a shell alias that cd's into a project or group directory",
 		},
 		Args: cobra.ExactArgs(2),
@@ -128,7 +127,7 @@ func newAliasRmCmd() *cobra.Command {
 		Use:   "rm <alias>",
 		Short: "Remove an alias",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "Remove a previously defined shell alias",
 		},
 		Args: cobra.ExactArgs(1),
@@ -152,10 +151,10 @@ func newAliasInitCmd() *cobra.Command {
 		Use:   "init [shell]",
 		Short: "Print shell snippet to eval (default: zsh)",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "Output shell init snippet for sourcing aliases (eval in .zshrc)",
 		},
-		Args:  cobra.MaximumNArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shell := "zsh"
 			if len(args) == 1 {
@@ -176,7 +175,7 @@ func newAliasInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Add a sourcing line to ~/.zshrc (idempotent)",
 		Annotations: map[string]string{
-			"capability": "organisation",
+			"capability": "organization",
 			"agent:when": "Install alias auto-loading into ~/.zshrc (idempotent, safe to re-run)",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -200,14 +199,4 @@ func newAliasInstallCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// sortedAliasNames is a small helper used by tests / debug paths.
-func sortedAliasNames(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

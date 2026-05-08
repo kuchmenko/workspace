@@ -26,8 +26,8 @@ import (
 	"errors"
 
 	"github.com/kuchmenko/workspace/internal/clone"
-	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/sidecar"

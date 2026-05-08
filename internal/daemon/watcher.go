@@ -34,20 +34,30 @@ func (w *Watcher) Add(root string) {
 	if w.fsw == nil {
 		return
 	}
-	// Watch top-level group directories
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
+	for _, dir := range topLevelGroupDirs(root) {
 		if err := w.fsw.Add(dir); err != nil {
 			w.logger.Printf("watcher: cannot watch %s: %v", dir, err)
 		}
 	}
+}
+
+// topLevelGroupDirs lists immediate children of `root` that are
+// candidates for the watcher: directories, non-dotfile, non-empty.
+// Errors reading the root return an empty slice — the caller treats
+// the watcher as best-effort.
+func topLevelGroupDirs(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		out = append(out, filepath.Join(root, e.Name()))
+	}
+	return out
 }
 
 func (w *Watcher) Run(quit <-chan struct{}) {
@@ -55,25 +65,34 @@ func (w *Watcher) Run(quit <-chan struct{}) {
 		<-quit
 		return
 	}
-
 	for {
-		select {
-		case <-quit:
+		if !w.dispatchOne(quit) {
 			return
-		case event, ok := <-w.fsw.Events:
-			if !ok {
-				return
-			}
-			if event.Op&fsnotify.Create == 0 {
-				continue
-			}
-			w.handleCreate(event.Name)
-		case err, ok := <-w.fsw.Errors:
-			if !ok {
-				return
-			}
-			w.logger.Printf("watcher: error: %v", err)
 		}
+	}
+}
+
+// dispatchOne reads one event from the watcher and dispatches it.
+// Returns false to signal "stop the Run loop" (quit closed or one of
+// the fsnotify channels closed); true to keep going.
+func (w *Watcher) dispatchOne(quit <-chan struct{}) bool {
+	select {
+	case <-quit:
+		return false
+	case event, ok := <-w.fsw.Events:
+		if !ok {
+			return false
+		}
+		if event.Op&fsnotify.Create != 0 {
+			w.handleCreate(event.Name)
+		}
+		return true
+	case err, ok := <-w.fsw.Errors:
+		if !ok {
+			return false
+		}
+		w.logger.Printf("watcher: error: %v", err)
+		return true
 	}
 }
 
@@ -105,6 +124,6 @@ func (w *Watcher) handleCreate(path string) {
 
 func (w *Watcher) Close() {
 	if w.fsw != nil {
-		w.fsw.Close()
+		_ = w.fsw.Close()
 	}
 }

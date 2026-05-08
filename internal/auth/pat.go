@@ -42,7 +42,7 @@ func PromptPAT() (Token, error) {
 }
 
 func validateToken(token string) error {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func validateToken(token string) error {
 	}
 	resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("invalid token (HTTP %d)", resp.StatusCode)
 	}
 	return nil
