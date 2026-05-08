@@ -1,34 +1,24 @@
-# golangci-lint configuration. Tier-1 quality gate, mirrored from
-# tkach's clippy.toml + ci-checks.yml combo.
+# golangci-lint v2 configuration. Tier-1 quality gate.
 #
-# Equivalents:
+# Equivalents to tkach's clippy.toml + ci-checks.yml combo:
 #   tkach cognitive_complexity_threshold = 7  → gocyclo min-complexity 15
-#                                               + funlen lines 80 (Go is more verbose than Rust)
+#                                               (Go is more verbose than Rust)
 #   tkach too_many_lines_threshold = 200      → funlen lines 200
-#   tkach `set -eo pipefail`-strict CI         → fail-fast on every linter
 #
-# Adjust thresholds with care — they are the project's current pressure
-# point against complexity drift, not a starting cap.
+# v2 schema docs: https://golangci-lint.run/usage/configuration/
+
+version: "2"
 
 run:
   timeout: 5m
-  # Targets the Go version golangci-lint itself can compile against,
-  # not the project's go.mod (which is 1.26). golangci-lint-action@v6
-  # bundles v1.64.x which is built with Go 1.24, and refuses to load a
-  # config targeting a higher Go version than its own build. Bumping
-  # to v2 requires migrating this config to the v2 schema; deferred.
-  # Pinning at 1.24 means lints assume Go 1.24 stdlib for feature gating
-  # (most lint rules don't care about the minor version anyway).
-  go: "1.24"
   tests: true
   modules-download-mode: readonly
 
 linters:
-  disable-all: true
+  default: none
   enable:
     # Default-recommended set
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -60,80 +50,77 @@ linters:
     - wastedassign
     - whitespace
 
-linters-settings:
-  gocyclo:
-    min-complexity: 15
+  settings:
+    gocyclo:
+      min-complexity: 15
 
-  funlen:
-    lines: 200
-    statements: 80
+    funlen:
+      lines: 200
+      statements: 80
 
-  gosec:
-    excludes:
-      # G104 (errcheck duplicate) — already handled by errcheck.
-      - G104
+    gosec:
+      excludes:
+        # G104 (errcheck duplicate) — already handled by errcheck.
+        - G104
 
-  govet:
-    enable-all: true
-    disable:
-      # fieldalignment is style not correctness; surfaces a lot of
-      # false-positive "fix this for 8 bytes" noise on small structs.
-      - fieldalignment
+    govet:
+      enable-all: true
+      disable:
+        # fieldalignment is style not correctness; surfaces a lot of
+        # false-positive "fix this for 8 bytes" noise on small structs.
+        - fieldalignment
 
-  revive:
+    revive:
+      rules:
+        - name: var-declaration
+        - name: package-comments
+        - name: dot-imports
+        - name: blank-imports
+        - name: context-as-argument
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: unused-parameter
+          disabled: true # noisy on cobra command callbacks
+
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+
+    exhaustive:
+      default-signifies-exhaustive: true
+
+    misspell:
+      locale: US
+
+  exclusions:
     rules:
-      - name: var-declaration
-      - name: package-comments
-      - name: dot-imports
-      - name: blank-imports
-      - name: context-as-argument
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: if-return
-      - name: increment-decrement
-      - name: var-naming
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: indent-error-flow
-      - name: superfluous-else
-      - name: unreachable-code
-      - name: redefines-builtin-id
-      - name: unused-parameter
-        disabled: true # noisy on cobra command callbacks
-
-  errorlint:
-    errorf: true
-    asserts: true
-    comparison: true
-
-  exhaustive:
-    default-signifies-exhaustive: true
-
-  misspell:
-    locale: US
-
-issues:
-  exclude-rules:
-    # Test helpers legitimately have long table-driven setups.
-    - path: _test\.go
-      linters:
-        - funlen
-        - gocyclo
-        - gosec       # G404 random in tests, etc.
-        - errcheck    # close/cleanup paths in tests
-        - gocritic
-    # Generated agent docs JSON / cobra glue is naturally repetitive.
-    - path: internal/docs/
-      linters:
-        - funlen
-    # Bubble Tea reducer-style update funcs are switch-heavy by design.
-    - path: internal/(agent|aliasmgr|setup|migrate)/.*tui.*\.go
-      linters:
-        - gocyclo
-        - funlen
-        - gocognit
-  max-issues-per-linter: 0
-  max-same-issues: 0
+      # Test helpers legitimately have long table-driven setups.
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocyclo
+          - gosec       # G404 random in tests, etc.
+          - errcheck    # close/cleanup paths in tests
+          - gocritic
+      # Generated agent docs JSON / cobra glue is naturally repetitive.
+      - path: internal/docs/
+        linters:
+          - funlen
+      # Bubble Tea reducer-style update funcs are switch-heavy by design.
+      - path: internal/(agent|aliasmgr|setup|migrate)/.*tui.*\.go
+        linters:
+          - gocyclo
+          - funlen
