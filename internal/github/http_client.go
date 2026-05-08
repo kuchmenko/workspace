@@ -30,7 +30,7 @@ func (c *httpClient) do(req *http.Request) (*http.Response, error) {
 }
 
 func (c *httpClient) CurrentUser() (string, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		return "", err
 	}
@@ -40,7 +40,7 @@ func (c *httpClient) CurrentUser() (string, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub API /user returned %d", resp.StatusCode)
 	}
 
@@ -58,7 +58,7 @@ func (c *httpClient) FetchRepos() ([]Repo, error) {
 
 	var repos []Repo
 	for url != "" {
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +70,7 @@ func (c *httpClient) FetchRepos() ([]Repo, error) {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("GitHub API /user/repos returned %d: %s", resp.StatusCode, string(body))
 		}
 
@@ -104,7 +104,7 @@ func (c *httpClient) FetchActivity(username string) (map[string]int, error) {
 
 	counts := make(map[string]int)
 	for url != "" {
-		req, err := http.NewRequest("GET", url, nil)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return counts, nil
 		}
@@ -116,7 +116,7 @@ func (c *httpClient) FetchActivity(username string) (map[string]int, error) {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		if resp.StatusCode != 200 {
+		if resp.StatusCode != http.StatusOK {
 			return counts, nil
 		}
 

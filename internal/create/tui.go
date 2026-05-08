@@ -16,7 +16,7 @@ import (
 
 // state tracks where the TUI is in its lifecycle. The transitions are
 // linear modulo retry: loadingOwners → form ⇄ errored → creating →
-// done. Esc from any state returns to errored=cancelled or quits.
+// done. Esc from any state returns to errored=canceled or quits.
 type state int
 
 const (
@@ -90,8 +90,8 @@ type CreateModel struct {
 	height int
 
 	// Outputs collected by Run after Program exits.
-	result    *Result
-	cancelled bool
+	result   *Result
+	canceled bool
 }
 
 // NewCreateModel constructs the model with sane defaults wired from
@@ -324,7 +324,7 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateLoadingOwners:
 		switch msg.String() {
 		case "ctrl+c", "esc":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 		return m, nil
@@ -332,7 +332,7 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateErrored:
 		switch msg.String() {
 		case "ctrl+c", "esc", "q":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		case "enter":
 			// Retry: if owners failed to load, try again; otherwise
@@ -355,7 +355,7 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case stateCreating:
 		// Disallow input mid-creation; only Ctrl+C escapes.
 		if msg.String() == "ctrl+c" {
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 		return m, nil
@@ -364,15 +364,15 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// stateForm — main path.
 	switch msg.String() {
 	case "ctrl+c":
-		m.cancelled = true
+		m.canceled = true
 		return m, tea.Quit
 	case "esc":
 		// Esc on Create button cancels; otherwise blurs current input.
 		if m.focus == focusCreate {
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
-		m.cancelled = true
+		m.canceled = true
 		return m, tea.Quit
 	case "tab":
 		m.focus = (m.focus + 1) % focusCount
@@ -667,9 +667,9 @@ func (m CreateModel) viewDone() string {
 	b.WriteString(createTitle.Render(" ws create "))
 	b.WriteString("\n\n")
 	if m.result != nil {
-		b.WriteString(fmt.Sprintf("    project:  %s\n", createAccent.Render(m.result.Name)))
-		b.WriteString(fmt.Sprintf("    remote:   %s\n", createDim.Render(m.result.URL)))
-		b.WriteString(fmt.Sprintf("    path:     %s\n", createDim.Render(m.result.Project.Path)))
+		fmt.Fprintf(&b, "    project:  %s\n", createAccent.Render(m.result.Name))
+		fmt.Fprintf(&b, "    remote:   %s\n", createDim.Render(m.result.URL))
+		fmt.Fprintf(&b, "    path:     %s\n", createDim.Render(m.result.Project.Path))
 	}
 	b.WriteString("\n  ")
 	b.WriteString(createDim.Render("press any key to exit"))
@@ -735,7 +735,7 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	if !ok {
 		return nil, fmt.Errorf("create TUI: unexpected final model type %T", finalModel)
 	}
-	if final.cancelled {
+	if final.canceled {
 		return nil, ErrCancelled
 	}
 	if final.err != nil {
@@ -751,4 +751,4 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 // without confirming. The cobra layer maps this to a soft exit (no
 // error printed, exit 0) since cancellation is a user action, not a
 // failure.
-var ErrCancelled = errors.New("create cancelled by user")
+var ErrCancelled = errors.New("create canceled by user")

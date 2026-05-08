@@ -178,7 +178,7 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		rows := m.buildTree()
 		switch key.String() {
 		case "esc":
-			m.result = Result{Cancelled: true}
+			m.result = Result{Canceled: true}
 			return m, tea.Quit
 		case "enter":
 			m.step = stepConfirm
@@ -340,8 +340,8 @@ func (m Model) viewManage() string {
 
 		branch := dimStyle.Render(row.prefix)
 
-		b.WriteString(fmt.Sprintf("%s%s  %s  %s%s\n",
-			cursor, check, aliasStyled, branch, nameStyled))
+		fmt.Fprintf(&b, "%s%s  %s  %s%s\n",
+			cursor, check, aliasStyled, branch, nameStyled)
 	}
 
 	if len(rows) > maxV {
@@ -358,16 +358,6 @@ func (m Model) viewManage() string {
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  ↑↓ navigate  space toggle  e edit alias  enter next  esc cancel"))
 	return b.String()
-}
-
-func kindString(k itemKind) string {
-	switch k {
-	case kindGroup:
-		return "group"
-	case kindRoot:
-		return "root"
-	}
-	return "project"
 }
 
 // padRight pads a possibly-styled string with trailing spaces so that its

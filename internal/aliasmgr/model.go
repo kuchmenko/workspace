@@ -37,7 +37,7 @@ type item struct {
 // Result is returned to the caller after the TUI exits.
 type Result struct {
 	Confirmed bool
-	Cancelled bool
+	Canceled  bool
 	Aliases   map[string]string
 }
 
@@ -149,7 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
-			m.result = Result{Cancelled: true}
+			m.result = Result{Canceled: true}
 			return m, tea.Quit
 		}
 	}

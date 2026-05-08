@@ -94,7 +94,6 @@ type AddModel struct {
 	// cloning.
 	queue        []editFields      // resolved selections waiting to clone
 	currentIdx   int               // index into queue
-	currentName  string            // for spinner header
 	branchAnswer chan branchAnswer // unblocks worker goroutines
 
 	// branchPrompt.
@@ -1356,7 +1355,7 @@ func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transitionTo(addStateCloning)
 		return m, nil
 	case branchprompt.CancelledMsg:
-		m.resolveBranch("", errors.New("user cancelled branch selection"))
+		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.transitionTo(addStateCloning)
 		return m, nil
 	}
@@ -1517,7 +1516,7 @@ func sourceErrHint(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	case errors.Is(err, context.Canceled):
-		return "cancelled"
+		return "canceled"
 	case strings.Contains(msg, "ErrNotAuthed"), strings.Contains(msg, "not authed"):
 		return "no auth"
 	case strings.Contains(strings.ToLower(msg), "rate limit"),

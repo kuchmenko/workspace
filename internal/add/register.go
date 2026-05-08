@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/kuchmenko/workspace/internal/clone"
 	"github.com/kuchmenko/workspace/internal/config"
@@ -144,21 +143,4 @@ func buildPath(group string, cat config.Category, name string) string {
 		return filepath.Join(group, name)
 	}
 	return filepath.Join(string(cat), name)
-}
-
-// describeCloneErr turns clone sentinel errors into user-facing hints.
-// Called by Run when assembling per-URL error messages.
-func describeCloneErr(err error, name string) string {
-	switch {
-	case errors.Is(err, clone.ErrAlreadyCloned):
-		return fmt.Sprintf("%s: already cloned at destination", name)
-	case errors.Is(err, clone.ErrNeedsMigration):
-		return fmt.Sprintf("%s: existing plain checkout — run `ws migrate %s`", name, name)
-	case errors.Is(err, clone.ErrPathBlocked):
-		return fmt.Sprintf("%s: non-repo files at destination path", name)
-	case errors.Is(err, clone.ErrNeedsBootstrap):
-		return fmt.Sprintf("%s: default branch ambiguous — run `ws bootstrap %s` to pick one", name, name)
-	default:
-		return fmt.Sprintf("%s: %s", name, strings.TrimSpace(err.Error()))
-	}
 }

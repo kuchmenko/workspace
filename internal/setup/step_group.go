@@ -281,7 +281,7 @@ func (m groupModel) view() string {
 			header += selectedStyle.Render(" ← move here")
 		}
 
-		b.WriteString(fmt.Sprintf("%s┌ %s (%d repos)\n", prefix, header, len(g.Repos)))
+		fmt.Fprintf(&b, "%s┌ %s (%d repos)\n", prefix, header, len(g.Repos))
 		flat++
 
 		for _, r := range g.Repos {
@@ -296,7 +296,7 @@ func (m groupModel) view() string {
 				name = selectedStyle.Render(name)
 			}
 
-			b.WriteString(fmt.Sprintf("%s%s\n", rPrefix, name))
+			fmt.Fprintf(&b, "%s%s\n", rPrefix, name)
 			flat++
 		}
 

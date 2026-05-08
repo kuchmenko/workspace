@@ -105,6 +105,6 @@ func (w *Watcher) handleCreate(path string) {
 
 func (w *Watcher) Close() {
 	if w.fsw != nil {
-		w.fsw.Close()
+		_ = w.fsw.Close()
 	}
 }

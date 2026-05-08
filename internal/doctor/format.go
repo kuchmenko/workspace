@@ -17,15 +17,6 @@ var severitySymbol = map[Severity]string{
 	Error: "✗",
 }
 
-// severityLabel is the word used when the Fixed / FixError columns
-// aren't in play — mirrors the acceptance criteria's example output.
-var severityLabel = map[Severity]string{
-	OK:    "ok",
-	Info:  "info",
-	Warn:  "warn",
-	Error: "error",
-}
-
 // WriteText renders the report in the human-readable format shown in the
 // issue. Grouping is: "System" block first, then one block per project
 // in insertion order. Findings inside a block are printed in the order

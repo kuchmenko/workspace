@@ -21,7 +21,7 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "n", "N":
-			m.result = Result{Cancelled: true}
+			m.result = Result{Canceled: true}
 			return m, tea.Quit
 		case "esc":
 			m.step = stepManage
@@ -69,8 +69,8 @@ func (m Model) viewConfirm() string {
 		if conflictPath, conflict := alias.ShellConflict(r.Name); conflict {
 			warning = warnStyle.Render(fmt.Sprintf("  ⚠ shadows %s", conflictPath))
 		}
-		b.WriteString(fmt.Sprintf("  %s  →  %s%s\n",
-			nameCol, dimStyle.Render(path), warning))
+		fmt.Fprintf(&b, "  %s  →  %s%s\n",
+			nameCol, dimStyle.Render(path), warning)
 	}
 
 	b.WriteString("\n")
