@@ -259,4 +259,3 @@ func IsAuthErr(err error) bool {
 func IsRepoExistsErr(err error) bool {
 	return errors.Is(err, errRepoExists)
 }
-

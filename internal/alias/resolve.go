@@ -35,10 +35,10 @@ func (k TargetKind) String() string {
 
 // Resolved is a fully-resolved alias entry.
 type Resolved struct {
-	Name   string     // alias name (key)
-	Target string     // raw target (project or group key)
+	Name   string // alias name (key)
+	Target string // raw target (project or group key)
 	Kind   TargetKind
-	Path   string     // absolute filesystem path
+	Path   string // absolute filesystem path
 }
 
 // Resolve looks up a single alias and returns its absolute path.

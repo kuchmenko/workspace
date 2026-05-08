@@ -28,10 +28,10 @@ const (
 )
 
 type item struct {
-	name     string // project or group key
-	kind     itemKind
-	alias    string // current alias name (empty if not aliased)
-	checked  bool   // selected to have an alias
+	name    string // project or group key
+	kind    itemKind
+	alias   string // current alias name (empty if not aliased)
+	checked bool   // selected to have an alias
 }
 
 // Result is returned to the caller after the TUI exits.
@@ -217,13 +217,13 @@ var (
 			Background(lipgloss.Color("6")).
 			Padding(0, 1)
 
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	checkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	uncheckStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	selectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	cursorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	checkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	uncheckStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	warnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	groupNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
 	rootNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)

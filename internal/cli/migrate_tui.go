@@ -203,9 +203,9 @@ const (
 	mstDirty
 	mstStash
 	mstDetached
-	mstAlready  // already migrated, skip
-	mstMissing  // not on disk, skip
-	mstNotRepo  // garbage, skip
+	mstAlready // already migrated, skip
+	mstMissing // not on disk, skip
+	mstNotRepo // garbage, skip
 )
 
 func (s migrateState) label() string {
@@ -256,9 +256,9 @@ func (p *migratePlan) Bucket(s migrateState) []migratePlanItem {
 type migrateStep int
 
 const (
-	mStepPlan migrateStep = iota
-	mStepDecision    // per-project decision (dirty/stash/detached)
-	mStepMigrating   // running migrate.MigrateProject
+	mStepPlan      migrateStep = iota
+	mStepDecision              // per-project decision (dirty/stash/detached)
+	mStepMigrating             // running migrate.MigrateProject
 	mStepDone
 )
 

@@ -117,4 +117,3 @@ func TestScanPlan_OnlyFilter(t *testing.T) {
 		t.Errorf("only-filter scan: got %v, want [b]", plan.Items)
 	}
 }
-
