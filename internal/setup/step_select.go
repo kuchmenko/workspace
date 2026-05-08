@@ -280,9 +280,9 @@ func (m selectModel) view() string {
 			privLabel = dimStyle.Render(" ◆")
 		}
 
-		b.WriteString(fmt.Sprintf("%s %s %s%s  %s  %s\n",
+		fmt.Fprintf(&b, "%s %s %s%s  %s  %s\n",
 			prefix, check, name, privLabel,
-			dimStyle.Render(pushed), activity))
+			dimStyle.Render(pushed), activity)
 	}
 
 	// Scrollbar hint
@@ -300,9 +300,9 @@ func (m selectModel) view() string {
 	// Footer
 	b.WriteString("\n")
 	selCount := m.selectedCount()
-	b.WriteString(fmt.Sprintf("  Selected: %s / %d",
+	fmt.Fprintf(&b, "  Selected: %s / %d",
 		selectedStyle.Render(fmt.Sprintf("%d", selCount)),
-		len(m.all)))
+		len(m.all))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  ↑↓ navigate  space select  ctrl+a toggle all  enter next  esc quit"))
 

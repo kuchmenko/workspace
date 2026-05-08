@@ -110,11 +110,12 @@ func runTool(ctx context.Context, cmd string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, cmd, args...)
 	out, err := c.Output()
 	if err != nil {
-		// Distinguish "ctx cancelled / deadline" from "tool failed".
+		// Distinguish "ctx canceled / deadline" from "tool failed".
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			return "", fmt.Errorf("%s: %s", cmd, strings.TrimSpace(string(exitErr.Stderr)))
 		}
 		return "", fmt.Errorf("%s: %w", cmd, err)

@@ -104,8 +104,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.inputMode = true
 		return m, m.input.Focus()
 	case "esc":
-		cancelled := CancelledMsg{Project: m.project}
-		return m, func() tea.Msg { return cancelled }
+		canceled := CancelledMsg{Project: m.project}
+		return m, func() tea.Msg { return canceled }
 	}
 	return m, nil
 }

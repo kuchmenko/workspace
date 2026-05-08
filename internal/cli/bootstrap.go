@@ -125,8 +125,8 @@ func runBootstrap(args []string, dryRun bool) error {
 
 	// Errors and notifications happen AFTER the TUI exits so the terminal is
 	// clean and full git stderr can be printed without breaking layout.
-	if final.cancelled {
-		fmt.Println("Bootstrap cancelled by user.")
+	if final.canceled {
+		fmt.Println("Bootstrap canceled by user.")
 		return nil
 	}
 
@@ -253,7 +253,7 @@ type bootstrapModel struct {
 	current   int // index into toClone
 	successes []string
 	errors    []bootstrapError
-	cancelled bool
+	canceled  bool
 
 	spinner spinner.Model
 	sidecar *bootstrap.Sidecar
@@ -271,7 +271,6 @@ type branchAnswer struct {
 }
 
 // Custom messages for the async clone loop.
-type cloneStartMsg struct{ index int }
 type cloneDoneMsg struct {
 	index   int
 	project string
@@ -322,7 +321,7 @@ func (m bootstrapModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	}
@@ -361,7 +360,7 @@ func (m bootstrapModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stepChangedAt = time.Now()
 			return m, tea.Batch(m.spinner.Tick, m.startClone(0))
 		case "n", "N", "escape":
-			m.cancelled = true
+			m.canceled = true
 			return m, tea.Quit
 		}
 	}
@@ -474,7 +473,7 @@ func (m bootstrapModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case branchprompt.CancelledMsg:
 		// User refuses to pick → treat as error for this project.
-		m.resolveBranch("", errors.New("user cancelled branch selection"))
+		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.step = bsStepCloning
 		m.stepChangedAt = time.Now()
 		return m, nil
@@ -651,13 +650,6 @@ var (
 
 	bsHelpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("8"))
-
-	bsCursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
-			Bold(true)
-
-	bsSelectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6"))
 
 	bsCheckStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("2"))

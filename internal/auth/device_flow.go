@@ -71,7 +71,7 @@ func requestDeviceCode() (deviceCodeResponse, error) {
 		"scope":     {scopes},
 	}
 
-	req, err := http.NewRequest("POST", deviceCodeURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(http.MethodPost, deviceCodeURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return deviceCodeResponse{}, err
 	}
@@ -85,7 +85,7 @@ func requestDeviceCode() (deviceCodeResponse, error) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return deviceCodeResponse{}, fmt.Errorf("device code request failed (%d): %s", resp.StatusCode, string(body))
 	}
 
@@ -112,7 +112,7 @@ func pollForToken(dc deviceCodeResponse) (Token, error) {
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 		}
 
-		req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+		req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
 		if err != nil {
 			return Token{}, err
 		}

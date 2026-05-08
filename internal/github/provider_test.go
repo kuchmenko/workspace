@@ -282,7 +282,7 @@ func TestClientProvider_RespectsCancelledContext(t *testing.T) {
 	p := &clientProvider{client: fc, name: "fake"}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // pre-cancelled
+	cancel() // pre-canceled
 
 	_, err := p.SuggestRepos(ctx, 10)
 	if !errors.Is(err, context.Canceled) {

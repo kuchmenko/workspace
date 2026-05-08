@@ -20,13 +20,3 @@ func runGit(repoPath string, args ...string) error {
 	}
 	return nil
 }
-
-func runGitOut(repoPath string, args ...string) (string, error) {
-	full := append([]string{"-C", repoPath}, args...)
-	cmd := exec.Command("git", full...)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}

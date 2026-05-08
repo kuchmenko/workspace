@@ -19,7 +19,7 @@ func TestDetect_UnsupportedPlatform(t *testing.T) {
 }
 
 func TestRead_ContextCancelled(t *testing.T) {
-	// Pre-cancelled context: regardless of whether a clipboard tool
+	// Pre-canceled context: regardless of whether a clipboard tool
 	// exists, detect() may succeed and runTool is invoked — it must
 	// surface ctx.Err(). If no tool → ErrUnavailable. Either outcome
 	// is acceptable; unsupported platforms test ErrUnavailable above.
@@ -28,7 +28,7 @@ func TestRead_ContextCancelled(t *testing.T) {
 
 	_, err := Read(ctx)
 	if err == nil {
-		t.Fatal("expected error from cancelled context or missing tool")
+		t.Fatal("expected error from canceled context or missing tool")
 	}
 	// Two valid outcomes: tool missing → ErrUnavailable, tool present → ctx err.
 	if !errors.Is(err, ErrUnavailable) && !errors.Is(err, context.Canceled) {

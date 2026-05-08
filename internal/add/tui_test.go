@@ -60,27 +60,6 @@ func newTestModel(t *testing.T, sources []Source) AddModel {
 	})
 }
 
-// staticSource always returns the same suggestions.
-type staticSource struct {
-	name  string
-	items []Suggestion
-}
-
-func (s *staticSource) Name() string { return s.name }
-func (s *staticSource) FetchSuggestions(_ ctxLike) ([]Suggestion, error) {
-	return s.items, nil
-}
-
-// ctxLike is the subset of context.Context that fakeSource needs —
-// duplicated here so the test file doesn't need to import context for
-// the few faux sources.
-type ctxLike interface {
-	Done() <-chan struct{}
-	Err() error
-	Deadline() (time.Time, bool)
-	Value(key any) any
-}
-
 func TestAddModel_GatherDone_NonEmpty_TransitionsToBrowse(t *testing.T) {
 	m := newTestModel(t, nil)
 	// One source returning two suggestions — model must transition
@@ -226,7 +205,7 @@ func TestAddModel_Browse_Filter_NarrowsView(t *testing.T) {
 		t.Fatal("expected filterMode after /")
 	}
 	// Type "alpha".
-	for _, r := range []rune("alpha") {
+	for _, r := range "alpha" {
 		m, _ = driveModel(m, keyRunes(string(r)))
 	}
 	view := m.filteredView()
@@ -363,7 +342,7 @@ func TestAddModel_Edit_TypingNameUpdatesPath(t *testing.T) {
 		Category: config.CategoryPersonal,
 	}
 	m.editFocus = 0 // Name
-	for _, r := range []rune("acme") {
+	for _, r := range "acme" {
 		m, _ = driveModel(m, keyRunes(string(r)))
 	}
 	if m.editFields.Name != "acme" {

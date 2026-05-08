@@ -753,7 +753,7 @@ func (m *Model) updateFlash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // exitFlash leaves flash mode. For global search (S), if the user
-// cancelled (jumped=false), restore the original expansion state.
+// canceled (jumped=false), restore the original expansion state.
 // If they jumped to an item, keep expansions so the target is visible.
 func (m *Model) exitFlash(jumped bool) {
 	m.mode = viewList
@@ -1470,13 +1470,6 @@ func (m *Model) viewNewWorktree() string {
 
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
 		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // ---- styles ----
