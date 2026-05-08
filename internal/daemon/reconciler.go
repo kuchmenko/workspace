@@ -134,7 +134,22 @@ func (r *Reconciler) Tick() {
 	if tomlChanged {
 		r.logger.Printf("reconciler: workspace.toml changed on disk, reloaded")
 	}
+	r.recordValidationIssues(ws)
 	r.reconcileProjects(ws)
+}
+
+// recordValidationIssues runs ws.Validate() and turns each ValidationIssue
+// into a conflict-store entry. Currently the only issue kind is duplicate
+// branch names within a project (KindBranchDuplicate), which arises when
+// two machines ws-worktree-add the same branch concurrently and union-merge
+// concatenates their [[branches]] writes into the same project.
+func (r *Reconciler) recordValidationIssues(ws *config.Workspace) {
+	for _, issue := range ws.Validate() {
+		switch issue.Kind {
+		case config.ValidationDuplicateBranch:
+			r.recordProjectConflict(issue.Project, issue.Branch, conflict.KindBranchDuplicate, issue.Detail)
+		}
+	}
 }
 
 // =============================================================================
@@ -277,6 +292,7 @@ func (r *Reconciler) clearTOMLConflicts() error {
 func (r *Reconciler) reconcileProjects(ws *config.Workspace) {
 	machine := loadMachineName()
 	now := time.Now()
+	dirty := false
 	for name, proj := range ws.Projects {
 		if proj.Status != config.StatusActive {
 			continue
@@ -287,15 +303,29 @@ func (r *Reconciler) reconcileProjects(ws *config.Workspace) {
 		if bs, ok := r.backoff[name]; ok && now.Before(bs.nextAllowedAt) {
 			continue
 		}
-		if err := r.syncProject(name, proj, machine); err != nil {
+		touched := false
+		if err := r.syncProject(name, &proj, machine, &touched); err != nil {
 			r.recordBackoff(name, err)
 		} else {
 			r.resetBackoff(name)
 		}
+		if touched {
+			ws.Projects[name] = proj
+			dirty = true
+		}
+	}
+	if dirty {
+		// Persist metadata refreshes (last_active_*, KindBranchOrphan
+		// clearings) so Phase 1 of the next tick commits and pushes
+		// them. Save's empty-machines GC also fires here, completing
+		// the legacy-autopush migration started at Load time.
+		if err := config.Save(r.root, ws); err != nil {
+			r.logger.Printf("reconciler: save workspace.toml after metadata refresh: %v", err)
+		}
 	}
 }
 
-func (r *Reconciler) syncProject(name string, proj config.Project, machine string) error {
+func (r *Reconciler) syncProject(name string, proj *config.Project, machine string, touched *bool) error {
 	mainPath := filepath.Join(r.root, proj.Path)
 	barePath := layout.BarePath(mainPath)
 
@@ -318,7 +348,7 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 		if !r.autoBootstrap || !proj.SyncEnabled() {
 			return nil
 		}
-		return r.autoCloneMissing(name, proj)
+		return r.autoCloneMissing(name, *proj)
 	}
 
 	if bareMissing {
@@ -369,39 +399,6 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 			continue
 		}
 
-		// Branches we own → push if ahead. Two ways to be "owned":
-		//   1. wt/<this-machine>/* prefix (the default sync convention).
-		//   2. Explicit opt-in via project.autopush.branches in
-		//      workspace.toml, populated by `ws worktree new --auto-push`
-		//      and `ws worktree promote`. Lets repository-native branch
-		//      names (e.g. feat/fix-login) participate in auto-sync
-		//      after they have been promoted out of the wt/* namespace.
-		ownedByPrefix := machine != "" && strings.HasPrefix(wt.Branch, layout.BranchPrefix(machine))
-		ownedByAutopush := proj.AutopushAllows(wt.Branch)
-		if ownedByPrefix || ownedByAutopush {
-			ahead, behind, has := git.AheadBehind(wt.Path, wt.Branch)
-			if !has {
-				// First push for this branch.
-				if err := git.PushBranch(wt.Path, wt.Branch); err != nil {
-					r.recordProjectConflict(name, wt.Branch, conflict.KindBranchDivergence, err.Error())
-				}
-				continue
-			}
-			if behind > 0 && ahead > 0 {
-				r.recordProjectConflict(name, wt.Branch, conflict.KindBranchDivergence,
-					fmt.Sprintf("ahead %d, behind %d — manual resolve needed", ahead, behind))
-				continue
-			}
-			if ahead > 0 {
-				if err := git.PushBranch(wt.Path, wt.Branch); err != nil {
-					r.recordProjectConflict(name, wt.Branch, conflict.KindBranchDivergence, err.Error())
-					continue
-				}
-				_ = r.clearProjectConflict(name, wt.Branch, conflict.KindBranchDivergence)
-			}
-			continue
-		}
-
 		// Main worktree on the project's default branch → ff-pull when safe.
 		if isMain {
 			if git.IsDirty(wt.Path) {
@@ -424,11 +421,46 @@ func (r *Reconciler) syncProject(name string, proj config.Project, machine strin
 			continue
 		}
 
-		// Other people's wt/<host>/* branches: nothing to do. The Fetch
-		// above, combined with remote.origin.fetch=+refs/heads/*:
-		// refs/remotes/origin/*, keeps refs/remotes/origin/wt/<host>/*
-		// in sync so `ws status` and friends see the latest remote SHAs.
+		// Sibling worktrees: no push from the daemon. Refresh metadata for
+		// branches the user is actively committing to so `ws worktree list`
+		// and the workspace.toml registry reflect the latest activity.
+		// Branches not yet in [[branches]] (legacy wt/<machine>/* checkouts
+		// that pre-date this PR) are silently skipped — they'll get
+		// re-registered when the user runs `ws worktree add` against them.
+		if machine != "" && proj.LookupBranch(wt.Branch) != nil {
+			ahead, _, has := git.AheadBehind(wt.Path, wt.Branch)
+			if has && ahead > 0 {
+				if proj.TouchActive(wt.Branch, machine, time.Now()) {
+					*touched = true
+				}
+			}
+		}
 	}
+
+	// Branch-orphan detection: any registered branch whose last_pushed_at
+	// is set was observed on origin at least once, so its origin ref
+	// should still exist post-fetch. If it doesn't — the branch was
+	// deleted on origin (typical: PR merged with auto-delete-branch).
+	// Record the orphan and let the user decide via `ws sync resolve`.
+	// Re-appearance on the next tick auto-clears the conflict.
+	//
+	// Branches with empty last_pushed_at are local-only (created via
+	// `ws worktree add` and never pushed) — origin's missing ref is
+	// expected and must NOT trip orphan detection.
+	for _, b := range proj.Branches {
+		if b.LastPushedAt == "" {
+			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
+			continue
+		}
+		if git.HasRemoteBranch(barePath, "origin", b.Name) {
+			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
+			continue
+		}
+		details := fmt.Sprintf("origin ref refs/remotes/origin/%s missing post-fetch (last pushed by %s at %s)",
+			b.Name, b.LastPushedMachine, b.LastPushedAt)
+		r.recordProjectConflict(name, b.Name, conflict.KindBranchOrphan, details)
+	}
+
 	return nil
 }
 

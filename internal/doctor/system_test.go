@@ -101,7 +101,7 @@ func TestCheckConflicts_Mine(t *testing.T) {
 		Workspace: absWsRoot,
 		Project:   "demo",
 		Branch:    "wt/test/foo",
-		Kind:      conflict.KindBranchDivergence,
+		Kind:      conflict.KindBranchOrphan,
 		Details:   json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatalf("Record: %v", err)

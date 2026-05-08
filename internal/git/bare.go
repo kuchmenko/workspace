@@ -115,6 +115,15 @@ func HasBranch(repoPath, branch string) bool {
 	return cmd.Run() == nil
 }
 
+// HasRemoteBranch reports whether refs/remotes/<remote>/<branch> exists
+// in repoPath. The reconciler uses this post-fetch to detect branches
+// that were deleted on origin (PR-merge auto-delete, manual
+// `git push origin --delete`) and surface them as KindBranchOrphan.
+func HasRemoteBranch(repoPath, remote, branch string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch)
+	return cmd.Run() == nil
+}
+
 // RenameBranch renames a local branch. Works on both bare and non-bare repos.
 func RenameBranch(repoPath, oldName, newName string) error {
 	cmd := exec.Command("git", "-C", repoPath, "branch", "-m", oldName, newName)
