@@ -12,10 +12,14 @@
 
 run:
   timeout: 5m
-  # Pin one minor below go.mod (currently go.mod = 1.26, golangci-lint
-  # tracks one stable release behind). Lints don't care about the
-  # exact stdlib minor; this is just feature-availability gating.
-  go: "1.25"
+  # Targets the Go version golangci-lint itself can compile against,
+  # not the project's go.mod (which is 1.26). golangci-lint-action@v6
+  # bundles v1.64.x which is built with Go 1.24, and refuses to load a
+  # config targeting a higher Go version than its own build. Bumping
+  # to v2 requires migrating this config to the v2 schema; deferred.
+  # Pinning at 1.24 means lints assume Go 1.24 stdlib for feature gating
+  # (most lint rules don't care about the minor version anyway).
+  go: "1.24"
   tests: true
   modules-download-mode: readonly
 
