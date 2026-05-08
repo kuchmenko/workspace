@@ -130,28 +130,51 @@ func matchKey(c Conflict) string {
 // refreshes the existing record's DetectedAt and Details. Returns true when
 // a new conflict was inserted (so callers can decide whether to notify).
 func (s *Store) Record(c Conflict) (bool, error) {
+	c = ensureRecordDefaults(c)
+	f, err := s.load()
+	if err != nil {
+		return false, err
+	}
+	if i := findMatch(f.Conflicts, c); i >= 0 {
+		refreshExisting(&f.Conflicts[i], c)
+		return false, s.save(f)
+	}
+	f.Conflicts = append(f.Conflicts, c)
+	return true, s.save(f)
+}
+
+// ensureRecordDefaults fills in the auto-generated ID and the
+// "detected just now" timestamp when the caller didn't set them.
+func ensureRecordDefaults(c Conflict) Conflict {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
 	}
 	if c.DetectedAt.IsZero() {
 		c.DetectedAt = time.Now().UTC()
 	}
-	f, err := s.load()
-	if err != nil {
-		return false, err
-	}
-	key := matchKey(c)
-	for i := range f.Conflicts {
-		if matchKey(f.Conflicts[i]) == key {
-			f.Conflicts[i].DetectedAt = c.DetectedAt
-			if c.Details != nil {
-				f.Conflicts[i].Details = c.Details
-			}
-			return false, s.save(f)
+	return c
+}
+
+// findMatch returns the index of the first conflict in `xs` whose
+// match-key matches `c`, or -1 when none does.
+func findMatch(xs []Conflict, c Conflict) int {
+	target := matchKey(c)
+	for i := range xs {
+		if matchKey(xs[i]) == target {
+			return i
 		}
 	}
-	f.Conflicts = append(f.Conflicts, c)
-	return true, s.save(f)
+	return -1
+}
+
+// refreshExisting bumps the existing record's DetectedAt and copies
+// the new Details (if any). Skips Details when the caller passed nil
+// so a refresh-without-details doesn't blank the recorded reason.
+func refreshExisting(existing *Conflict, fresh Conflict) {
+	existing.DetectedAt = fresh.DetectedAt
+	if fresh.Details != nil {
+		existing.Details = fresh.Details
+	}
 }
 
 // Clear removes any conflict matching workspace+project+branch+kind. Used

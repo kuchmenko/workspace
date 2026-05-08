@@ -34,20 +34,30 @@ func (w *Watcher) Add(root string) {
 	if w.fsw == nil {
 		return
 	}
-	// Watch top-level group directories
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		dir := filepath.Join(root, e.Name())
+	for _, dir := range topLevelGroupDirs(root) {
 		if err := w.fsw.Add(dir); err != nil {
 			w.logger.Printf("watcher: cannot watch %s: %v", dir, err)
 		}
 	}
+}
+
+// topLevelGroupDirs lists immediate children of `root` that are
+// candidates for the watcher: directories, non-dotfile, non-empty.
+// Errors reading the root return an empty slice — the caller treats
+// the watcher as best-effort.
+func topLevelGroupDirs(root string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		out = append(out, filepath.Join(root, e.Name()))
+	}
+	return out
 }
 
 func (w *Watcher) Run(quit <-chan struct{}) {
