@@ -57,6 +57,28 @@ func checkDaemon() Finding {
 // If every kind is either absent or live, returns a single OK finding so
 // the user sees that the check actually ran.
 func checkStaleSidecars(wsRoot string) Finding {
+	stale := findStaleSidecars(wsRoot)
+	if len(stale) == 0 {
+		return Finding{
+			Scope:    "system",
+			Check:    "sidecar",
+			Severity: OK,
+			Message:  "no stale sidecars",
+		}
+	}
+	return Finding{
+		Scope:    "system",
+		Check:    "sidecar",
+		Severity: Warn,
+		Message:  fmt.Sprintf("stale sidecar(s) blocking daemon: %v", sidecarKindNames(stale)),
+		FixHint:  "remove stale sidecar file(s)",
+		Fix:      func() error { return deleteSidecars(wsRoot, stale) },
+	}
+}
+
+// findStaleSidecars returns the sidecar kinds whose pid is no longer
+// alive in `wsRoot`. Skips kinds with no sidecar present and live ones.
+func findStaleSidecars(wsRoot string) []sidecar.Kind {
 	kinds := []sidecar.Kind{sidecar.KindBootstrap, sidecar.KindMigrate}
 	var stale []sidecar.Kind
 	for _, k := range kinds {
@@ -68,36 +90,29 @@ func checkStaleSidecars(wsRoot string) Finding {
 			stale = append(stale, k)
 		}
 	}
-	if len(stale) == 0 {
-		return Finding{
-			Scope:    "system",
-			Check:    "sidecar",
-			Severity: OK,
-			Message:  "no stale sidecars",
+	return stale
+}
+
+// sidecarKindNames maps a sidecar.Kind slice to a string slice for
+// the message-formatting path.
+func sidecarKindNames(kinds []sidecar.Kind) []string {
+	out := make([]string, 0, len(kinds))
+	for _, k := range kinds {
+		out = append(out, string(k))
+	}
+	return out
+}
+
+// deleteSidecars removes every sidecar in `kinds` from `wsRoot`.
+// Used as the Fix function for the stale-sidecar Finding; collapses
+// the multi-kind cleanup into one user action.
+func deleteSidecars(wsRoot string, kinds []sidecar.Kind) error {
+	for _, k := range kinds {
+		if err := sidecar.Delete(wsRoot, k); err != nil {
+			return fmt.Errorf("delete %s sidecar: %w", k, err)
 		}
 	}
-	// Collapse multi-kind stale into one finding; the fix removes all of
-	// them. Listing each separately would spam the report for a one-step
-	// recovery.
-	kindNames := make([]string, 0, len(stale))
-	for _, k := range stale {
-		kindNames = append(kindNames, string(k))
-	}
-	return Finding{
-		Scope:    "system",
-		Check:    "sidecar",
-		Severity: Warn,
-		Message:  fmt.Sprintf("stale sidecar(s) blocking daemon: %v", kindNames),
-		FixHint:  "remove stale sidecar file(s)",
-		Fix: func() error {
-			for _, k := range stale {
-				if err := sidecar.Delete(wsRoot, k); err != nil {
-					return fmt.Errorf("delete %s sidecar: %w", k, err)
-				}
-			}
-			return nil
-		},
-	}
+	return nil
 }
 
 // checkConflicts surfaces any entries in ~/.local/state/ws/conflicts.json
@@ -105,30 +120,13 @@ func checkStaleSidecars(wsRoot string) Finding {
 // FixHint points at `ws sync resolve`, which is the single entry point
 // for conflict resolution.
 func checkConflicts(wsRoot string) Finding {
-	store, err := conflict.Open()
+	mine, err := loadProjectConflicts(wsRoot)
 	if err != nil {
 		return Finding{
 			Scope:    "system",
 			Check:    "conflicts",
 			Severity: Warn,
-			Message:  fmt.Sprintf("cannot read conflict store: %v", err),
-		}
-	}
-	all, err := store.List()
-	if err != nil {
-		return Finding{
-			Scope:    "system",
-			Check:    "conflicts",
-			Severity: Warn,
-			Message:  fmt.Sprintf("cannot list conflicts: %v", err),
-		}
-	}
-	absWsRoot, _ := filepath.Abs(wsRoot)
-	var mine []conflict.Conflict
-	for _, c := range all {
-		abs, _ := filepath.Abs(c.Workspace)
-		if abs == absWsRoot {
-			mine = append(mine, c)
+			Message:  err.Error(),
 		}
 	}
 	if len(mine) == 0 {
@@ -139,14 +137,7 @@ func checkConflicts(wsRoot string) Finding {
 			Message:  "no active conflicts",
 		}
 	}
-	// Pick the oldest to surface in the message; the full list is left for
-	// `ws sync resolve` which has proper TUI.
-	oldest := mine[0]
-	for _, c := range mine[1:] {
-		if c.DetectedAt.Before(oldest.DetectedAt) {
-			oldest = c
-		}
-	}
+	oldest := oldestConflict(mine)
 	msg := fmt.Sprintf("%d active conflict(s); oldest: %s (%s, %s ago)",
 		len(mine),
 		oldest.Kind,
@@ -160,6 +151,43 @@ func checkConflicts(wsRoot string) Finding {
 		Message:  msg,
 		FixHint:  "run `ws sync resolve`",
 	}
+}
+
+// loadProjectConflicts opens the conflict store and returns the
+// conflicts whose Workspace path resolves to wsRoot. Errors from the
+// store are wrapped with a user-readable prefix so the caller can
+// drop them straight into Finding.Message.
+func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
+	store, err := conflict.Open()
+	if err != nil {
+		return nil, fmt.Errorf("cannot read conflict store: %w", err)
+	}
+	all, err := store.List()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list conflicts: %w", err)
+	}
+	absWsRoot, _ := filepath.Abs(wsRoot)
+	var mine []conflict.Conflict
+	for _, c := range all {
+		abs, _ := filepath.Abs(c.Workspace)
+		if abs == absWsRoot {
+			mine = append(mine, c)
+		}
+	}
+	return mine, nil
+}
+
+// oldestConflict picks the lowest-DetectedAt entry from a non-empty
+// slice. Used by checkConflicts to surface the most-aged conflict in
+// the doctor message; the full list lives in `ws sync resolve`.
+func oldestConflict(conflicts []conflict.Conflict) conflict.Conflict {
+	oldest := conflicts[0]
+	for _, c := range conflicts[1:] {
+		if c.DetectedAt.Before(oldest.DetectedAt) {
+			oldest = c
+		}
+	}
+	return oldest
 }
 
 func projectOrGlobal(c conflict.Conflict) string {
@@ -202,50 +230,7 @@ func checkConfig(ws *config.Workspace) Finding {
 			Message:  "workspace.toml not loaded",
 		}
 	}
-
-	var issues []string
-
-	names := make([]string, 0, len(ws.Projects))
-	for n := range ws.Projects {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
-		p := ws.Projects[name]
-		if strings.TrimSpace(p.Remote) == "" {
-			issues = append(issues, fmt.Sprintf("%s: missing remote", name))
-		}
-		if strings.TrimSpace(p.Path) == "" {
-			issues = append(issues, fmt.Sprintf("%s: missing path", name))
-		}
-		switch p.Status {
-		case config.StatusActive, config.StatusArchived, config.StatusDormant:
-		case "":
-			issues = append(issues, fmt.Sprintf("%s: missing status", name))
-		default:
-			issues = append(issues, fmt.Sprintf("%s: unknown status %q", name, p.Status))
-		}
-		switch p.Category {
-		case config.CategoryPersonal, config.CategoryWork:
-		case "":
-			// Category is optional — tolerate empty.
-		default:
-			issues = append(issues, fmt.Sprintf("%s: unknown category %q", name, p.Category))
-		}
-	}
-
-	if s := ws.Daemon.PollInterval; s != "" {
-		if !validDuration(s) {
-			issues = append(issues, fmt.Sprintf("daemon.poll_interval %q is not a valid duration", s))
-		}
-	}
-	if s := ws.Daemon.StaleThreshold; s != "" {
-		if !validDuration(s) {
-			issues = append(issues, fmt.Sprintf("daemon.stale_threshold %q is not a valid duration", s))
-		}
-	}
-
+	issues := collectConfigIssues(ws)
 	if len(issues) == 0 {
 		return Finding{
 			Scope:    "system",
@@ -261,6 +246,87 @@ func checkConfig(ws *config.Workspace) Finding {
 		Message:  fmt.Sprintf("workspace.toml has %d issue(s): %s", len(issues), strings.Join(issues, "; ")),
 		FixHint:  "edit workspace.toml by hand or re-add affected projects",
 	}
+}
+
+// collectConfigIssues runs every per-field validator in the workspace
+// and concatenates their issue messages, sorted-by-project for
+// deterministic output. Drives both the OK / Error split in
+// checkConfig and unit tests that assert specific issue strings.
+func collectConfigIssues(ws *config.Workspace) []string {
+	var issues []string
+	for _, name := range sortedProjectNames(ws.Projects) {
+		issues = append(issues, validateProject(name, ws.Projects[name])...)
+	}
+	issues = append(issues, validateDaemonDurations(ws.Daemon)...)
+	return issues
+}
+
+// sortedProjectNames returns the project names of `projects` in
+// lexical order. Used for stable check ordering in the report.
+func sortedProjectNames(projects map[string]config.Project) []string {
+	out := make([]string, 0, len(projects))
+	for n := range projects {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// validateProject returns one issue string per per-field problem in
+// the given project. Empty slice when the project record is well-formed.
+func validateProject(name string, p config.Project) []string {
+	var issues []string
+	if strings.TrimSpace(p.Remote) == "" {
+		issues = append(issues, fmt.Sprintf("%s: missing remote", name))
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		issues = append(issues, fmt.Sprintf("%s: missing path", name))
+	}
+	if msg := validateProjectStatus(name, p.Status); msg != "" {
+		issues = append(issues, msg)
+	}
+	if msg := validateProjectCategory(name, p.Category); msg != "" {
+		issues = append(issues, msg)
+	}
+	return issues
+}
+
+func validateProjectStatus(name string, s config.Status) string {
+	switch s {
+	case config.StatusActive, config.StatusArchived, config.StatusDormant:
+		return ""
+	case "":
+		return fmt.Sprintf("%s: missing status", name)
+	}
+	return fmt.Sprintf("%s: unknown status %q", name, s)
+}
+
+func validateProjectCategory(name string, c config.Category) string {
+	switch c {
+	case config.CategoryPersonal, config.CategoryWork, "":
+		// "" is tolerated — category is optional.
+		return ""
+	}
+	return fmt.Sprintf("%s: unknown category %q", name, c)
+}
+
+// validateDaemonDurations checks that any non-empty daemon duration
+// strings parse as accepted Go durations (with the optional "Nd"
+// extension). Returns one issue per malformed entry.
+func validateDaemonDurations(d config.Daemon) []string {
+	var issues []string
+	for _, pair := range []struct{ name, val string }{
+		{"daemon.poll_interval", d.PollInterval},
+		{"daemon.stale_threshold", d.StaleThreshold},
+	} {
+		if pair.val == "" {
+			continue
+		}
+		if !validDuration(pair.val) {
+			issues = append(issues, fmt.Sprintf("%s %q is not a valid duration", pair.name, pair.val))
+		}
+	}
+	return issues
 }
 
 // validDuration mirrors status.go's parseDuration — accepts a trailing

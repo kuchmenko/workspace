@@ -32,12 +32,12 @@ func (m confirmModel) view() string {
 		totalRepos += len(g.Repos)
 	}
 
-	b.WriteString(fmt.Sprintf("  %s groups, %s projects\n\n",
+	fmt.Fprintf(&b, "  %s groups, %s projects\n\n",
 		selectedStyle.Render(fmt.Sprintf("%d", len(m.groups))),
-		selectedStyle.Render(fmt.Sprintf("%d", totalRepos))))
+		selectedStyle.Render(fmt.Sprintf("%d", totalRepos)))
 
 	for _, g := range m.groups {
-		b.WriteString(fmt.Sprintf("  %s\n", groupHeaderStyle.Render(g.Name)))
+		fmt.Fprintf(&b, "  %s\n", groupHeaderStyle.Render(g.Name))
 		for _, r := range g.Repos {
 			cat := "work"
 			if r.Owner == m.username {
@@ -45,8 +45,8 @@ func (m confirmModel) view() string {
 			}
 			path := g.Name + "/" + r.Name
 
-			b.WriteString(fmt.Sprintf("    %-30s %-10s %s\n",
-				r.Name, dimStyle.Render(cat), dimStyle.Render(path)))
+			fmt.Fprintf(&b, "    %-30s %-10s %s\n",
+				r.Name, dimStyle.Render(cat), dimStyle.Render(path))
 		}
 		b.WriteString("\n")
 	}

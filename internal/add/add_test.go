@@ -38,6 +38,7 @@ func setupWorkspace(t *testing.T) (wsRoot string, ws *config.Workspace, saveFn f
 // The helper hooks up a single-commit `main` branch so CloneIntoLayout
 // can auto-resolve the default branch.
 func fakeRemote(t *testing.T, name string) string {
+	t.Helper()
 	return testutil.InitFakeRemote(t, name, "main")
 }
 

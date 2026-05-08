@@ -50,59 +50,76 @@ func newScanCmd() *cobra.Command {
 	}
 }
 
+// scanDir walks `absDir` two levels deep looking for git repositories
+// not registered in workspace.toml. The two-level depth handles the
+// <category>/<project> shape and the <category>/<group>/<project>
+// shape uniformly: at each entry, if it is itself a repo we report
+// it; otherwise we descend one more level and report inside.
+//
+// Entries beginning with "." or matching the worktree-layout siblings
+// (`*.bare`, `*-wt-*`) are silently skipped at every level — those
+// are bookkeeping siblings of already-registered projects, not
+// orphans.
 func scanDir(absDir, root, category string, knownPaths map[string]bool, found *int) error {
+	_ = category // reserved for future filtering
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
 		return err
 	}
-
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if shouldSkipScanEntry(entry) {
 			continue
 		}
-		// Worktree-layout siblings of registered projects must not be flagged
-		// as orphans. The .bare suffix marks the bare repo backing a project,
-		// and "<base>-wt-*" names mark extra worktrees created by ws worktree.
-		if strings.HasSuffix(entry.Name(), ".bare") || strings.Contains(entry.Name(), "-wt-") {
-			continue
-		}
-
 		entryPath := filepath.Join(absDir, entry.Name())
-
 		if git.IsRepo(entryPath) {
-			relPath, _ := filepath.Rel(root, entryPath)
-			if knownPaths[relPath] {
-				continue
-			}
-
-			remote, _ := git.RemoteURL(entryPath)
-			fmt.Printf("  found  %s (remote: %s)\n", relPath, remote)
-			*found++
-		} else {
-			// Recurse one level deeper (for work/<org>/<repo> structure)
-			subEntries, err := os.ReadDir(entryPath)
-			if err != nil {
-				continue
-			}
-			for _, sub := range subEntries {
-				if !sub.IsDir() || strings.HasPrefix(sub.Name(), ".") {
-					continue
-				}
-				if strings.HasSuffix(sub.Name(), ".bare") || strings.Contains(sub.Name(), "-wt-") {
-					continue
-				}
-				subPath := filepath.Join(entryPath, sub.Name())
-				if git.IsRepo(subPath) {
-					relPath, _ := filepath.Rel(root, subPath)
-					if knownPaths[relPath] {
-						continue
-					}
-					remote, _ := git.RemoteURL(subPath)
-					fmt.Printf("  found  %s (remote: %s)\n", relPath, remote)
-					*found++
-				}
-			}
+			reportIfUnknownRepo(entryPath, root, knownPaths, found)
+			continue
 		}
+		scanGroupDir(entryPath, root, knownPaths, found)
 	}
 	return nil
+}
+
+// scanGroupDir walks one level inside a non-repo entry (typical
+// <category>/<group>/ shape used for organization-grouped repos).
+// Errors reading the dir are non-fatal — scan is best-effort.
+func scanGroupDir(groupDir, root string, knownPaths map[string]bool, found *int) {
+	entries, err := os.ReadDir(groupDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if shouldSkipScanEntry(entry) {
+			continue
+		}
+		entryPath := filepath.Join(groupDir, entry.Name())
+		if git.IsRepo(entryPath) {
+			reportIfUnknownRepo(entryPath, root, knownPaths, found)
+		}
+	}
+}
+
+// shouldSkipScanEntry encapsulates the "this directory is not a
+// scan candidate" rules applied at every level. Skips dotfiles,
+// non-directories, and the bare+worktree bookkeeping siblings of
+// registered projects.
+func shouldSkipScanEntry(entry os.DirEntry) bool {
+	name := entry.Name()
+	if !entry.IsDir() || strings.HasPrefix(name, ".") {
+		return true
+	}
+	return strings.HasSuffix(name, ".bare") || strings.Contains(name, "-wt-")
+}
+
+// reportIfUnknownRepo prints one "found" line for `repoPath` if its
+// workspace-relative path is not already in `knownPaths`. Increments
+// `found` for the caller's tally.
+func reportIfUnknownRepo(repoPath, root string, knownPaths map[string]bool, found *int) {
+	relPath, _ := filepath.Rel(root, repoPath)
+	if knownPaths[relPath] {
+		return
+	}
+	remote, _ := git.RemoteURL(repoPath)
+	fmt.Printf("  found  %s (remote: %s)\n", relPath, remote)
+	*found++
 }

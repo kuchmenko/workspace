@@ -85,10 +85,10 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 
 	// Write a workspace.toml with the project registered.
 	wsCfg := &config.Workspace{
-		Meta:     config.Meta{Version: 1, Root: root},
-		Daemon:   config.Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
-		Groups:   map[string]config.Group{},
-		Aliases:  map[string]string{},
+		Meta:    config.Meta{Version: 1, Root: root},
+		Daemon:  config.Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{},
 		Projects: map[string]config.Project{
 			projName: {
 				Remote:        remote,

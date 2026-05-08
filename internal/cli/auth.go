@@ -105,7 +105,7 @@ func newAuthStatusCmd() *cobra.Command {
 			}
 
 			// Fetch username from GitHub API
-			req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+			req, err := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
 			if err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func newAuthStatusCmd() *cobra.Command {
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode != 200 {
+			if resp.StatusCode != http.StatusOK {
 				fmt.Printf("  Token stored but invalid (HTTP %d). Run 'ws auth login' to re-authenticate.\n", resp.StatusCode)
 				return nil
 			}

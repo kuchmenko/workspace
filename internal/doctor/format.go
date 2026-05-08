@@ -17,15 +17,6 @@ var severitySymbol = map[Severity]string{
 	Error: "✗",
 }
 
-// severityLabel is the word used when the Fixed / FixError columns
-// aren't in play — mirrors the acceptance criteria's example output.
-var severityLabel = map[Severity]string{
-	OK:    "ok",
-	Info:  "info",
-	Warn:  "warn",
-	Error: "error",
-}
-
 // WriteText renders the report in the human-readable format shown in the
 // issue. Grouping is: "System" block first, then one block per project
 // in insertion order. Findings inside a block are printed in the order
@@ -128,41 +119,66 @@ func writeBlock(w io.Writer, title string, findings []Finding) {
 func WriteFooter(w io.Writer, rep *Report, fixable int) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, strings.Repeat("━", 21))
+	stats := footerStats(rep)
+	if stats.fixesApplied > 0 || stats.fixesFailed > 0 {
+		writeFixSummary(w, stats)
+		return
+	}
+	writeIssueSummary(w, stats.issues, fixable)
+}
 
-	var issues int
-	var fixesApplied, fixesFailed int
+// footerCounts is the aggregate the footer renderer needs from a
+// Report: count of issues (severity ≥ Warn), count of successfully-
+// applied fixes, count of attempted-but-failed fixes.
+type footerCounts struct {
+	issues       int
+	fixesApplied int
+	fixesFailed  int
+}
+
+// footerStats walks the findings once and tallies the three counters
+// the footer cares about. Single pass, no second sort.
+func footerStats(rep *Report) footerCounts {
+	var c footerCounts
 	for _, f := range rep.Findings {
 		if f.Severity >= Warn {
-			issues++
+			c.issues++
 		}
 		if f.Fixed {
-			fixesApplied++
+			c.fixesApplied++
 		}
 		if f.FixError != "" {
-			fixesFailed++
+			c.fixesFailed++
 		}
 	}
+	return c
+}
 
-	if fixesApplied > 0 || fixesFailed > 0 {
-		if fixesApplied > 0 {
-			fmt.Fprintf(w, "Applied %d fix(es).\n", fixesApplied)
-		}
-		if fixesFailed > 0 {
-			fmt.Fprintf(w, "%d fix(es) failed — see messages above.\n", fixesFailed)
-		}
-		return
+// writeFixSummary handles the post-`--fix` footer: "Applied N fixes"
+// and / or "M fixes failed" depending on which counters are non-zero.
+// Used only when at least one fix was attempted.
+func writeFixSummary(w io.Writer, stats footerCounts) {
+	if stats.fixesApplied > 0 {
+		fmt.Fprintf(w, "Applied %d fix(es).\n", stats.fixesApplied)
 	}
+	if stats.fixesFailed > 0 {
+		fmt.Fprintf(w, "%d fix(es) failed — see messages above.\n", stats.fixesFailed)
+	}
+}
 
-	if issues == 0 {
+// writeIssueSummary is the no-fix-attempted footer. Three branches:
+// clean ("All checks passed"), unfixable issues, or some-auto-fixable
+// (with a hint at `ws doctor --fix`).
+func writeIssueSummary(w io.Writer, issues, fixable int) {
+	switch {
+	case issues == 0:
 		fmt.Fprintln(w, "All checks passed.")
-		return
-	}
-	if fixable > 0 {
+	case fixable > 0:
 		fmt.Fprintf(w, "%d issue(s) found (%d auto-fixable)\n", issues, fixable)
 		fmt.Fprintln(w, "Run `ws doctor --fix` to apply safe fixes.")
-		return
+	default:
+		fmt.Fprintf(w, "%d issue(s) found.\n", issues)
 	}
-	fmt.Fprintf(w, "%d issue(s) found.\n", issues)
 }
 
 // WriteJSON serializes the report. Fix functions are not part of the

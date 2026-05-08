@@ -2,6 +2,7 @@ package github
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -33,7 +34,8 @@ func (c *ghClient) FetchRepos() ([]Repo, error) {
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			return nil, fmt.Errorf("gh api: %s", string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("gh api: %w", err)

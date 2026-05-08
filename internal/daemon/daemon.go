@@ -31,29 +31,15 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-
-	logPath, err := LogPath()
+	logFile, logger, err := openDaemonLog()
 	if err != nil {
 		return err
-	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("opening log: %w", err)
 	}
 	defer logFile.Close()
-
-	logger := log.New(logFile, "", log.LstdFlags)
-
-	socketPath, err := SocketPath()
+	socketPath, ln, err := openDaemonSocket()
 	if err != nil {
 		return err
 	}
-
-	ln, err := listenSocket(socketPath)
-	if err != nil {
-		return err
-	}
-
 	d := &Daemon{
 		config:      cfg,
 		listener:    ln,
@@ -61,23 +47,67 @@ func Run() error {
 		quit:        make(chan struct{}),
 		reconcilers: make(map[string]*Reconciler),
 	}
-
-	// Write PID file
 	if err := d.writePID(); err != nil {
 		ln.Close()
 		return err
 	}
 	defer d.cleanupPID()
-
 	logger.Printf("daemon started (pid %d, socket %s)", os.Getpid(), socketPath)
 	logger.Printf("watching %d workspace(s)", len(cfg.Workspaces))
 
-	// Start per-workspace components
+	d.startReconcilers(cfg)
+	d.startWatcher(cfg)
+	d.installSignalHandler()
+	d.startAcceptLoop()
+
+	<-d.quit
+	d.wg.Wait()
+	logger.Println("daemon stopped")
+	return nil
+}
+
+// openDaemonLog opens the append-only daemon log file and returns
+// it alongside a logger writing to it. Caller is responsible for
+// closing the file (typical: defer).
+func openDaemonLog() (*os.File, *log.Logger, error) {
+	logPath, err := LogPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening log: %w", err)
+	}
+	return logFile, log.New(logFile, "", log.LstdFlags), nil
+}
+
+// openDaemonSocket resolves the IPC socket path and binds a
+// listener on it. Returns both so the caller can record the path
+// in startup logs.
+func openDaemonSocket() (string, net.Listener, error) {
+	socketPath, err := SocketPath()
+	if err != nil {
+		return "", nil, err
+	}
+	ln, err := listenSocket(socketPath)
+	if err != nil {
+		return "", nil, err
+	}
+	return socketPath, ln, nil
+}
+
+// startReconcilers spins up one reconciler per registered workspace.
+// Each goroutine is owned by the Daemon's startWorkspace helper.
+func (d *Daemon) startReconcilers(cfg *DaemonConfig) {
 	for _, ws := range cfg.Workspaces {
 		d.startWorkspace(ws)
 	}
+}
 
-	// Start filesystem watcher
+// startWatcher launches the filesystem watcher goroutine.
+// Watching is best-effort: it amplifies the reconciler ticks but
+// the daemon stays correct without it.
+func (d *Daemon) startWatcher(cfg *DaemonConfig) {
 	d.watcher = NewWatcher(d.logger)
 	for _, ws := range cfg.Workspaces {
 		d.watcher.Add(ws.Root)
@@ -87,38 +117,57 @@ func Run() error {
 		defer d.wg.Done()
 		d.watcher.Run(d.quit)
 	}()
+}
 
-	// Handle signals
+// installSignalHandler subscribes a goroutine to SIGINT / SIGTERM
+// that triggers the orderly Shutdown path on receipt.
+func (d *Daemon) installSignalHandler() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		d.Shutdown()
 	}()
+}
 
-	// Accept connections
+// startAcceptLoop takes the listener and serves IPC connections in
+// a goroutine until d.quit is closed. Accept errors during normal
+// shutdown are swallowed (signaled via select on d.quit).
+func (d *Daemon) startAcceptLoop() {
 	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				select {
-				case <-d.quit:
-					return
-				default:
-					logger.Printf("accept error: %v", err)
-					continue
-				}
-			}
-			go d.handleConnection(conn)
-		}
-	}()
+	go d.runAcceptLoop()
+}
 
-	<-d.quit
-	d.wg.Wait()
-	logger.Println("daemon stopped")
-	return nil
+// runAcceptLoop is the goroutine body. Pulled out so the for/select
+// nesting doesn't push startAcceptLoop's cognitive complexity over
+// the threshold; the loop itself is straightforward but `for` plus
+// `select` plus `if err` plus `case <-d.quit` add up fast.
+func (d *Daemon) runAcceptLoop() {
+	defer d.wg.Done()
+	for {
+		conn, err := d.listener.Accept()
+		if err != nil {
+			if d.shouldStopAccept() {
+				return
+			}
+			d.logger.Printf("accept error: %v", err)
+			continue
+		}
+		go d.handleConnection(conn)
+	}
+}
+
+// shouldStopAccept reports whether the Accept loop should terminate.
+// True when d.quit has been closed; false during normal operation.
+// Non-blocking: a transient error path checks quit-state without
+// blocking on the channel.
+func (d *Daemon) shouldStopAccept() bool {
+	select {
+	case <-d.quit:
+		return true
+	default:
+		return false
+	}
 }
 
 func (d *Daemon) startWorkspace(ws WorkspaceEntry) {

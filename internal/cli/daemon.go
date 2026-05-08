@@ -102,12 +102,12 @@ func newDaemonRestartCmd() *cobra.Command {
 			"agent:when": "Restart the daemon (stop + start)",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Stop if running
+			// Best-effort stop. If the daemon is unreachable we still
+			// proceed to Start; the user explicitly asked for restart.
 			if client, err := daemon.Dial(); err == nil {
-				client.Stop()
+				_ = client.Stop()
 				client.Close()
 			}
-			// Start
 			_, err := daemon.StartBackground()
 			return err
 		},

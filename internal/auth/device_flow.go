@@ -71,7 +71,7 @@ func requestDeviceCode() (deviceCodeResponse, error) {
 		"scope":     {scopes},
 	}
 
-	req, err := http.NewRequest("POST", deviceCodeURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(http.MethodPost, deviceCodeURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return deviceCodeResponse{}, err
 	}
@@ -85,7 +85,7 @@ func requestDeviceCode() (deviceCodeResponse, error) {
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return deviceCodeResponse{}, fmt.Errorf("device code request failed (%d): %s", resp.StatusCode, string(body))
 	}
 
@@ -102,59 +102,76 @@ func pollForToken(dc deviceCodeResponse) (Token, error) {
 		interval = 5 * time.Second
 	}
 	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
-
 	for time.Now().Before(deadline) {
 		time.Sleep(interval)
-
-		data := url.Values{
-			"client_id":   {ClientID},
-			"device_code": {dc.DeviceCode},
-			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+		tr, ok := requestToken(dc)
+		if !ok {
+			continue // network or decode error — retry next tick
 		}
-
-		req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
-		if err != nil {
-			return Token{}, err
+		token, retry, retryDelay, err := interpretTokenResponse(tr)
+		if !retry {
+			return token, err
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			continue
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		var tr tokenResponse
-		if err := json.Unmarshal(body, &tr); err != nil {
-			continue
-		}
-
-		switch tr.Error {
-		case "":
-			return Token{
-				AccessToken: tr.AccessToken,
-				TokenType:   tr.TokenType,
-				Scope:       tr.Scope,
-				CreatedAt:   time.Now(),
-			}, nil
-		case "authorization_pending":
-			continue
-		case "slow_down":
-			interval += 5 * time.Second
-			continue
-		case "expired_token":
-			return Token{}, fmt.Errorf("device code expired, please try again")
-		case "access_denied":
-			return Token{}, fmt.Errorf("authorization denied by user")
-		default:
-			return Token{}, fmt.Errorf("auth error: %s", tr.Error)
-		}
+		interval += retryDelay
 	}
-
 	return Token{}, fmt.Errorf("timed out waiting for authorization")
+}
+
+// requestToken posts the device-code grant exchange and decodes the
+// response. Returns ok=false on network or decode failure (the caller
+// retries); ok=true with the parsed body otherwise.
+func requestToken(dc deviceCodeResponse) (tokenResponse, bool) {
+	data := url.Values{
+		"client_id":   {ClientID},
+		"device_code": {dc.DeviceCode},
+		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+	}
+	req, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return tokenResponse{}, false
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return tokenResponse{}, false
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	var tr tokenResponse
+	if err := json.Unmarshal(body, &tr); err != nil {
+		return tokenResponse{}, false
+	}
+	return tr, true
+}
+
+// interpretTokenResponse maps a tokenResponse into the loop driver's
+// next action. Returns:
+//
+//   - retry=false: the caller exits with (token, err). On success
+//     err is nil; on terminal failure err is the caller-facing
+//     reason ("expired_token", "access_denied", …).
+//   - retry=true: the caller continues polling, optionally adding
+//     `retryDelay` to the interval (for "slow_down" responses).
+func interpretTokenResponse(tr tokenResponse) (token Token, retry bool, retryDelay time.Duration, err error) {
+	switch tr.Error {
+	case "":
+		return Token{
+			AccessToken: tr.AccessToken,
+			TokenType:   tr.TokenType,
+			Scope:       tr.Scope,
+			CreatedAt:   time.Now(),
+		}, false, 0, nil
+	case "authorization_pending":
+		return Token{}, true, 0, nil
+	case "slow_down":
+		return Token{}, true, 5 * time.Second, nil
+	case "expired_token":
+		return Token{}, false, 0, fmt.Errorf("device code expired, please try again")
+	case "access_denied":
+		return Token{}, false, 0, fmt.Errorf("authorization denied by user")
+	}
+	return Token{}, false, 0, fmt.Errorf("auth error: %s", tr.Error)
 }
 
 func openBrowser(url string) {

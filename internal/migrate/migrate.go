@@ -58,16 +58,16 @@ func (o Options) logf(format string, args ...interface{}) {
 
 // Result describes the outcome of migrating one project.
 type Result struct {
-	Project          string
-	BarePath         string
-	MainWorktree     string
-	DefaultBranch    string
-	HooksMigrated    []string
-	WIPBranch        string   // non-empty when --wip created a snapshot branch
-	WIPWorktree      string   // non-empty when --wip created an extra worktree
-	StashBranches    []string // wt/<machine>/migration-stash-* branches created from stashes
-	DetachedBranch   string   // wt/<machine>/migration-detached-* preserving orphaned commits
-	BranchesPushed   int      // count of local branches preserved into bare
+	Project        string
+	BarePath       string
+	MainWorktree   string
+	DefaultBranch  string
+	HooksMigrated  []string
+	WIPBranch      string   // non-empty when --wip created a snapshot branch
+	WIPWorktree    string   // non-empty when --wip created an extra worktree
+	StashBranches  []string // wt/<machine>/migration-stash-* branches created from stashes
+	DetachedBranch string   // wt/<machine>/migration-detached-* preserving orphaned commits
+	BranchesPushed int      // count of local branches preserved into bare
 }
 
 // ErrAlreadyMigrated is returned when the project already has a sibling .bare
@@ -78,14 +78,14 @@ var ErrAlreadyMigrated = errors.New("project already migrated")
 // CheckResult reports the migration-related state of one project without
 // making any changes.
 type CheckResult struct {
-	Project   string
-	State     string // "migrated" | "needs-migration" | "missing" | "not-a-repo"
-	MainPath  string
-	BarePath  string
-	HasStash  bool
-	IsDirty   bool
-	Detached  bool
-	Branch    string
+	Project    string
+	State      string // "migrated" | "needs-migration" | "missing" | "not-a-repo"
+	MainPath   string
+	BarePath   string
+	HasStash   bool
+	IsDirty    bool
+	Detached   bool
+	Branch     string
 	HooksFound int
 }
 

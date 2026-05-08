@@ -35,9 +35,9 @@ func newSetupCmd() *cobra.Command {
 				return fmt.Errorf("setup failed: %w", r.Err)
 			}
 
-			// User explicitly cancelled (ctrl+c, esc, n)
-			if r.Cancelled {
-				fmt.Println("Setup cancelled by user.")
+			// User explicitly canceled (ctrl+c, esc, n)
+			if r.Canceled {
+				fmt.Println("Setup canceled by user.")
 				return nil
 			}
 

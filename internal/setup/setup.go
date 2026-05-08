@@ -21,7 +21,7 @@ const (
 // Result holds the final output of the setup wizard.
 type Result struct {
 	Confirmed bool
-	Cancelled bool
+	Canceled  bool
 	Err       error
 	Groups    []GroupEntry
 	Username  string
@@ -94,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c":
-			m.result = Result{Cancelled: true}
+			m.result = Result{Canceled: true}
 			return m, tea.Quit
 		}
 	}
@@ -145,7 +145,7 @@ func (m Model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "escape" {
-		m.result = Result{Cancelled: true}
+		m.result = Result{Canceled: true}
 		return m, tea.Quit
 	}
 
@@ -192,7 +192,7 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "n", "N":
-			m.result = Result{Cancelled: true}
+			m.result = Result{Canceled: true}
 			return m, tea.Quit
 		case "escape":
 			m.step = stepGroup

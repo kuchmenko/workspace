@@ -1,6 +1,7 @@
 package migrate_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,7 +337,7 @@ func TestMigrateProject_AlreadyMigrated(t *testing.T) {
 	}
 
 	_, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"})
-	if err != migrate.ErrAlreadyMigrated {
+	if !errors.Is(err, migrate.ErrAlreadyMigrated) {
 		t.Errorf("second migrate: got %v, want ErrAlreadyMigrated", err)
 	}
 }
