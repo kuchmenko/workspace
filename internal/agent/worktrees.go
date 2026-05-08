@@ -61,18 +61,33 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
 	}
 
+	// Best-effort fetch via the standard remote-tracking refspec so
+	// refs/remotes/origin/<branch> reflects the latest origin state
+	// before we decide local vs remote vs new. Mirrors the CLI flow
+	// in cli/worktree.go; without it, a branch another machine just
+	// pushed would silently fall through to the new-from-base case.
+	_ = git.FetchRefspec(barePath, "origin", branch)
+	localExists := git.HasBranch(barePath, branch)
+	remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
+
 	attachedToRemote := false
-	if git.HasBranch(barePath, branch) {
+	switch {
+	case localExists:
 		// Attach to existing local branch (covers re-registration of legacy
-		// wt/<machine>/* checkouts and branches fetched from origin).
+		// wt/<machine>/* checkouts and branches already pulled from origin).
 		if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
 			return nil, fmt.Errorf("git worktree add: %w", err)
 		}
-		// If the branch is also on origin, this attach amounts to "I just
-		// observed it as published" — let the orphan detector treat it
-		// as such.
-		attachedToRemote = git.HasRemoteBranch(barePath, "origin", branch)
-	} else {
+		attachedToRemote = remoteExists
+	case remoteExists:
+		// Origin has it, we don't yet — create local from origin/<branch>
+		// so the user lands on the published commits, not a fresh branch
+		// off main.
+		if err := git.WorktreeAdd(barePath, wtPath, branch, "origin/"+branch); err != nil {
+			return nil, fmt.Errorf("git worktree add: %w", err)
+		}
+		attachedToRemote = true
+	default:
 		base := p.DefaultBranch
 		if base == "" {
 			base = "main"
