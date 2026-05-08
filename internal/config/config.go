@@ -199,6 +199,22 @@ func (p *Project) TouchActive(name, machine string, when time.Time) bool {
 	return true
 }
 
+// RemoveBranch drops the entry for `name` from this project's Branches
+// slice unconditionally. Returns true if an entry was removed. Used by
+// `ws sync resolve` to clean up branch-orphan entries on machines that
+// never had a local worktree on the orphaned branch — ReleaseBranch
+// would no-op there because the machine isn't in `Machines` to begin
+// with, leaving the entry (and its `last_pushed_*` trigger) in place.
+func (p *Project) RemoveBranch(name string) bool {
+	for i := range p.Branches {
+		if p.Branches[i].Name == name {
+			p.Branches = append(p.Branches[:i], p.Branches[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
 // MarkPushed records that `machine` published `name` to origin at `when`.
 // Also bumps LastActiveMachine / LastActiveAt because a push is an
 // activity. No-op if the branch is not registered. Returns true when

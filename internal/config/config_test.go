@@ -364,6 +364,28 @@ func TestReleaseBranch_DropsEntryWhenLastMachine(t *testing.T) {
 	}
 }
 
+func TestRemoveBranch_DropsEntryUnconditionally(t *testing.T) {
+	p := Project{}
+	p.ClaimBranch("feat/foo", "linux")
+	p.ClaimBranch("feat/foo", "archlinux")
+
+	// Removing from a machine NOT in machines (codex P2 case): the entry
+	// must still go away so the orphan check has nothing to fire on.
+	if !p.RemoveBranch("feat/foo") {
+		t.Fatal("RemoveBranch should report removal")
+	}
+	if len(p.Branches) != 0 {
+		t.Errorf("entry must be gone, got %+v", p.Branches)
+	}
+}
+
+func TestRemoveBranch_UnknownBranch_NoOp(t *testing.T) {
+	p := Project{}
+	if p.RemoveBranch("ghost") {
+		t.Error("RemoveBranch on unknown branch should be no-op")
+	}
+}
+
 func TestReleaseBranch_UnknownBranch_NoOp(t *testing.T) {
 	p := Project{}
 	changed, removed := p.ReleaseBranch("ghost", "linux")
