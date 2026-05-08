@@ -184,14 +184,8 @@ func Load(wsRoot string, kind Kind) (*Sidecar, error) {
 // derived from sc.Meta.WorkspaceRoot + sc.Meta.Kind, so the caller doesn't
 // pass them again.
 func Save(sc *Sidecar) error {
-	if sc == nil {
-		return errors.New("save nil sidecar")
-	}
-	if sc.Meta.WorkspaceRoot == "" {
-		return errors.New("sidecar has empty WorkspaceRoot")
-	}
-	if sc.Meta.Kind == "" {
-		return errors.New("sidecar has empty Kind")
+	if err := validateSidecarForSave(sc); err != nil {
+		return err
 	}
 	p, err := Path(sc.Meta.WorkspaceRoot, sc.Meta.Kind)
 	if err != nil {
@@ -203,24 +197,44 @@ func Save(sc *Sidecar) error {
 	if sc.Done == nil {
 		sc.Done = make(map[string]json.RawMessage)
 	}
+	return atomicWriteSidecar(sc, p)
+}
 
-	tmp, err := os.CreateTemp(filepath.Dir(p), "."+string(sc.Meta.Kind)+"-*.tmp")
+// validateSidecarForSave enforces the non-nil + non-empty required
+// fields before any IO happens. Each branch returns a distinct error
+// so callers can tell what they forgot to set.
+func validateSidecarForSave(sc *Sidecar) error {
+	if sc == nil {
+		return errors.New("save nil sidecar")
+	}
+	if sc.Meta.WorkspaceRoot == "" {
+		return errors.New("sidecar has empty WorkspaceRoot")
+	}
+	if sc.Meta.Kind == "" {
+		return errors.New("sidecar has empty Kind")
+	}
+	return nil
+}
+
+// atomicWriteSidecar encodes `sc` into a sibling tmp file and renames
+// it to `dest`. The tmp file is deleted on every failure path so a
+// crashed write never leaves a half-written file behind.
+func atomicWriteSidecar(sc *Sidecar, dest string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+string(sc.Meta.Kind)+"-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create tmp: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // best-effort cleanup if rename never happens
-
-	enc := toml.NewEncoder(tmp)
-	if err := enc.Encode(sc); err != nil {
+	if err := toml.NewEncoder(tmp).Encode(sc); err != nil {
 		tmp.Close()
 		return fmt.Errorf("encode sidecar: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close tmp: %w", err)
 	}
-	if err := os.Rename(tmpName, p); err != nil {
-		return fmt.Errorf("rename %s → %s: %w", tmpName, p, err)
+	if err := os.Rename(tmpName, dest); err != nil {
+		return fmt.Errorf("rename %s → %s: %w", tmpName, dest, err)
 	}
 	return nil
 }
@@ -254,15 +268,27 @@ func IsAlive(sc *Sidecar) bool {
 	if err != nil {
 		return false
 	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		if errors.Is(err, os.ErrProcessDone) {
-			return false
-		}
-		var errno syscall.Errno
-		if errors.As(err, &errno) && errno == syscall.ESRCH {
-			return false
-		}
+	return interpretSignalError(proc.Signal(syscall.Signal(0)))
+}
+
+// interpretSignalError maps a signal-0 result to "process alive":
+//
+//   - nil err            → process exists.
+//   - os.ErrProcessDone  → already reaped.
+//   - ESRCH              → no such process.
+//   - anything else (EPERM, EINVAL, …) → conservatively assume alive
+//     (the pid is in use by something even if not by our crashed
+//     run; pausing the daemon for a tick is safer than racing).
+func interpretSignalError(err error) bool {
+	if err == nil {
 		return true
+	}
+	if errors.Is(err, os.ErrProcessDone) {
+		return false
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == syscall.ESRCH {
+		return false
 	}
 	return true
 }

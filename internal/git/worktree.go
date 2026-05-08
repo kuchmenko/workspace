@@ -124,7 +124,13 @@ func WorktreeList(repoPath string) ([]Worktree, error) {
 	if err != nil {
 		return nil, fmt.Errorf("git worktree list in %s: %w", repoPath, err)
 	}
+	return parsePorcelainWorktreeList(string(out)), nil
+}
 
+// parsePorcelainWorktreeList consumes the porcelain output of
+// `git worktree list --porcelain` and returns one Worktree per
+// blank-line-delimited record. Pure parser: no IO, fully unit-testable.
+func parsePorcelainWorktreeList(text string) []Worktree {
 	var (
 		result []Worktree
 		cur    Worktree
@@ -137,28 +143,35 @@ func WorktreeList(repoPath string) ([]Worktree, error) {
 		cur = Worktree{}
 		open = false
 	}
-
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if line == "" {
 			flush()
 			continue
 		}
 		open = true
-		switch {
-		case strings.HasPrefix(line, "worktree "):
-			cur.Path = strings.TrimPrefix(line, "worktree ")
-		case strings.HasPrefix(line, "HEAD "):
-			cur.HEAD = strings.TrimPrefix(line, "HEAD ")
-		case strings.HasPrefix(line, "branch "):
-			ref := strings.TrimPrefix(line, "branch ")
-			cur.Branch = strings.TrimPrefix(ref, "refs/heads/")
-		case line == "bare":
-			cur.Bare = true
-		case line == "detached":
-			cur.Detached = true
-		}
+		applyWorktreeLine(&cur, line)
 	}
 	flush()
-	return result, nil
+	return result
+}
+
+// applyWorktreeLine routes one porcelain line into the matching
+// Worktree field. Unknown prefixes are silently ignored — git may
+// add new attributes (e.g. `locked`, `prunable`) without breaking
+// the parser.
+func applyWorktreeLine(cur *Worktree, line string) {
+	switch {
+	case strings.HasPrefix(line, "worktree "):
+		cur.Path = strings.TrimPrefix(line, "worktree ")
+	case strings.HasPrefix(line, "HEAD "):
+		cur.HEAD = strings.TrimPrefix(line, "HEAD ")
+	case strings.HasPrefix(line, "branch "):
+		ref := strings.TrimPrefix(line, "branch ")
+		cur.Branch = strings.TrimPrefix(ref, "refs/heads/")
+	case line == "bare":
+		cur.Bare = true
+	case line == "detached":
+		cur.Detached = true
+	}
 }
