@@ -76,6 +76,12 @@ type AddModel struct {
 	filterMode bool
 	filterInput textinput.Model
 
+	// selectedURLs holds RemoteURLs of suggestions the user marked
+	// for bulk add via space-toggle in browse. Stable across filter
+	// changes — toggling a row off-screen still works as long as the
+	// URL stays in allSuggestions.
+	selectedURLs map[string]bool
+
 	// manual.
 	manualInput textinput.Model
 	manualErr   string
@@ -109,6 +115,7 @@ const (
 	addStateManual
 	addStateEdit
 	addStateConfirm
+	addStateBulkConfirm
 	addStateCloning
 	addStateBranchPrompt
 	addStateDone
@@ -305,6 +312,8 @@ func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateEdit(msg)
 	case addStateConfirm:
 		return m.updateConfirm(msg)
+	case addStateBulkConfirm:
+		return m.updateBulkConfirm(msg)
 	case addStateCloning:
 		return m.updateCloning(msg)
 	case addStateBranchPrompt:
@@ -327,6 +336,8 @@ func (m AddModel) View() string {
 		return m.viewEdit()
 	case addStateConfirm:
 		return m.viewConfirm()
+	case addStateBulkConfirm:
+		return m.viewBulkConfirm()
 	case addStateCloning:
 		return m.viewCloning()
 	case addStateBranchPrompt:
@@ -472,14 +483,72 @@ func (m AddModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(view) == 0 {
 			return m, nil
 		}
+		// Bulk path: any URLs marked → confirm them all at once.
+		if len(m.selectedURLs) > 0 {
+			m.transitionTo(addStateBulkConfirm)
+			return m, nil
+		}
+		// Single path: edit the cursor row.
 		s := view[m.cursor]
 		m.editFields = m.editFromSuggestion(s)
 		m.editFocus = 0
 		m.editErr = ""
 		m.transitionTo(addStateEdit)
 		return m, nil
+	case " ":
+		// Toggle the cursor row in the bulk-select set. The selection
+		// is keyed by RemoteURL so it survives filter changes and
+		// re-sorts.
+		if len(view) == 0 {
+			return m, nil
+		}
+		s := view[m.cursor]
+		if s.RemoteURL == "" {
+			return m, nil
+		}
+		if m.selectedURLs == nil {
+			m.selectedURLs = make(map[string]bool)
+		}
+		if m.selectedURLs[s.RemoteURL] {
+			delete(m.selectedURLs, s.RemoteURL)
+		} else {
+			m.selectedURLs[s.RemoteURL] = true
+		}
+		return m, nil
+	case "a":
+		// Mark every visible (filtered) suggestion. Toggle: if all
+		// visible are already selected, clear them.
+		if len(view) == 0 {
+			return m, nil
+		}
+		if m.selectedURLs == nil {
+			m.selectedURLs = make(map[string]bool)
+		}
+		allMarked := true
+		for _, s := range view {
+			if !m.selectedURLs[s.RemoteURL] {
+				allMarked = false
+				break
+			}
+		}
+		if allMarked {
+			for _, s := range view {
+				delete(m.selectedURLs, s.RemoteURL)
+			}
+		} else {
+			for _, s := range view {
+				if s.RemoteURL != "" {
+					m.selectedURLs[s.RemoteURL] = true
+				}
+			}
+		}
+		return m, nil
 	case "esc":
-		// Quit with whatever we have so far (zero in browse).
+		// Esc with selections clears them; esc on a clean browse exits.
+		if len(m.selectedURLs) > 0 {
+			m.selectedURLs = nil
+			return m, nil
+		}
 		done := m.toDone()
 		if m.standalone {
 			return done, tea.Sequence(emit(m.doneMsg()), tea.Quit)
@@ -545,9 +614,14 @@ func (m AddModel) viewBrowse() string {
 		case rowItem:
 			s := r.suggestion
 			selected := i == cursorRow
+			marked := m.selectedURLs[s.RemoteURL]
 			cursor := "    "
-			if selected {
+			if selected && marked {
+				cursor = " " + addCursor.Render("▸") + addAccent.Render("●")
+			} else if selected {
 				cursor = "  " + addCursor.Render("▸ ")
+			} else if marked {
+				cursor = "  " + addAccent.Render("● ")
 			}
 			line := strings.TrimRight(renderItemLine(cursor, s), "\n")
 			if selected {
@@ -582,8 +656,13 @@ func (m AddModel) viewBrowse() string {
 	if m.filterMode {
 		b.WriteString("  search: " + m.filterInput.View() + "\n")
 		b.WriteString("  " + addHelp.Render("[enter] commit   [esc] cancel"))
+	} else if n := len(m.selectedURLs); n > 0 {
+		fmt.Fprintf(&b, "  %s  %s\n",
+			addAccent.Render(fmt.Sprintf("● %d marked", n)),
+			addHelp.Render("[⏎] confirm bulk add  [space] toggle  [a] all  [esc] clear"))
+		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [/] search  [i] manual URL"))
 	} else {
-		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [⏎] select  [/] search  [i] manual URL  [esc] quit"))
+		b.WriteString("  " + addHelp.Render("[↑↓] navigate  [⏎] select  [space] mark  [a] all  [/] search  [i] manual URL  [esc] quit"))
 	}
 	return b.String()
 }
@@ -1059,6 +1138,91 @@ func (m AddModel) viewConfirm() string {
 		b.WriteString("\n")
 	}
 	b.WriteString("  " + addHelp.Render("[y/⏎] add   [n/esc] back"))
+	return b.String()
+}
+
+// =============================================================================
+// Bulk confirm
+// =============================================================================
+
+// updateBulkConfirm handles the multi-add confirmation screen reached
+// from browse when the user pressed `enter` with one or more URLs
+// marked. Confirming queues every marked suggestion via
+// editFromSuggestion (default category/group inferred from owner) and
+// transitions to the existing cloning loop unchanged.
+func (m AddModel) updateBulkConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "y", "Y", "enter":
+		queue := m.buildBulkQueue()
+		if len(queue) == 0 {
+			m.transitionTo(addStateBrowse)
+			return m, nil
+		}
+		m.queue = queue
+		m.currentIdx = 0
+		m.selectedURLs = nil
+		m.transitionTo(addStateCloning)
+		return m, tea.Batch(m.spinner.Tick, m.startCloneJob(0))
+	case "n", "N", "esc":
+		m.transitionTo(addStateBrowse)
+		return m, nil
+	}
+	return m, nil
+}
+
+// buildBulkQueue resolves the marked URLs to editFields, preserving
+// the order they appear in allSuggestions (alphabetised by group →
+// name). Skips URLs that no longer exist in allSuggestions and URLs
+// already registered in workspace.toml so a stale selection cannot
+// accidentally re-clone an existing project.
+func (m AddModel) buildBulkQueue() []editFields {
+	if len(m.selectedURLs) == 0 {
+		return nil
+	}
+	var out []editFields
+	for i := range m.allSuggestions {
+		s := m.allSuggestions[i]
+		if !m.selectedURLs[s.RemoteURL] {
+			continue
+		}
+		if s.RegisteredPath != "" {
+			continue
+		}
+		out = append(out, m.editFromSuggestion(s))
+	}
+	return out
+}
+
+func (m AddModel) viewBulkConfirm() string {
+	queue := m.buildBulkQueue()
+	var b strings.Builder
+	b.WriteString(addTitle.Render(" Bulk add "))
+	b.WriteString("\n\n")
+	if len(queue) == 0 {
+		b.WriteString("  " + addDim.Render("(no eligible URLs — every selection is already registered)\n"))
+		b.WriteString("\n  " + addHelp.Render("[esc] back"))
+		return b.String()
+	}
+	fmt.Fprintf(&b, "  Will add %s repos:\n\n", addAccent.Render(fmt.Sprintf("%d", len(queue))))
+	const max = 10
+	shown := queue
+	if len(shown) > max {
+		shown = shown[:max]
+	}
+	for _, ef := range shown {
+		fmt.Fprintf(&b, "  • %s  %s  %s\n",
+			addItemName.Render(addPad(ef.Name, 24)),
+			addDim.Render(fmt.Sprintf("[%s]", ef.Category)),
+			addDim.Render(ef.URL))
+	}
+	if len(queue) > max {
+		fmt.Fprintf(&b, "  %s\n", addDim.Render(fmt.Sprintf("…and %d more", len(queue)-max)))
+	}
+	b.WriteString("\n  " + addHelp.Render("[y/⏎] confirm   [n/esc] back"))
 	return b.String()
 }
 
