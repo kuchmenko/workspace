@@ -149,11 +149,6 @@ EXAMPLES
 				return err
 			}
 
-			wtPath := layout.WorktreePathForBranch(mainPath, machine, branch)
-			if _, err := os.Stat(wtPath); err == nil {
-				return fmt.Errorf("worktree path already exists: %s", wtPath)
-			}
-
 			// One-time repair: pre-0.5.1 bare repos were created without
 			// remote.origin.fetch configured. Without it, the fetch below
 			// would only update FETCH_HEAD, leaving refs/remotes/origin/*
@@ -174,6 +169,35 @@ EXAMPLES
 			_ = git.FetchRefspec(barePath, "origin", branch)
 			localExists := git.HasBranch(barePath, branch)
 			remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
+
+			// Re-registration short-circuit: if the branch is already
+			// checked out in some existing worktree (legacy wt/<machine>/*
+			// dir, or a previous `ws worktree add` whose saveWorkspace
+			// step failed), don't try to create another worktree — git
+			// refuses without --force, and the user's intent is to repair
+			// metadata, not to materialize a duplicate checkout.
+			if existingWtPath := locateWorktreeForBranch(barePath, branch); existingWtPath != "" {
+				p := ws.Projects[projectName]
+				changed, _ := p.ClaimBranch(branch, machine)
+				if remoteExists && p.MarkPushed(branch, machine, time.Now()) {
+					changed = true
+				}
+				if changed {
+					ws.Projects[projectName] = p
+					if err := saveWorkspace(); err != nil {
+						return fmt.Errorf("registry update failed: %w", err)
+					}
+				}
+				machines := strings.Join(p.LookupBranch(branch).Machines, ", ")
+				fmt.Printf("re-registered existing worktree %s\n  branch: %s\n  registered in workspace.toml (machines=[%s])\n",
+					existingWtPath, branch, machines)
+				return nil
+			}
+
+			wtPath := layout.WorktreePathForBranch(mainPath, machine, branch)
+			if _, err := os.Stat(wtPath); err == nil {
+				return fmt.Errorf("worktree path already exists: %s", wtPath)
+			}
 
 			source := "" // "fetched", "local", or "" for new
 			switch {
