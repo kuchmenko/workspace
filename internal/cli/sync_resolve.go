@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 // openConflictStore is a tiny shim around conflict.Open so the cli package
@@ -94,20 +96,56 @@ func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
 // Two clean exits: drop the entry+worktree (the merged-PR case) or
 // keep the local branch (rare; the user wants to preserve unmerged work).
 func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
+	// Determine whether THIS machine has a local worktree on the orphan.
+	// Two distinct scenarios converge into "drop":
+	//   - We have a worktree → user must run `ws worktree rm` themselves
+	//     to remove it from disk; then we still drop the [[branches]]
+	//     entry to stop the reconciler re-recording the orphan.
+	//   - We never had a worktree (the [[branches]] entry arrived via
+	//     workspace.toml sync from another machine) → there's nothing
+	//     on disk to remove; just drop the registry entry.
+	wtPath := ""
+	if ws != nil && c.Project != "" {
+		if proj, ok := ws.Projects[c.Project]; ok {
+			barePath := layout.BarePath(filepath.Join(c.Workspace, proj.Path))
+			wtPath = locateWorktreeForBranch(barePath, c.Branch)
+		}
+	}
+
 	for {
 		fmt.Println("Options:")
-		fmt.Println("  (d) drop [[branches]] entry and remove the local worktree (merged-PR cleanup)")
+		if wtPath != "" {
+			fmt.Println("  (d) drop [[branches]] entry (run ws worktree rm first)")
+		} else {
+			fmt.Println("  (d) drop [[branches]] entry — no local worktree on this machine")
+		}
 		fmt.Println("  (k) keep local — clear last_pushed_* so the orphan check stops firing")
 		fmt.Println("  (s) skip — leave for later")
 		fmt.Print("> ")
 		choice := strings.TrimSpace(readLine())
 		switch choice {
 		case "d":
-			fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
-			fmt.Println("Press enter once removed (or 'k' to skip).")
-			ack := strings.TrimSpace(readLine())
-			if ack == "k" {
-				return false, nil
+			if wtPath != "" {
+				fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
+				fmt.Println("Press enter once removed (or 's' to skip).")
+				ack := strings.TrimSpace(readLine())
+				if ack == "s" {
+					return false, nil
+				}
+			}
+			// Remove the [[branches]] entry directly so the next
+			// reconciler tick has nothing to evaluate against the
+			// missing origin ref. Works whether or not this machine
+			// had a worktree.
+			if ws != nil && c.Project != "" && c.Branch != "" {
+				proj := ws.Projects[c.Project]
+				if proj.RemoveBranch(c.Branch) {
+					ws.Projects[c.Project] = proj
+					if err := saveWorkspace(); err != nil {
+						fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+						return false, nil
+					}
+				}
 			}
 			return true, nil
 		case "k":

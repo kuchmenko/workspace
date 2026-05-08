@@ -61,6 +61,13 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
 	}
 
+	// Pre-0.5.1 bares were created without remote.origin.fetch; the
+	// fetch below would only update FETCH_HEAD without it. Mirror the
+	// reconciler's repair step.
+	if !git.HasFetchRefspec(barePath) {
+		_ = git.SetFetchRefspec(barePath)
+	}
+
 	// Best-effort fetch via the standard remote-tracking refspec so
 	// refs/remotes/origin/<branch> reflects the latest origin state
 	// before we decide local vs remote vs new. Mirrors the CLI flow

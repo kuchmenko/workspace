@@ -154,6 +154,16 @@ EXAMPLES
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
 
+			// One-time repair: pre-0.5.1 bare repos were created without
+			// remote.origin.fetch configured. Without it, the fetch below
+			// would only update FETCH_HEAD, leaving refs/remotes/origin/*
+			// untouched — and HasRemoteBranch would always return false,
+			// breaking the "branch is on origin" detection. Mirrors the
+			// reconciler's repair step at reconciler.go:336.
+			if !git.HasFetchRefspec(barePath) {
+				_ = git.SetFetchRefspec(barePath)
+			}
+
 			// Best-effort fetch the named branch via the standard remote-
 			// tracking refspec so refs/remotes/origin/<branch> reflects
 			// the latest origin state. We deliberately do NOT force-fetch
