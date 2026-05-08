@@ -155,59 +155,77 @@ type clientProvider struct {
 func (p *clientProvider) Name() string { return p.name }
 
 func (p *clientProvider) SuggestRepos(ctx context.Context, limit int) ([]Repo, error) {
-	// Cache hit short-circuit: paginated GitHub fetches take 5-10s on
-	// large accounts, but the data rarely changes minute-to-minute.
-	// Serving from a 1-hour cache makes repeated `ws add` invocations
-	// feel instant. The limit is applied at read time so callers
-	// asking for the top-50 still get the freshest 50 from the cached
-	// (already-sorted) full list.
-	if cached, age, err := LoadCache(); err == nil && len(cached) > 0 && age < cacheTTL {
-		return applyLimit(cached, limit), nil
+	if cached, ok := freshCache(limit); ok {
+		return cached, nil
 	}
+	repos, err := p.fetchAllRanked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Persist the full result (pre-limit) so future requests for any
+	// cap can be served from cache. Save errors are non-fatal — log
+	// would be nice but the package has no logger; silent fallback
+	// matches the rest of the cache layer.
+	_ = SaveCache(repos)
+	return applyLimit(repos, limit), nil
+}
 
-	// Client methods predate ctx; we check cancellation at the two
-	// natural boundaries (before and between calls). Full ctx-plumbing
-	// into the Client interface is out of scope for now.
+// freshCache returns the most-recent cached suggestion list when one
+// exists and is still inside cacheTTL. Cache misses, expired entries,
+// and read errors all return ok=false; callers fall through to a
+// live fetch.
+//
+// Cache hit short-circuit serves repeated `ws add` invocations on
+// large accounts (paginated GitHub fetches take 5-10s) without
+// network roundtrips.
+func freshCache(limit int) ([]Repo, bool) {
+	cached, age, err := LoadCache()
+	if err != nil || len(cached) == 0 || age >= cacheTTL {
+		return nil, false
+	}
+	return applyLimit(cached, limit), true
+}
+
+// fetchAllRanked performs the live live-fetch + activity-merge +
+// activity-sort sequence. The two ctx.Err() checks bracket the
+// CurrentUser and FetchRepos calls — Client methods predate ctx
+// plumbing, so those are the natural cancellation boundaries.
+func (p *clientProvider) fetchAllRanked(ctx context.Context) ([]Repo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
 	username, err := p.client.CurrentUser()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", p.name, err)
 	}
-
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
 	repos, err := p.client.FetchRepos()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", p.name, err)
 	}
-
-	// Activity fetch is best-effort — if it fails, we sort by PushedAt
-	// only. Matches the legacy FetchAll behavior (which swallowed the
-	// error and kept going).
+	// Activity fetch is best-effort — sort falls back to PushedAt
+	// alone when it fails. Matches the legacy FetchAll behavior.
 	activity, _ := p.client.FetchActivity(username)
 	for i := range repos {
 		repos[i].Activity = activity[repos[i].FullName]
 	}
+	sortByActivityThenPushed(repos)
+	return repos, nil
+}
 
+// sortByActivityThenPushed orders repos by Activity descending,
+// breaking ties by PushedAt descending. The two-key compare lives
+// in one place so both the live and (in tests) cache-build paths
+// agree on ordering.
+func sortByActivityThenPushed(repos []Repo) {
 	sort.SliceStable(repos, func(i, j int) bool {
 		if repos[i].Activity != repos[j].Activity {
 			return repos[i].Activity > repos[j].Activity
 		}
 		return repos[i].PushedAt.After(repos[j].PushedAt)
 	})
-
-	// Persist the full result (pre-limit) so future requests for any
-	// cap can be served from cache. Save errors are non-fatal — log
-	// would be nice but the package has no logger; silent fallback
-	// matches the rest of the cache layer.
-	_ = SaveCache(repos)
-
-	return applyLimit(repos, limit), nil
 }
 
 // applyLimit caps the returned slice at `limit` entries when limit > 0.
