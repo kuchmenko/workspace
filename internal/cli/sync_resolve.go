@@ -38,8 +38,12 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 	switch c.Kind {
 	case conflict.KindTOMLMerge, conflict.KindTOMLPushFailed:
 		return resolveTOMLConflict(c)
-	case conflict.KindBranchDivergence, conflict.KindMainDivergence:
+	case conflict.KindMainDivergence:
 		return resolveProjectConflict(c)
+	case conflict.KindBranchDuplicate:
+		return resolveBranchDuplicate(c)
+	case conflict.KindBranchOrphan:
+		return resolveBranchOrphan(c)
 	case conflict.KindNeedsMigration:
 		fmt.Println("This project needs migration. Run:")
 		fmt.Printf("  ws migrate %s\n", c.Project)
@@ -50,6 +54,67 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 		fmt.Println("Unknown conflict kind. Press enter to continue.")
 		_ = readLine()
 		return false, nil
+	}
+}
+
+// resolveBranchDuplicate handles two [[branches]] entries with the same
+// name in the same project — typically caused by two machines adding
+// the same branch concurrently. Offers to open workspace.toml in $EDITOR
+// for manual reconciliation; auto-merge is intentionally not offered
+// because correctness depends on knowing which CreatedBy/CreatedAt to
+// trust, which the tool cannot decide.
+func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
+	for {
+		fmt.Println("Options:")
+		fmt.Println("  (e) open workspace.toml in $EDITOR — pick which entry to keep")
+		fmt.Println("  (k) skip — leave for later")
+		fmt.Print("> ")
+		choice := strings.TrimSpace(readLine())
+		switch choice {
+		case "e":
+			editor := os.Getenv("EDITOR")
+			if editor == "" {
+				editor = "vi"
+			}
+			if err := runInTerm(c.Workspace, editor, "workspace.toml"); err != nil {
+				return false, err
+			}
+			fmt.Println("returned from editor. Mark conflict resolved? (y/N)")
+			if strings.EqualFold(strings.TrimSpace(readLine()), "y") {
+				return true, nil
+			}
+		case "k", "":
+			return false, nil
+		}
+	}
+}
+
+// resolveBranchOrphan handles a registered branch whose origin ref has
+// disappeared (typical: PR merged with auto-delete-branch on GitHub).
+// Two clean exits: drop the entry+worktree (the merged-PR case) or
+// keep the local branch (rare; the user wants to preserve unmerged work).
+func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
+	for {
+		fmt.Println("Options:")
+		fmt.Println("  (d) drop [[branches]] entry and remove the local worktree (merged-PR cleanup)")
+		fmt.Println("  (k) keep local — clear conflict but keep the branch and worktree")
+		fmt.Println("  (s) skip — leave for later")
+		fmt.Print("> ")
+		choice := strings.TrimSpace(readLine())
+		switch choice {
+		case "d":
+			fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
+			fmt.Println("Press enter once removed (or 'k' to skip).")
+			ack := strings.TrimSpace(readLine())
+			if ack == "k" {
+				return false, nil
+			}
+			return true, nil
+		case "k":
+			return true, nil
+		case "s", "":
+			return false, nil
+		}
 	}
 }
 

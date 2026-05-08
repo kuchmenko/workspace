@@ -16,7 +16,6 @@ type viewMode int
 const (
 	viewList        viewMode = iota // nested list — all navigation lives here
 	viewNewWorktree                 // worktree creation form
-	viewPromote                     // branch promote form
 	viewFlash                       // flash search with jump labels
 	viewPromptInput                 // optional prompt input before launching claude
 	viewWhichKey                    // which-key action panel (? or space)
@@ -28,7 +27,6 @@ const (
 	iconWorktree = "\ue725"  //  nf-dev-git_branch
 	iconSession  = "\uf4a6"  //  nf-md-message_text_outline
 	iconSearch   = "\uf002"  //  nf-fa-search
-	iconPromote  = "\uf021"  //  nf-fa-refresh
 )
 
 // listItem is one row in the nested list.
@@ -73,20 +71,13 @@ type Model struct {
 	pendingDelete bool // true = waiting for y/n confirmation
 	deleteItem    *listItem
 
-	// Active project for worktree/promote forms.
+	// Active project for the worktree-creation form.
 	popupProj *Project
 
 	// Worktree creation form state.
-	wtTopic    string
-	wtBranch   string // custom branch override (empty = wt/<machine>/<topic>)
-	wtAutoPush bool
-	wtNoLaunch bool // true when "create only", false when "create + launch"
-	wtField    int  // 0=topic, 1=branch, 2=auto-push, 3=confirm
-
-	// Promote form state.
-	promoteWt      Worktree
-	promoteNewName string
-	promoteField   int // 0=name, 1=confirm
+	wtBranch   string // user-typed branch name (no prefix injection)
+	wtNoLaunch bool   // true when "create only", false when "create + launch"
+	wtField    int    // 0=branch, 1=confirm
 
 	// Prompt input state (optional prompt before launch).
 	pendingLaunch *LaunchRequest // set before entering prompt input
@@ -162,9 +153,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.mode == viewWhichKey {
 			return m.updateWhichKey(msg)
-		}
-		if m.mode == viewPromote {
-			return m.updatePromote(msg)
 		}
 		if m.mode == viewNewWorktree {
 			return m.updateNewWorktree(msg)
@@ -254,23 +242,10 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// New worktree — only on projects.
 		if item != nil && item.kind == KindProject {
 			m.wtNoLaunch = true
-			m.wtTopic = ""
 			m.wtBranch = ""
-			m.wtAutoPush = false
 			m.wtField = 0
 			m.popupProj = item.project
 			m.mode = viewNewWorktree
-			return m, nil
-		}
-
-	case "m":
-		// Promote worktree — only on non-main worktrees.
-		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
-			m.promoteWt = *item.worktree
-			m.promoteNewName = suggestPromoteName(*item.worktree)
-			m.promoteField = 0
-			m.popupProj = item.parentProj
-			m.mode = viewPromote
 			return m, nil
 		}
 
@@ -425,7 +400,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 			{"l", "shell"},
 		}
 		if item.worktree != nil && !item.worktree.IsMain {
-			actions = append(actions, whichKeyAction{"m", "promote"})
 			actions = append(actions, whichKeyAction{"d", "delete"})
 		}
 		actions = append(actions, whichKeyAction{"", ""})
@@ -455,9 +429,7 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "n":
 			if item != nil && item.kind == KindProject {
 				m.wtNoLaunch = true
-				m.wtTopic = ""
 				m.wtBranch = ""
-				m.wtAutoPush = false
 				m.wtField = 0
 				m.popupProj = item.project
 				m.mode = viewNewWorktree
@@ -581,44 +553,25 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewList
 		return m, nil
 	case "tab", "down":
-		m.wtField = (m.wtField + 1) % 4
+		m.wtField = (m.wtField + 1) % 2
 		return m, nil
 	case "shift+tab", "up":
-		m.wtField = (m.wtField + 3) % 4
+		m.wtField = (m.wtField + 1) % 2
 		return m, nil
 	case "enter":
-		if m.wtField == 3 { // confirm
+		if m.wtField == 1 { // confirm
 			return m.executeNewWorktree()
 		}
-		// On other fields, tab forward
-		m.wtField = (m.wtField + 1) % 4
+		m.wtField = (m.wtField + 1) % 2
 		return m, nil
-	case " ":
-		if m.wtField == 2 { // auto-push toggle
-			m.wtAutoPush = !m.wtAutoPush
-			return m, nil
-		}
 	case "backspace":
-		switch m.wtField {
-		case 0:
-			if len(m.wtTopic) > 0 {
-				m.wtTopic = m.wtTopic[:len(m.wtTopic)-1]
-			}
-		case 1:
-			if len(m.wtBranch) > 0 {
-				m.wtBranch = m.wtBranch[:len(m.wtBranch)-1]
-			}
+		if m.wtField == 0 && len(m.wtBranch) > 0 {
+			m.wtBranch = m.wtBranch[:len(m.wtBranch)-1]
 		}
 		return m, nil
 	default:
-		// Type into current text field.
-		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			switch m.wtField {
-			case 0:
-				m.wtTopic += key
-			case 1:
-				m.wtBranch += key
-			}
+		if m.wtField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
+			m.wtBranch += key
 		}
 	}
 	return m, nil
@@ -626,18 +579,12 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 	branch := strings.TrimSpace(m.wtBranch)
-	topic := strings.TrimSpace(m.wtTopic)
-
-	// When branch is set, topic is auto-derived from branch.
-	// When neither is set, reject.
-	if branch == "" && topic == "" {
+	if branch == "" {
 		return m, nil
 	}
-	if branch != "" && topic == "" {
-		topic = layout.SlugifyBranch(branch)
-	}
 
-	result, err := CreateWorktree(m.popupProj, topic, branch, m.wtAutoPush)
+	wsRoot := m.workspaceRootFor(m.popupProj)
+	result, err := CreateWorktree(m.popupProj, branch, wsRoot, m.popupProj.ID)
 	if err != nil {
 		m.statusMsg = err.Error()
 		m.mode = viewList
@@ -660,111 +607,6 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 	m.promptInput = ""
 	m.mode = viewPromptInput
 	return m, nil
-}
-
-func (m *Model) updatePromote(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
-	case "esc":
-		m.mode = viewList
-		return m, nil
-	case "tab", "down":
-		m.promoteField = (m.promoteField + 1) % 2
-	case "shift+tab", "up":
-		m.promoteField = (m.promoteField + 1) % 2
-	case "enter":
-		if m.promoteField == 1 {
-			return m.executePromote()
-		}
-		m.promoteField = 1
-	case "backspace":
-		if m.promoteField == 0 && len(m.promoteNewName) > 0 {
-			m.promoteNewName = m.promoteNewName[:len(m.promoteNewName)-1]
-		}
-	default:
-		if m.promoteField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			m.promoteNewName += key
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) executePromote() (tea.Model, tea.Cmd) {
-	newName := strings.TrimSpace(m.promoteNewName)
-	if newName == "" {
-		return m, nil
-	}
-	wsRoot := m.workspaceRootFor(m.popupProj)
-	err := PromoteWorktree(m.popupProj.Path, m.promoteWt, newName, wsRoot, m.popupProj.ID)
-	if err != nil {
-		m.statusMsg = err.Error()
-		m.mode = viewList
-		return m, nil
-	}
-	m.wtCache.Invalidate(m.popupProj.Path)
-	m.statusMsg = "branch promoted to " + newName
-	m.mode = viewList
-	m.rebuildItems()
-	return m, nil
-}
-
-func (m *Model) viewPromote() string {
-	popupW := 50
-	if m.width < 56 {
-		popupW = m.width - 6
-	}
-	innerW := popupW - 6
-
-	oldName := m.promoteWt.Branch
-	displayOld := worktreeDisplayName(m.promoteWt)
-
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("%s Promote %s", iconPromote, displayOld)))
-	lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("current: %s", oldName)))
-	lines = append(lines, "")
-
-	// Field 0: new branch name.
-	nameLabel := "  New branch name:"
-	nameVal := m.promoteNewName + "\u2588"
-	if m.promoteField != 0 {
-		nameVal = m.promoteNewName
-		if nameVal == "" {
-			nameVal = "(required)"
-		}
-	}
-	if m.promoteField == 0 {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(nameLabel))
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+nameVal))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(nameLabel))
-		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+nameVal))
-	}
-	lines = append(lines, "")
-
-	// Field 1: confirm.
-	confirmLabel := "  \u2192 Rename branch"
-	if m.promoteField == 1 {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(confirmLabel))
-	}
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  esc:back"))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
-}
-
-func suggestPromoteName(wt Worktree) string {
-	if strings.HasPrefix(wt.Branch, "wt/") {
-		parts := strings.SplitN(wt.Branch, "/", 3)
-		if len(parts) == 3 {
-			return "feat/" + parts[2]
-		}
-	}
-	return wt.Branch
 }
 
 func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1146,9 +988,6 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewPromptInput {
 		return m.viewPromptInput()
-	}
-	if m.mode == viewPromote {
-		return m.viewPromote()
 	}
 	if m.mode == viewNewWorktree {
 		return m.viewNewWorktree()
@@ -1550,93 +1389,38 @@ func (m *Model) viewNewWorktree() string {
 	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("%s New worktree for %s", iconWorktree, p.Name)))
 	lines = append(lines, "")
 
-	// When branch is provided, topic is auto-derived (slugified branch).
-	// When branch is empty, topic is the primary input.
-	hasBranch := strings.TrimSpace(m.wtBranch) != ""
-
-	// Field 0: topic
-	topicLabel := "  Topic:"
-	if hasBranch {
-		topicLabel = "  Topic (auto from branch):"
-	}
-	var topicDisplay string
-	if hasBranch {
-		topicDisplay = layout.SlugifyBranch(m.wtBranch)
-	} else if m.wtField == 0 {
-		topicDisplay = m.wtTopic + "\u2588"
-	} else {
-		topicDisplay = m.wtTopic
-		if topicDisplay == "" {
-			topicDisplay = "(required if no branch)"
-		}
-	}
-	if m.wtField == 0 && !hasBranch {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(topicLabel))
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+topicDisplay))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(topicLabel))
-		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+topicDisplay))
-	}
-	lines = append(lines, "")
-
-	// Field 1: branch override
-	branchLabel := "  Branch:"
-	branchDefault := fmt.Sprintf("wt/<machine>/%s", m.wtTopic)
-	if m.wtTopic == "" && !hasBranch {
-		branchDefault = "wt/<machine>/<topic>"
-	}
+	// Field 0: branch (single input \u2014 user types the literal branch name).
+	branchLabel := "  Branch name:"
 	branchVal := m.wtBranch + "\u2588"
-	if m.wtField != 1 {
+	if m.wtField != 0 {
 		branchVal = m.wtBranch
 		if branchVal == "" {
-			branchVal = branchDefault
+			branchVal = "(required)"
 		}
 	}
-	if m.wtField == 1 {
+	if m.wtField == 0 {
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(branchLabel))
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+branchVal))
 	} else {
 		lines = append(lines, popupItemStyle.Width(innerW).Render(branchLabel))
 		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+branchVal))
 	}
-	// Show resulting path preview.
-	pathPreview := ""
-	if hasBranch {
-		pathPreview = fmt.Sprintf("  \u2192 dir: %s-wt-<machine>-%s", p.Name, layout.SlugifyBranch(m.wtBranch))
-	} else if m.wtTopic != "" {
-		pathPreview = fmt.Sprintf("  \u2192 dir: %s-wt-<machine>-%s", p.Name, m.wtTopic)
-	}
-	if pathPreview != "" {
+	if branch := strings.TrimSpace(m.wtBranch); branch != "" {
+		pathPreview := fmt.Sprintf("  \u2192 dir: %s-wt-<machine>-%s", p.Name, layout.SlugifyBranch(branch))
 		lines = append(lines, popupDimStyle.Width(innerW).Render(pathPreview))
 	}
 	lines = append(lines, "")
 
-	// Field 2: auto-push toggle
-	pushCheck := "\u2610"
-	if m.wtAutoPush {
-		pushCheck = "\u2611"
-	}
-	pushLabel := fmt.Sprintf("  %s Auto-push (daemon pushes this branch)", pushCheck)
-	if m.wtField == 2 {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(pushLabel))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(pushLabel))
-	}
-	if m.wtBranch == "" {
-		lines = append(lines, popupDimStyle.Width(innerW).Render("    (wt/* branches auto-push by default)"))
-	}
-	lines = append(lines, "")
-
-	// Field 3: confirm button
+	// Field 1: confirm button
 	confirmLabel := "  \u2192 Create worktree"
-	if m.wtField == 3 {
+	if m.wtField == 1 {
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
 	} else {
 		lines = append(lines, popupItemStyle.Width(innerW).Render(confirmLabel))
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  space:toggle  enter:confirm  esc:back"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  esc:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
