@@ -21,3 +21,7 @@ bin/
 # Claude / Sisyphus
 .claude/
 .sisyphus/
+
+# Bench protocol (see AGENTS.md "Performance Protocol")
+/bench/results/
+/bench/.bin/

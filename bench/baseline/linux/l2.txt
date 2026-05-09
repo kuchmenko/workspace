@@ -1,0 +1,35 @@
+goos: linux
+goarch: arm64
+pkg: github.com/kuchmenko/workspace/internal/benchfixture
+BenchmarkReconcilerTickPhase2_Small-10     	      75	  65899525 ns/op	 1769993 B/op	    4893 allocs/op
+BenchmarkReconcilerTickPhase2_Small-10     	      81	  43427555 ns/op	 1768416 B/op	    4892 allocs/op
+BenchmarkReconcilerTickPhase2_Small-10     	     100	  42971973 ns/op	 1768361 B/op	    4891 allocs/op
+BenchmarkReconcilerTickPhase2_Small-10     	      81	  42467409 ns/op	 1777092 B/op	    4892 allocs/op
+BenchmarkReconcilerTickPhase2_Small-10     	      75	  42464926 ns/op	 1777187 B/op	    4892 allocs/op
+BenchmarkReconcilerTickPhase2_Medium-10    	      16	 197367582 ns/op	 8448597 B/op	   22234 allocs/op
+BenchmarkReconcilerTickPhase2_Medium-10    	      18	 199384036 ns/op	 8448826 B/op	   22238 allocs/op
+BenchmarkReconcilerTickPhase2_Medium-10    	      20	 201983808 ns/op	 8508051 B/op	   22238 allocs/op
+BenchmarkReconcilerTickPhase2_Medium-10    	      18	 201705678 ns/op	 8507658 B/op	   22235 allocs/op
+BenchmarkReconcilerTickPhase2_Medium-10    	      15	 214252224 ns/op	 8508339 B/op	   22242 allocs/op
+BenchmarkReconcilerTickPhase2_Large-10     	       4	 865145666 ns/op	33699886 B/op	   87223 allocs/op
+BenchmarkReconcilerTickPhase2_Large-10     	       4	 781358074 ns/op	33931330 B/op	   87246 allocs/op
+BenchmarkReconcilerTickPhase2_Large-10     	       4	 821143584 ns/op	33933148 B/op	   87242 allocs/op
+BenchmarkReconcilerTickPhase2_Large-10     	       4	 853240940 ns/op	33932754 B/op	   87246 allocs/op
+BenchmarkReconcilerTickPhase2_Large-10     	       4	 788960904 ns/op	33929740 B/op	   87230 allocs/op
+BenchmarkScanWalk_Small-10                 	  870637	      4913 ns/op	    1459 B/op	      29 allocs/op
+BenchmarkScanWalk_Small-10                 	  712180	      4802 ns/op	    1459 B/op	      29 allocs/op
+BenchmarkScanWalk_Small-10                 	  986115	      4877 ns/op	    1459 B/op	      29 allocs/op
+BenchmarkScanWalk_Small-10                 	  704371	      4797 ns/op	    1459 B/op	      29 allocs/op
+BenchmarkScanWalk_Small-10                 	 1000000	      4672 ns/op	    1459 B/op	      29 allocs/op
+BenchmarkScanWalk_Medium-10                	  160266	     32556 ns/op	   12290 B/op	     212 allocs/op
+BenchmarkScanWalk_Medium-10                	  110857	     41794 ns/op	   12292 B/op	     212 allocs/op
+BenchmarkScanWalk_Medium-10                	   87976	     45015 ns/op	   12292 B/op	     212 allocs/op
+BenchmarkScanWalk_Medium-10                	   71019	     45938 ns/op	   12292 B/op	     212 allocs/op
+BenchmarkScanWalk_Medium-10                	   70539	     51531 ns/op	   12295 B/op	     212 allocs/op
+BenchmarkScanWalk_Large-10                 	   18027	    203895 ns/op	   49526 B/op	     814 allocs/op
+BenchmarkScanWalk_Large-10                 	   39574	     92745 ns/op	   49501 B/op	     814 allocs/op
+BenchmarkScanWalk_Large-10                 	   30721	    156041 ns/op	   49517 B/op	     814 allocs/op
+BenchmarkScanWalk_Large-10                 	   34201	    105581 ns/op	   49504 B/op	     814 allocs/op
+BenchmarkScanWalk_Large-10                 	   18289	    217438 ns/op	   49516 B/op	     814 allocs/op
+PASS
+ok  	github.com/kuchmenko/workspace/internal/benchfixture	324.583s
