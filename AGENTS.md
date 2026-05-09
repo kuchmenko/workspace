@@ -166,9 +166,19 @@ Do not invent. Ask the human:
 
 ## Other agent conventions
 
-- Branch names: literal user input. Never inject `wt/<machine>/` or any
-  rewrite. Use the project's convention: `feat/topic`, `fix/topic`,
-  `chore/topic`, `refactor/topic`.
+- Use `ws` for workspace operations: `ws status`, `ws sync`,
+  `ws sync resolve`, `ws worktree add/list/push/rm`.
+- Start non-trivial work with `ws worktree add workspace <type>/<kebab-topic>`.
+  Do not branch inside the main worktree.
+- Branch names are literal user input, but must follow conventional form:
+  `<type>/<kebab-topic>`.
+- Allowed branch/commit/PR types: `feat`, `fix`, `chore`, `docs`, `refactor`,
+  `test`, `ci`, `style`, `perf`.
+- Commit messages and PR titles must be Conventional Commits:
+  `<type>(<scope>): <imperative result-oriented description>`.
+- Never create new `wt/<machine>/*` branches; they are legacy compatibility only.
+- Never use stale `ws worktree new`, `ws worktree promote`, `--auto-push`,
+  or `autopush.branches` guidance.
 - PRs: open as **draft** by default (`gh pr create --draft`). Only the
   human flips to ready.
 - No `Co-Authored-By` footers in commits.
