@@ -1,0 +1,29 @@
+# Thresholds for the perf benchmark protocol. See AGENTS.md "Performance
+# Protocol" for how these are consumed by `just bench-pr-gate`.
+#
+# Δ% values are absolute deltas (e.g. `5` means "5% slower than baseline").
+# `p_max` is the maximum p-value below which a delta is considered
+# statistically meaningful (Mann-Whitney via benchstat).
+#
+# Soft mode (within 14 days of GATE_ACTIVATION) only PRINTS the regressions.
+# Hard mode (after 14 days) ALSO exits non-zero — blocking `gh pr create`
+# unless the agent is invoked with `--bench-skip` (justified in PR body).
+
+[L1]
+# Microbenchmarks (go test -bench). Tightest gate — pure Go regressions
+# are usually intentional or a measurable mistake.
+time_pct = 5
+allocs_pct = 10
+p_max = 0.05
+
+[L2]
+# Macrobenchmarks against a synthetic workspace via internal/benchfixture.
+# Wider tolerance: subprocess git invocation noise is real.
+time_pct = 10
+allocs_pct = 15
+p_max = 0.05
+
+[L3]
+# E2E hyperfine scenarios on the actual binary. Trend-only; never gates.
+time_pct = 0    # advisory only
+rss_pct = 0     # advisory only
