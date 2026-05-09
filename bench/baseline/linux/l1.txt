@@ -1,0 +1,231 @@
+PASS
+ok  	github.com/kuchmenko/workspace/internal/add	0.003s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/agent	0.002s
+?   	github.com/kuchmenko/workspace/internal/alias	[no test files]
+?   	github.com/kuchmenko/workspace/internal/aliasmgr	[no test files]
+?   	github.com/kuchmenko/workspace/internal/auth	[no test files]
+?   	github.com/kuchmenko/workspace/internal/benchfixture	[no test files]
+PASS
+ok  	github.com/kuchmenko/workspace/internal/bootstrap	0.001s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/branchprompt	0.002s
+goos: linux
+goarch: arm64
+pkg: github.com/kuchmenko/workspace/internal/cli
+BenchmarkNewRootCmd-10      	   13882	     90265 ns/op	   61201 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   13347	     85753 ns/op	   61201 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   15612	    100633 ns/op	   61201 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   30321	     34502 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   27854	     48547 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   30544	     42658 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   25982	     43609 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   23790	     50665 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   24075	     60789 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkNewRootCmd-10      	   19527	     73298 ns/op	   61200 B/op	     355 allocs/op
+BenchmarkRootCmd_Help-10    	    8096	    157005 ns/op	   84308 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    8944	    132952 ns/op	   84310 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	   10000	    148213 ns/op	   84308 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    8737	    145708 ns/op	   84315 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	   10000	    151927 ns/op	   84311 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	   10000	    151997 ns/op	   84308 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    8642	    178584 ns/op	   84325 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    8350	    173064 ns/op	   84324 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    7752	    156108 ns/op	   84327 B/op	     626 allocs/op
+BenchmarkRootCmd_Help-10    	    8090	    162731 ns/op	   84331 B/op	     626 allocs/op
+PASS
+ok  	github.com/kuchmenko/workspace/internal/cli	33.817s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/clipboard	0.002s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/clone	0.002s
+goos: linux
+goarch: arm64
+pkg: github.com/kuchmenko/workspace/internal/config
+BenchmarkLoad_Small-10            	   10000	    263419 ns/op	   71067 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4506	    279978 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    5641	    271580 ns/op	   71066 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4600	    276407 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4663	    276529 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4621	    265929 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4491	    283585 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4300	    276548 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    4407	    276689 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Small-10            	    3698	    281078 ns/op	   71065 B/op	     782 allocs/op
+BenchmarkLoad_Medium-10           	     246	   4846740 ns/op	 1073870 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     266	   4858519 ns/op	 1073872 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     238	   4709057 ns/op	 1073871 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     250	   4813423 ns/op	 1073859 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     248	   4629266 ns/op	 1073862 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     277	   3873934 ns/op	 1073855 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     276	   4267928 ns/op	 1073855 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     256	   3939126 ns/op	 1073857 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     256	   4100362 ns/op	 1073882 B/op	   12902 allocs/op
+BenchmarkLoad_Medium-10           	     334	   4013798 ns/op	 1073850 B/op	   12902 allocs/op
+BenchmarkLoad_Large-10            	      18	  68053388 ns/op	15875624 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      16	  72725930 ns/op	15875691 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      18	  70111930 ns/op	15875699 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      16	  67855014 ns/op	15875663 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      15	  70372829 ns/op	15875779 B/op	  189278 allocs/op
+BenchmarkLoad_Large-10            	      20	  65554986 ns/op	15875644 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      15	  68738034 ns/op	15875704 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      18	  72802510 ns/op	15875644 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      16	  69960808 ns/op	15875705 B/op	  189277 allocs/op
+BenchmarkLoad_Large-10            	      49	  68751990 ns/op	15875684 B/op	  189277 allocs/op
+BenchmarkSave_Small-10            	    5898	    209725 ns/op	   31308 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    5059	    205955 ns/op	   31308 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    7022	    196535 ns/op	   31309 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    6076	    207282 ns/op	   31310 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    7034	    190844 ns/op	   31308 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	   10000	    154452 ns/op	   31307 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    5196	    211187 ns/op	   31308 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    6486	    208627 ns/op	   31309 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    5047	    223381 ns/op	   31308 B/op	    1011 allocs/op
+BenchmarkSave_Small-10            	    6892	    197665 ns/op	   31307 B/op	    1011 allocs/op
+BenchmarkSave_Medium-10           	     390	   3365751 ns/op	  473813 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     358	   3387917 ns/op	  473822 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     363	   3328656 ns/op	  473786 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     352	   3358962 ns/op	  473820 B/op	   17583 allocs/op
+BenchmarkSave_Medium-10           	     366	   3397377 ns/op	  473794 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     364	   3268098 ns/op	  473802 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     338	   3356519 ns/op	  473789 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     352	   3278393 ns/op	  473797 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     336	   3219672 ns/op	  473806 B/op	   17582 allocs/op
+BenchmarkSave_Medium-10           	     386	   2798526 ns/op	  473782 B/op	   17582 allocs/op
+BenchmarkSave_Large-10            	      24	  50633557 ns/op	 6926265 B/op	  260678 allocs/op
+BenchmarkSave_Large-10            	      24	  50606574 ns/op	 6926459 B/op	  260680 allocs/op
+BenchmarkSave_Large-10            	      25	  48621668 ns/op	 6926080 B/op	  260676 allocs/op
+BenchmarkSave_Large-10            	      55	  50976060 ns/op	 6926329 B/op	  260679 allocs/op
+BenchmarkSave_Large-10            	      24	  48154839 ns/op	 6926283 B/op	  260677 allocs/op
+BenchmarkSave_Large-10            	      39	  49758749 ns/op	 6926880 B/op	  260683 allocs/op
+BenchmarkSave_Large-10            	      26	  50482373 ns/op	 6926605 B/op	  260681 allocs/op
+BenchmarkSave_Large-10            	      57	  49923118 ns/op	 6926225 B/op	  260678 allocs/op
+BenchmarkSave_Large-10            	      30	  48986690 ns/op	 6926497 B/op	  260678 allocs/op
+BenchmarkSave_Large-10            	      27	  52231366 ns/op	 6926309 B/op	  260678 allocs/op
+BenchmarkValidate_Small-10        	 6455950	       185.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6169358	       183.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6506890	       185.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6215223	       190.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6529428	       184.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6479977	       183.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6529938	       185.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6311956	       183.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6502190	       185.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Small-10        	 6098102	       185.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  224752	      5680 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  220088	      5438 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  225230	      5367 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  224667	      5498 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  217605	      5599 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  223018	      5358 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  206161	      5383 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  225604	      5624 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  224754	      5622 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Medium-10       	  220192	      5310 ns/op	       0 B/op	       0 allocs/op
+BenchmarkValidate_Large-10        	    1599	    628029 ns/op	  228003 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    2210	    701046 ns/op	  228004 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1558	    699153 ns/op	  228003 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1737	    679595 ns/op	  228002 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1818	    652985 ns/op	  228003 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1566	    710427 ns/op	  228002 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    2094	    657548 ns/op	  228003 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1880	    709520 ns/op	  228002 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1729	    677450 ns/op	  228004 B/op	    1500 allocs/op
+BenchmarkValidate_Large-10        	    1683	    668758 ns/op	  228002 B/op	    1500 allocs/op
+BenchmarkClaimBranch_Append-10    	 4612419	       316.2 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3502110	       371.0 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3600141	       329.5 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3593286	       333.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3076461	       353.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3180310	       384.2 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3437592	       373.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3007810	       362.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3573304	       343.5 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Append-10    	 3294410	       382.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4294621	       300.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4080040	       284.7 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4017645	       293.8 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4010584	       281.6 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4694925	       278.1 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 5188364	       287.1 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4473876	       280.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 3978891	       274.3 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 5023286	       258.9 ns/op	      24 B/op	       1 allocs/op
+BenchmarkClaimBranch_Update-10    	 4375951	       268.5 ns/op	      24 B/op	       1 allocs/op
+PASS
+ok  	github.com/kuchmenko/workspace/internal/config	178.772s
+goos: linux
+goarch: arm64
+pkg: github.com/kuchmenko/workspace/internal/conflict
+BenchmarkRecord_Fresh-10                 	   25670	     47323 ns/op	    2738 B/op	      31 allocs/op
+BenchmarkRecord_Fresh-10                 	   31076	     40758 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   32251	     38389 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   24637	     41647 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   25320	     50280 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   22964	     49141 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   27734	     42745 ns/op	    2767 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   23870	     46562 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   50523	     25488 ns/op	    2768 B/op	      30 allocs/op
+BenchmarkRecord_Fresh-10                 	   48862	     24711 ns/op	    2736 B/op	      30 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	   18487	     68392 ns/op	   15353 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	   18774	     68460 ns/op	   15356 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	   17204	     70713 ns/op	   15357 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	   18168	     56921 ns/op	   15360 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	   19108	     64272 ns/op	   15357 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	    9817	    106562 ns/op	   15364 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	    9750	    145699 ns/op	   15359 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	    7923	    136500 ns/op	   15365 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	    9148	    150444 ns/op	   15357 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_10-10     	    9182	    128421 ns/op	   15365 B/op	      92 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1293	    957199 ns/op	  141410 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1276	    925818 ns/op	  142807 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    2424	    919590 ns/op	  141933 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1435	    965486 ns/op	  141911 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1206	    937316 ns/op	  141931 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1186	    923698 ns/op	  141992 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1261	    941123 ns/op	  142183 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1224	    818848 ns/op	  141923 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1125	    973725 ns/op	  142267 B/op	     636 allocs/op
+BenchmarkRecord_DuplicateMatch_100-10    	    1369	    979031 ns/op	  142728 B/op	     636 allocs/op
+BenchmarkList_10-10                      	   18610	     69472 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   17311	     68393 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   17960	     68389 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   16197	     66102 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   19406	     69071 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   16996	     68609 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   17826	     68036 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   18387	     70657 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   18748	     64367 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_10-10                      	   19056	     63746 ns/op	    8608 B/op	      68 allocs/op
+BenchmarkList_100-10                     	    2473	    480490 ns/op	   74194 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    6052	    289996 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    6444	    322650 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    4347	    239241 ns/op	   74192 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    5149	    244925 ns/op	   74192 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    6487	    244892 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    6406	    248133 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    6489	    262602 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    5616	    244108 ns/op	   74193 B/op	     521 allocs/op
+BenchmarkList_100-10                     	    5832	    232969 ns/op	   74193 B/op	     521 allocs/op
+PASS
+ok  	github.com/kuchmenko/workspace/internal/conflict	114.698s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/create	0.008s
+?   	github.com/kuchmenko/workspace/internal/daemon	[no test files]
+PASS
+ok  	github.com/kuchmenko/workspace/internal/docs	0.003s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/doctor	0.006s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/git	0.004s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/github	0.003s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/layout	0.002s
+PASS
+ok  	github.com/kuchmenko/workspace/internal/migrate	0.001s
+?   	github.com/kuchmenko/workspace/internal/setup	[no test files]
+PASS
+ok  	github.com/kuchmenko/workspace/internal/sidecar	0.001s
+?   	github.com/kuchmenko/workspace/internal/testutil	[no test files]
+?   	github.com/kuchmenko/workspace/cmd/ws	[no test files]

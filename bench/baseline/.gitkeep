@@ -1,0 +1,2 @@
+# Per-machine baseline files live in <machine>/ subdirectories, populated
+# by `just bench-baseline`. See AGENTS.md "Performance Protocol".
