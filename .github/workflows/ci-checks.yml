@@ -18,7 +18,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -37,7 +37,7 @@ jobs:
     name: Vet
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -48,7 +48,7 @@ jobs:
     name: go mod tidy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -70,7 +70,7 @@ jobs:
       security-events: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -96,7 +96,7 @@ jobs:
     name: Test (race + coverage)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
@@ -169,7 +169,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - id: govulncheck
         uses: golang/govulncheck-action@v1
         with:
@@ -192,7 +192,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
