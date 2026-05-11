@@ -80,7 +80,7 @@ jobs:
         # built with Go 1.25+ and therefore can typecheck a Go 1.26 module
         # (v1.64.x is built with Go 1.24 and refuses). Output flags use the
         # v2 per-format path syntax: --output.<format>.path=...
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
           args: --timeout=5m --output.text.path=stdout --output.sarif.path=golangci-lint.sarif
