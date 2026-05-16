@@ -25,7 +25,9 @@ const (
 	iconSearch   = "" //  nf-fa-search
 )
 
-// listItem is one row in the nested list.
+// listItem is one row in the scrollable nested list. Header chips
+// (Favorites/Recent quick-nav) live outside m.items and are rendered
+// directly by viewList — they are not items the cursor can land on.
 type listItem struct {
 	kind       NodeKind
 	group      string    // group name (for KindGroup rows)
@@ -35,22 +37,6 @@ type listItem struct {
 	indent     int
 	path       string   // filesystem path for shell navigation
 	parentProj *Project // for worktree/session: which project they belong to
-
-	// sectionTitle is the text rendered for KindSection rows. Empty
-	// sectionTitle on a KindSection row renders as a blank line —
-	// used as the spacer between Favorites/Recent and the full tree.
-	sectionTitle string
-	// inHeader marks a project row that lives inside the Favorites or
-	// Recent header section rather than the full workspace tree. Such
-	// rows skip worktree/session expansion (they are quick-nav only).
-	inHeader bool
-}
-
-// isSelectable reports whether the cursor is allowed to land on this
-// row. KindSection rows are visual-only and skipped by j/k movement,
-// flash-search match collection, and the initial-cursor placement.
-func (it listItem) isSelectable() bool {
-	return it.kind != KindSection
 }
 
 // LaunchRequest is set when the user selects an action that should
@@ -67,16 +53,16 @@ type LaunchRequest struct {
 type Model struct {
 	workspaces []WorkspaceData
 	mode       viewMode
-	// agentView is "all" (Favorites+Recent header above full tree) or
-	// "favorites" (only the Favorites section, flat — no tree). Loaded
-	// from workspace.toml's [agent].default_view at startup. The user
-	// flips it via the which-key `space v` chord; the new value is
-	// persisted back to workspace.toml so other machines pick it up.
-	agentView string
-	items     []listItem // flattened visible items
-	cursor    int
-	expanded  map[string]bool // group/project name → expanded
-	scroll    int             // scroll offset for long lists
+	items      []listItem // flattened scrollable tree items (no header)
+	cursor     int
+	expanded   map[string]bool // group/project name → expanded
+	scroll     int             // scroll offset for long lists
+
+	// headerProjects is the ordered list of projects rendered as
+	// numbered chips in the pinned quick-nav header above the tree.
+	// Recomputed in rebuildItems from favorites + recently-touched
+	// projects across all workspaces.
+	headerProjects []Project
 
 	// Caches — loaded lazily, invalidated after mutations.
 	sessCache *SessionCache
@@ -126,23 +112,13 @@ type Model struct {
 // NewModel constructs the TUI model from loaded workspace data.
 // sessCache should be the cache returned by LoadWorkspaces (already
 // populated with session counts from the initial scan).
-//
-// initialView selects the opening view ("all" or "favorites"). The
-// caller typically reads it from workspace.toml's agent.default_view
-// via Workspace.AgentDefaultView(); pass the empty string to default
-// to "all".
-func NewModel(workspaces []WorkspaceData, sessCache *SessionCache, initialView string) *Model {
+func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 	if sessCache == nil {
 		sessCache = NewSessionCache()
-	}
-	view := config.AgentViewAll
-	if initialView == config.AgentViewFavorites {
-		view = config.AgentViewFavorites
 	}
 	m := &Model{
 		workspaces: workspaces,
 		mode:       viewList,
-		agentView:  view,
 		expanded:   make(map[string]bool),
 		sessCache:  sessCache,
 		wtCache:    NewWorktreeCache(),
@@ -154,39 +130,7 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache, initialView s
 		}
 	}
 	m.rebuildItems()
-	m.cursor = m.firstSelectableIndex()
 	return m
-}
-
-// firstSelectableIndex returns the index of the first row the cursor
-// can legally land on. Used to skip past the Favorites/Recent section
-// headers at startup. Returns 0 when nothing is selectable (degenerate
-// empty workspace) so the cursor still has a defined value.
-func (m *Model) firstSelectableIndex() int {
-	for i, it := range m.items {
-		if it.isSelectable() {
-			return i
-		}
-	}
-	return 0
-}
-
-// nextSelectable steps from `from` in direction `dir` (+1 down, -1 up)
-// over any KindSection rows until it lands on a selectable row.
-// Returns `from` when no selectable row exists in that direction —
-// callers use the no-change signal to skip the ensureVisible call.
-func (m *Model) nextSelectable(from, dir int) int {
-	if len(m.items) == 0 {
-		return from
-	}
-	i := from + dir
-	for i >= 0 && i < len(m.items) {
-		if m.items[i].isSelectable() {
-			return i
-		}
-		i += dir
-	}
-	return from
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -325,7 +269,16 @@ func (m *Model) ensureVisible() {
 }
 
 func (m *Model) listHeight() int {
-	h := m.height - 5 // header + 2 footer lines + borders
+	// 5 = breadcrumb (1) + 2 footer lines + borders (2). Add room for
+	// the pinned chip header when present: up to 2 chip lines plus a
+	// 1-line separator below them. headerProjects may be empty (idle
+	// workspace) — listHeight then matches the pre-rework value so a
+	// fresh install has the same vertical density.
+	chrome := 5
+	if len(m.headerProjects) > 0 {
+		chrome += 3
+	}
+	h := m.height - chrome
 	if h < 3 {
 		h = 3
 	}

@@ -55,8 +55,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
 		case KindPortal:
 			line = m.renderSession(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
-		case KindSection:
-			line = m.renderSection(item, listW, dimAll)
 		}
 
 		rows = append(rows, line)
@@ -65,21 +63,12 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 }
 
 // itemGroupKey returns a key that identifies the visual group boundary
-// for inserting blank lines between groups. KindSection rows return
-// their own key per title so each section visually owns its block
-// (Favorites != Recent != divider); the rows beneath them inherit the
-// tree's normal keys because the shortcut projects are inHeader=true
-// without any Group of their own.
+// for inserting blank lines between groups.
 func (m *Model) itemGroupKey(item listItem) string {
 	switch item.kind {
-	case KindSection:
-		return "section:" + item.sectionTitle
 	case KindGroup:
 		return "g:" + item.group
 	case KindProject:
-		if item.inHeader {
-			return "header"
-		}
 		if item.project.Group != "" {
 			return "g:" + item.project.Group
 		}
@@ -91,22 +80,6 @@ func (m *Model) itemGroupKey(item listItem) string {
 		return "ungrouped"
 	}
 	return ""
-}
-
-// renderSection draws the non-selectable header rows: section titles
-// ("Favorites" / "Recent"), the divider line above the full tree, and
-// the empty-state hint shown inside an empty Favorites view. All four
-// share one style block; the title text already disambiguates them.
-func (m *Model) renderSection(item listItem, w int, dimAll bool) string {
-	text := item.sectionTitle
-	if text == "" {
-		return strings.Repeat(" ", w)
-	}
-	label := "  " + text
-	if dimAll {
-		return dimStyle.Width(w).Render(label)
-	}
-	return sectionStyle.Width(w).Render(label)
 }
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
@@ -131,16 +104,7 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 
 func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	p := item.project
-	indent := strings.Repeat("  ", item.indent)
-
-	// Project rows in the Favorites/Recent shortcut section have a
-	// distinct shape: a leading `*` marker for favorites, no
-	// expansion arrow (they never expand to worktrees here), and a
-	// trailing age column ("2m linux"). The tree variant below is
-	// unchanged.
-	if item.inHeader {
-		return m.renderHeaderProject(p, selected, inFlash, isMatch, flashLabel, w, dimAll)
-	}
+	indent := strings.Repeat("    ", item.indent)
 
 	expandMark := ""
 	if p.WorktreeCount > 1 || p.SessionCount > 0 {
@@ -193,63 +157,8 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 // renderHeaderProject draws a project row inside the Favorites/Recent
 // shortcut section: `*` star for favorites, project icon, name, and a
 // right-aligned `2m linux` activity column. The row is fully selectable
-// and shares Enter/p/l semantics with tree rows — only the visual shape
-// differs.
-func (m *Model) renderHeaderProject(p *Project, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
-	name := p.Name
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
-	}
-
-	star := "  "
-	if p.Favorite {
-		star = "* "
-	}
-	left := fmt.Sprintf("  %s%s %s", star, iconProject, name)
-
-	var rightParts []string
-	if age := humanizeAge(p.LastActiveAt); age != "" {
-		rightParts = append(rightParts, age)
-	}
-	if p.LastActiveMachine != "" {
-		rightParts = append(rightParts, p.LastActiveMachine)
-	}
-	right := strings.Join(rightParts, " ")
-
-	line := m.padRight(left, right, w)
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(line)
-	}
-	if selected {
-		return m.renderSelected(line, itemStyle, w)
-	}
-	if right == "" {
-		// Star + project body share the project color; favorited
-		// projects get a brighter star via favoriteStarStyle for visual
-		// scanability without using a different background.
-		if p.Favorite {
-			body := fmt.Sprintf("  %s %s", iconProject, name)
-			return favoriteStarStyle.Render("  * ") + itemStyle.Render(body[len("  * "):]) + strings.Repeat(" ", w-lipgloss.Width(left))
-		}
-		return itemStyle.Width(w).Render(line)
-	}
-	padding := w - lipgloss.Width(left) - lipgloss.Width(right) - 1
-	if padding < 1 {
-		padding = 1
-	}
-	leftRendered := itemStyle.Render(left)
-	if p.Favorite {
-		// Overlay just the star with the brighter style. left already
-		// contains the star at positions 2-3 ("  * "+icon+...).
-		leftRendered = itemStyle.Render("  ") +
-			favoriteStarStyle.Render("* ") +
-			itemStyle.Render(left[len("  * "):])
-	}
-	return leftRendered + strings.Repeat(" ", padding) + activityAgeStyle.Render(right) + " "
-}
-
 func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("  ", item.indent)
+	indent := strings.Repeat("    ", item.indent)
 	name := item.group // worktreeDisplayName stored in group field
 	if name == "" {
 		name = "worktree"
@@ -305,7 +214,7 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 }
 
 func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("  ", item.indent)
+	indent := strings.Repeat("    ", item.indent)
 	title := "(session)"
 	if item.session != nil {
 		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated), item.session.Title)
@@ -373,6 +282,17 @@ func (m *Model) viewList() string {
 	}
 
 	var rows []string
+
+	// Pinned quick-nav chips: up to two lines of numbered 1-9 hotkeys
+	// above the breadcrumb. They never scroll — the chip row stays put
+	// while the tree below scrolls under them.
+	chipLines := renderHeaderChips(m.headerProjects, listW-2, 2)
+	for _, l := range styleHeaderLines(chipLines) {
+		rows = append(rows, l)
+	}
+	if len(chipLines) > 0 {
+		rows = append(rows, strings.Repeat(" ", listW))
+	}
 
 	// Header — breadcrumb + position.
 	inFlash := m.mode == viewFlash

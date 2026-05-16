@@ -77,9 +77,6 @@ func (m *Model) recomputeFlash() {
 	// appear in the flash match list — pressing a label that targets
 	// a section row would be a no-op and confuse the user.
 	for i, item := range m.items {
-		if !item.isSelectable() {
-			continue
-		}
 		name := m.itemSearchName(item)
 		if query == "" || strings.Contains(strings.ToLower(name), query) {
 			m.flashMatches = append(m.flashMatches, i)

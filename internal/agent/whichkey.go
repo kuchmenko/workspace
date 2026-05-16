@@ -36,7 +36,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 			{"p", "+prompt"},
 			{"l", "shell"},
 			{"tab", "expand"},
-			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
@@ -49,7 +48,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 			{"e", "edit"},
 			{"l", "shell"},
 			{"tab", "expand"},
-			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
@@ -62,7 +60,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		if item.worktree != nil && !item.worktree.IsMain {
 			actions = append(actions, whichKeyAction{"d", "delete"})
 		}
-		actions = append(actions, whichKeyAction{"v", m.viewToggleLabel()})
 		actions = append(actions, whichKeyAction{"", ""})
 		actions = append(actions, whichKeyAction{"esc", "close"})
 		return actions
@@ -70,23 +67,11 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"⏎", "resume"},
 			{"p", "resume +prompt"},
-			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
 	}
 	return nil
-}
-
-// viewToggleLabel describes the `v` chord destination: "favorites view"
-// when currently in all, "all view" when currently in favorites. The
-// label is the *target*, not the current state, matching how which-key
-// hints describe what each key does next.
-func (m *Model) viewToggleLabel() string {
-	if m.agentView == config.AgentViewFavorites {
-		return "all view"
-	}
-	return "favorites view"
 }
 
 // favoriteToggleLabel describes the `f` action target: "favorite" if
@@ -159,46 +144,11 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggleFavoriteFor(item.project)
 		}
 		return m, nil
-	case "v":
-		// View toggle is a global action — flips all<->favorites and
-		// persists to workspace.toml so the choice survives restart
-		// and syncs to other machines via the reconciler.
-		m.mode = viewList
-		m.toggleAgentView()
-		return m, nil
 	case "tab":
 		m.mode = viewList
 		return m.updateList(msg)
 	}
 	return m, nil
-}
-
-// toggleAgentView flips between "all" and "favorites", rebuilds the
-// item list, and persists the new view to workspace.toml so future
-// `ws agent` invocations open in the same mode and other machines
-// inherit the preference on the next reconciler tick.
-func (m *Model) toggleAgentView() {
-	if m.agentView == config.AgentViewFavorites {
-		m.agentView = config.AgentViewAll
-	} else {
-		m.agentView = config.AgentViewFavorites
-	}
-	m.rebuildItems()
-	m.cursor = m.firstSelectableIndex()
-	m.ensureVisible()
-	m.statusMsg = "view: " + m.agentView
-
-	root := m.primaryWorkspaceRoot()
-	if root == "" {
-		return
-	}
-	target := m.agentView
-	err := MutateAndSave(root, func(ws *config.Workspace) bool {
-		return ws.SetAgentDefaultView(target)
-	})
-	if err != nil {
-		m.statusMsg = "view saved locally only: " + err.Error()
-	}
 }
 
 // toggleFavoriteFor flips the favorite flag on `proj` and persists the

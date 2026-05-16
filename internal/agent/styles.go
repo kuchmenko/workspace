@@ -67,6 +67,17 @@ var (
 	activityAgeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 
+	// chipNumberStyle paints the leading "1." part of a header chip.
+	// Dimmer than the project name so the eye reads the name first;
+	// the digit is still picked up at a glance for hotkey use.
+	chipNumberStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+
+	// chipNameStyle paints the project name inside a header chip.
+	chipNameStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("254")).
+			Bold(true)
+
 	// Flash search.
 	flashSearchStyle = lipgloss.NewStyle().
 				Bold(true).

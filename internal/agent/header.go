@@ -1,30 +1,28 @@
 package agent
 
 import (
+	"fmt"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
-// HeaderCap is the maximum number of project rows shown in either the
-// Favorites or Recent header section. Five per section, total ten —
-// chosen as the largest count that fits comfortably above the tree on
-// a 24-row terminal without pushing all real projects below the fold.
-const HeaderCap = 5
+// HeaderCap is the maximum number of chips that share the pinned
+// quick-nav header. Nine because chips are numbered 1-9 for direct
+// keyboard launch — adding more would need shift+digit and isn't
+// worth the cognitive cost.
+const HeaderCap = 9
 
-// headerSections returns the two project lists rendered in the
-// Favorites/Recent shortcut header above the workspace tree:
-//
-//   - favs:   projects with Favorite=true, sorted by LastActiveAt
-//     desc, name asc for ties. Zero-activity favorites sort last
-//     but are still included (the user explicitly pinned them).
-//     Capped at HeaderCap.
-//   - recent: non-favorite projects with LastActiveAt > zero,
-//     sorted the same way. Capped at HeaderCap. Projects that
-//     have never been stamped never appear here.
-//
-// Returns two distinct slices — no project ever appears in both;
-// favorites take precedence over recent.
-func headerSections(projects []Project) (favs, recent []Project) {
+// headerProjects returns the single ordered list of projects rendered
+// in the pinned quick-nav chip header. Favorites come first (always
+// visible regardless of activity), then non-favorite recently-touched
+// projects. The result is capped at HeaderCap so the chips fit in the
+// 1-9 number-key hotkey range. Returns nil when nothing qualifies —
+// the caller skips header rendering entirely in that case.
+func headerProjects(projects []Project) []Project {
+	var favs, recent []Project
 	for _, p := range projects {
 		if p.Favorite {
 			favs = append(favs, p)
@@ -34,9 +32,8 @@ func headerSections(projects []Project) (favs, recent []Project) {
 	}
 	sortByActivity(favs)
 	sortByActivity(recent)
-	favs = capProjects(favs, HeaderCap)
-	recent = capProjects(recent, HeaderCap)
-	return favs, recent
+	merged := append(favs, recent...)
+	return capProjects(merged, HeaderCap)
 }
 
 func sortByActivity(ps []Project) {
@@ -99,6 +96,122 @@ func humanizeAgeAt(t, now time.Time) string {
 	default:
 		return formatInt(int(d.Hours()/(24*365))) + "y"
 	}
+}
+
+// renderHeaderChips formats `projects` as numbered chips packed into
+// at most `maxLines` lines of width `w`. Each chip is rendered as
+// `1.name 2m` with a leading `*` for favorites. Chips wrap to a new
+// line when the next chip would overflow `w`; chips that would not
+// fit in `maxLines` are dropped (HeaderCap=9 already keeps the count
+// small enough that this is rare).
+//
+// Returns nil when projects is empty — callers omit the header rows
+// entirely so an idle workspace doesn't burn vertical space on chrome.
+func renderHeaderChips(projects []Project, w, maxLines int) []string {
+	if len(projects) == 0 || w <= 0 || maxLines <= 0 {
+		return nil
+	}
+	chips := make([]string, len(projects))
+	for i, p := range projects {
+		chips[i] = formatChip(i+1, p)
+	}
+	return packChips(chips, w, maxLines)
+}
+
+// formatChip builds the "1.name 2m" string for one header project,
+// prefixed with `*` when the project is favorited. The age is omitted
+// when LastActiveAt is zero (favorited but never stamped).
+func formatChip(num int, p Project) string {
+	star := ""
+	if p.Favorite {
+		star = "*"
+	}
+	age := humanizeAge(p.LastActiveAt)
+	if age == "" {
+		return fmt.Sprintf("%s%d.%s", star, num, p.Name)
+	}
+	return fmt.Sprintf("%s%d.%s %s", star, num, p.Name, age)
+}
+
+// packChips greedily fills lines with chips separated by two spaces,
+// breaking to a new line whenever appending the next chip would push
+// the running width past w. Stops once maxLines is reached, dropping
+// the remaining chips silently.
+func packChips(chips []string, w, maxLines int) []string {
+	var lines []string
+	cur := ""
+	for _, c := range chips {
+		next := c
+		if cur != "" {
+			next = cur + "  " + c
+		}
+		if lipgloss.Width(next) > w {
+			if cur != "" {
+				lines = append(lines, cur)
+				if len(lines) >= maxLines {
+					return lines
+				}
+			}
+			cur = c
+			continue
+		}
+		cur = next
+	}
+	if cur != "" && len(lines) < maxLines {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
+// styleHeaderLines applies the chip palette to packed header lines:
+// favorites get a brighter star, the leading `N.` digit is dimmed so
+// the name reads first, and the trailing age column is dim. Operates
+// on the raw `1.name 2m`-style strings produced by packChips by
+// re-tokenizing on the chip boundary (two spaces). Keep style logic
+// confined here so header.go owns the look end-to-end.
+func styleHeaderLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = styleChipLine(line)
+	}
+	return out
+}
+
+func styleChipLine(line string) string {
+	chips := strings.Split(line, "  ")
+	for i, c := range chips {
+		chips[i] = styleChip(c)
+	}
+	return strings.Join(chips, "  ")
+}
+
+// styleChip splits one chip into (star?)(N.)(name)( age?) and paints
+// each piece. The age separator is a single space; if absent the chip
+// ends after the name.
+func styleChip(c string) string {
+	hasStar := strings.HasPrefix(c, "*")
+	if hasStar {
+		c = c[1:]
+	}
+	dot := strings.Index(c, ".")
+	if dot < 0 {
+		return c
+	}
+	num := c[:dot]
+	rest := c[dot+1:]
+	name, age, _ := strings.Cut(rest, " ")
+
+	var b strings.Builder
+	if hasStar {
+		b.WriteString(favoriteStarStyle.Render("*"))
+	}
+	b.WriteString(chipNumberStyle.Render(num + "."))
+	b.WriteString(chipNameStyle.Render(name))
+	if age != "" {
+		b.WriteString(" ")
+		b.WriteString(activityAgeStyle.Render(age))
+	}
+	return b.String()
 }
 
 // formatInt avoids pulling in fmt for the hot path; the values are

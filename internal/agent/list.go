@@ -47,13 +47,13 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "j", "down":
-		if next := m.nextSelectable(m.cursor, +1); next != m.cursor {
-			m.cursor = next
+		if m.cursor+1 < len(m.items) {
+			m.cursor++
 			m.ensureVisible()
 		}
 	case "k", "up":
-		if next := m.nextSelectable(m.cursor, -1); next != m.cursor {
-			m.cursor = next
+		if m.cursor > 0 {
+			m.cursor--
 			m.ensureVisible()
 		}
 

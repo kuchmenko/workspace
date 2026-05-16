@@ -6,25 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/agent"
-	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/spf13/cobra"
 )
-
-// loadAgentDefaultView returns the workspace.toml-stored agent.default_view
-// for the first workspace in the list. The TUI is single-view (no per-
-// workspace switching), so we pick the active workspace's preference and
-// use it for the whole session. Returns "all" on any read error so the
-// launcher never fails on a corrupt or missing workspace.toml.
-func loadAgentDefaultView(workspaces []agent.WorkspaceData) string {
-	if len(workspaces) == 0 {
-		return config.AgentViewAll
-	}
-	ws, err := config.Load(workspaces[0].Root)
-	if err != nil {
-		return config.AgentViewAll
-	}
-	return ws.AgentDefaultView()
-}
 
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -121,7 +104,7 @@ func runAgentTUI() error {
 		return fmt.Errorf("no workspaces found")
 	}
 
-	m := agent.NewModel(workspaces, sessCache, loadAgentDefaultView(workspaces))
+	m := agent.NewModel(workspaces, sessCache)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
