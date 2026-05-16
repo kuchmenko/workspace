@@ -1,0 +1,275 @@
+package cli
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/migrate"
+)
+
+type migrateStep int
+
+const (
+	mStepPlan      migrateStep = iota
+	mStepDecision              // per-project decision (dirty/stash/detached)
+	mStepMigrating             // running migrate.MigrateProject
+	mStepDone
+)
+
+type migrateError struct {
+	project string
+	err     error
+}
+
+type migrateModel struct {
+	step          migrateStep
+	stepChangedAt time.Time
+
+	machine string
+	plan    *migratePlan
+	queue   []migratePlanItem // projects pending action, in order
+	cursor  int               // index into queue
+	current migratePlanItem   // active project
+
+	// Decisions accumulated per project before the migration runs.
+	decisions map[string]migrateDecision
+
+	successes []string
+	errors    []migrateError
+	skipped   int
+	canceled  bool
+
+	spinner spinner.Model
+	sidecar *migrate.Sidecar
+}
+
+// migrateDecision captures the user's per-project answer to a state-specific
+// prompt. Empty fields default to "abort" semantics.
+type migrateDecision struct {
+	WIP             bool
+	StashBranch     bool
+	CheckoutDefault bool
+	Skip            bool
+}
+
+type migrateDoneMsg struct {
+	index   int
+	project string
+	res     *migrate.Result
+	err     error
+}
+
+type migrateAllDoneMsg struct{}
+
+func newMigrateModel(plan *migratePlan, machine string, resume map[string]migrate.DoneEntry) migrateModel {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+
+	sc := migrate.New(wsRoot)
+	for k, v := range resume {
+		_ = sc.Set(k, v)
+	}
+
+	return migrateModel{
+		step:      mStepPlan,
+		machine:   machine,
+		plan:      plan,
+		decisions: make(map[string]migrateDecision),
+		spinner:   sp,
+		sidecar:   sc,
+	}
+}
+
+func (m migrateModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m migrateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
+			return m, nil
+		}
+		if msg.String() == "ctrl+c" {
+			m.canceled = true
+			return m, tea.Quit
+		}
+	}
+
+	switch m.step {
+	case mStepPlan:
+		return m.updatePlan(msg)
+	case mStepDecision:
+		return m.updateDecision(msg)
+	case mStepMigrating:
+		return m.updateMigrating(msg)
+	case mStepDone:
+		if _, ok := msg.(tea.KeyMsg); ok {
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
+		case "y", "Y", "enter":
+			// Build queue: ready + dirty + stash + detached, in that order.
+			// already/missing/not-a-repo are skipped silently.
+			for _, s := range []migrateState{mstReady, mstDirty, mstStash, mstDetached} {
+				m.queue = append(m.queue, m.plan.Bucket(s)...)
+			}
+			if len(m.queue) == 0 {
+				m.step = mStepDone
+				return m, tea.Quit
+			}
+			// Persist sidecar with our pid before any migrate runs.
+			if err := migrate.Save(m.sidecar); err != nil {
+				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
+				return m, tea.Quit
+			}
+			conflict.Notify("ws: migrate started",
+				fmt.Sprintf("%s: %d projects", wsRoot, len(m.queue)))
+			return m.advance()
+		case "n", "N", "escape":
+			m.canceled = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+// advance moves from one queue item to the next. If the next item needs a
+// per-project decision, switch to mStepDecision; otherwise kick off
+// migration directly.
+func (m migrateModel) advance() (tea.Model, tea.Cmd) {
+	if m.cursor >= len(m.queue) {
+		m.step = mStepDone
+		return m, tea.Quit
+	}
+	m.current = m.queue[m.cursor]
+	switch m.current.State {
+	case mstReady:
+		// No decision needed. Migrate immediately.
+		m.step = mStepMigrating
+		m.stepChangedAt = time.Now()
+		return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
+	case mstDirty, mstStash, mstDetached:
+		m.step = mStepDecision
+		m.stepChangedAt = time.Now()
+		return m, nil
+	}
+	// Unknown — skip.
+	m.skipped++
+	m.cursor++
+	return m.advance()
+}
+
+func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	dec := migrateDecision{}
+	resolved := false
+	switch m.current.State {
+	case mstDirty:
+		switch key.String() {
+		case "w", "W":
+			dec.WIP = true
+			resolved = true
+		case "s", "S":
+			dec.Skip = true
+			resolved = true
+		case "a", "A":
+			m.canceled = true
+			return m, tea.Quit
+		}
+	case mstStash:
+		switch key.String() {
+		case "b", "B":
+			dec.StashBranch = true
+			resolved = true
+		case "s", "S":
+			dec.Skip = true
+			resolved = true
+		case "a", "A":
+			m.canceled = true
+			return m, tea.Quit
+		}
+	case mstDetached:
+		switch key.String() {
+		case "c", "C":
+			dec.CheckoutDefault = true
+			resolved = true
+		case "s", "S":
+			dec.Skip = true
+			resolved = true
+		case "a", "A":
+			m.canceled = true
+			return m, tea.Quit
+		}
+	}
+	if !resolved {
+		return m, nil
+	}
+	m.decisions[m.current.Name] = dec
+	if dec.Skip {
+		m.skipped++
+		m.cursor++
+		return m.advance()
+	}
+	m.step = mStepMigrating
+	m.stepChangedAt = time.Now()
+	return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
+}
+
+// startMigrate runs MigrateProject in a goroutine and returns a tea.Cmd that
+// emits migrateDoneMsg on completion.
+func (m migrateModel) startMigrate(index int) tea.Cmd {
+	item := m.queue[index]
+	dec := m.decisions[item.Name]
+	machine := m.machine
+	return func() tea.Msg {
+		proj := item.Project
+		opts := migrate.Options{
+			WIP:             dec.WIP,
+			StashBranch:     dec.StashBranch,
+			CheckoutDefault: dec.CheckoutDefault,
+			Machine:         machine,
+		}
+		res, err := migrate.MigrateProject(wsRoot, item.Name, &proj, opts)
+		return migrateDoneMsg{index: index, project: item.Name, res: res, err: err}
+	}
+}
+
+func (m migrateModel) updateMigrating(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case migrateDoneMsg:
+		if msg.err != nil {
+			m.errors = append(m.errors, migrateError{project: msg.project, err: msg.err})
+		} else {
+			m.successes = append(m.successes, msg.project)
+			if msg.res != nil {
+				_ = m.sidecar.MarkDone(msg.project, msg.res.DefaultBranch)
+				_ = migrate.Save(m.sidecar)
+			}
+		}
+		m.cursor++
+		return m.advance()
+	case migrateAllDoneMsg:
+		m.step = mStepDone
+		return m, tea.Quit
+	}
+	return m, nil
+}
