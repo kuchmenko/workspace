@@ -120,8 +120,11 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
 
-	// Build left part: indent + expand + icon + name
-	left := fmt.Sprintf(" %s%s%s %s", indent, expandMark, iconProject, name)
+	// Build left part: indent + expand + icon + name. Icon is
+	// language-detected via marker files so a Go project shows the Go
+	// glyph, a Rust project shows the Rust glyph, etc.
+	icon := DetectIcon(p.Path)
+	left := fmt.Sprintf(" %s%s%s %s", indent, expandMark, icon, name)
 
 	// Build right part: badges (right-aligned)
 	var badgeParts []string
@@ -144,7 +147,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 	// Render with styled badges.
 	if badges != "" {
-		leftPart := fmt.Sprintf(" %s%s%s %s", indent, expandMark, iconProject, name)
+		leftPart := fmt.Sprintf(" %s%s%s %s", indent, expandMark, icon, name)
 		padding := w - lipgloss.Width(leftPart) - lipgloss.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
