@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/daemon"
@@ -71,13 +72,17 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	for _, name := range names {
 		p := w.Projects[name]
 		mainPath := filepath.Join(root, p.Path)
+		lastAt, lastMachine := projectActivity(p.Branches)
 		proj := Project{
-			ID:            name,
-			Name:          name,
-			Group:         p.Group,
-			Category:      string(p.Category),
-			Path:          mainPath,
-			DefaultBranch: p.DefaultBranch,
+			ID:                name,
+			Name:              name,
+			Group:             p.Group,
+			Category:          string(p.Category),
+			Path:              mainPath,
+			DefaultBranch:     p.DefaultBranch,
+			Favorite:          p.Favorite,
+			LastActiveAt:      lastAt,
+			LastActiveMachine: lastMachine,
 		}
 
 		// Count worktrees.
@@ -101,6 +106,29 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	}
 
 	return ws, diagnostics
+}
+
+// projectActivity returns the most recent (LastActiveAt, LastActiveMachine)
+// across the project's [[branches]] entries. Used to sort projects in the
+// Favorites and Recent sections of `ws agent`. Returns zero time when no
+// branch has ever been stamped — such projects never bubble up into Recent.
+func projectActivity(branches []config.BranchMeta) (time.Time, string) {
+	var best time.Time
+	var machine string
+	for _, b := range branches {
+		if b.LastActiveAt == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, b.LastActiveAt)
+		if err != nil {
+			continue
+		}
+		if t.After(best) {
+			best = t
+			machine = b.LastActiveMachine
+		}
+	}
+	return best, machine
 }
 
 func workspaceRoots(fallback string) []string {

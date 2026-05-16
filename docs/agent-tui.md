@@ -18,9 +18,17 @@ piping / scripts get help instead of a TUI prompt.
 
 The agent reads `~/.config/ws/daemon.toml` to find every registered
 workspace, walks each one for projects / groups / worktrees / Claude
-sessions, and renders a single nested list:
+sessions, and renders a single nested list, optionally topped by a
+quick-nav header.
 
 ```text
+  Favorites
+   * myapp           2m   linux
+   * api             1h   linux
+  Recent
+     docs-site       3h   linux
+     experiments     1d   linux
+  -- all workspaces --
 ~/dev — workspace
 ├── personal
 │   ├── dotfiles
@@ -37,6 +45,23 @@ sessions, and renders a single nested list:
 Group / project rows expand and collapse. Worktrees show the same
 ownership tags as `ws worktree list` (`main`, `mine`,
 `shared with <machines>`, `legacy-wt`).
+
+The header shows up to five favorited projects, then up to five
+recently-touched non-favorite projects, sorted by activity desc.
+Activity = the most recent `last_active_at` across the project's
+`[[branches]]`. Every `enter`, `p`, `l`, and `ctrl+s` launch stamps
+the current branch (creating a minimal `[[branches]]` entry for the
+default branch on first launch). Projects with zero activity never
+appear in Recent; favorites with zero activity sort to the end of
+the Favorites section but still show.
+
+Two views are available, persisted to `[agent].default_view` in
+`workspace.toml`:
+
+- `all` (default) — header above the full tree.
+- `favorites` — only the Favorites section, flat. Tree is hidden.
+
+Toggle via `space v`.
 
 ## Keys
 
@@ -62,6 +87,17 @@ Per-row actions:
 - `d` — on a non-main worktree row, prompt for delete (with
   registry release; releases this machine from
   `[[branches]].machines`).
+- `f` — on a project row, toggle favorite. Equivalent to
+  `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
+  persisted to `workspace.toml` and synced across machines via the
+  reconciler.
+
+View toggle (via the which-key chord):
+
+- `space` then `v` — flip between `all` and `favorites` view. The new
+  value is written to `[agent].default_view` in `workspace.toml` so
+  the next `ws agent` invocation opens in the same mode, and other
+  machines inherit the preference.
 
 Search:
 

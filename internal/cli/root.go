@@ -91,6 +91,7 @@ func NewRootCmd() *cobra.Command {
 		newWorktreeCmd(),
 		newBootstrapCmd(),
 		newAgentCmd(),
+		newFavoriteCmd(),
 		newDocsCmd(),
 		newDoctorCmd(),
 	)

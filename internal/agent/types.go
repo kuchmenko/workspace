@@ -4,7 +4,10 @@
 // launching.
 package agent
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"time"
+)
 
 // NodeKind classifies an item in the workspace tree.
 type NodeKind int
@@ -15,18 +18,33 @@ const (
 	KindProject
 	KindWorktree
 	KindPortal
+	// KindSection is a non-selectable visual element: the "Favorites"
+	// / "Recent" headers above the tree, the "-- all workspaces --"
+	// divider beneath them, and the empty-state hint inside an empty
+	// Favorites view. Cursor movement skips KindSection rows.
+	KindSection
 )
 
 // Project is one navigable project in the workspace tree.
+//
+// Favorite / LastActiveAt / LastActiveMachine are populated from
+// workspace.toml at LoadWorkspaces time. LastActiveAt is the most
+// recent timestamp across all of the project's [[branches]] entries
+// (which currently includes the project's default branch once the
+// `ws agent` launcher has stamped it). Zero time = no activity ever
+// recorded — such projects never appear in the Recent header section.
 type Project struct {
-	ID            string
-	Name          string
-	Group         string
-	Category      string
-	Path          string
-	DefaultBranch string
-	WorktreeCount int
-	SessionCount  int
+	ID                string
+	Name              string
+	Group             string
+	Category          string
+	Path              string
+	DefaultBranch     string
+	WorktreeCount     int
+	SessionCount      int
+	Favorite          bool
+	LastActiveAt      time.Time
+	LastActiveMachine string
 }
 
 // GroupPath returns the filesystem directory for a group under a

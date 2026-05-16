@@ -36,6 +36,13 @@ type Project struct {
 	// Pointer so we can distinguish "unset" from "explicitly false" in TOML.
 	AutoSync *bool `toml:"auto_sync,omitempty"`
 
+	// Favorite pins this project to the Favorites section of `ws agent`.
+	// Cross-machine — synced via workspace.toml. Toggled by `ws favorite
+	// add/rm` or the `f` hotkey in the TUI. Race-tolerant by design:
+	// concurrent toggles from two machines resolve last-write-wins on the
+	// next reconciler tick; the user re-toggles if the wrong side won.
+	Favorite bool `toml:"favorite,omitempty"`
+
 	// Branches holds the per-branch metadata that travels with the project
 	// across machines. Replaces the legacy [[autopush.owned]] table; see
 	// migrateLegacyAutopush for the on-load translation.
@@ -207,6 +214,46 @@ func (p *Project) TouchActive(name, machine string, when time.Time) bool {
 	return true
 }
 
+// StampActivity records "machine just did something on branch `name`
+// in this project, right now". Unlike ClaimBranch this is NOT a user-
+// driven act of branch creation, so CreatedBy/CreatedAt are intentionally
+// left untouched: a freshly stamped main-branch entry must not pretend
+// the current machine created `main`. Used by `ws agent`'s shell/claude
+// launchers to make every launch into a worktree count toward the
+// project's last-activity timestamp (computed as max over branches).
+//
+// If the branch entry exists: bumps LastActive* and adds `machine` to
+// Machines if missing. If absent: creates a minimal entry carrying only
+// the activity fields.
+//
+// Returns true when in-memory state moved.
+func (p *Project) StampActivity(name, machine string, when time.Time) bool {
+	if name == "" || machine == "" {
+		return false
+	}
+	stamp := when.UTC().Format(time.RFC3339)
+	if b := p.LookupBranch(name); b != nil {
+		changed := false
+		if !contains(b.Machines, machine) {
+			b.Machines = sortedDedup(append(b.Machines, machine))
+			changed = true
+		}
+		if b.LastActiveMachine != machine || b.LastActiveAt != stamp {
+			b.LastActiveMachine = machine
+			b.LastActiveAt = stamp
+			changed = true
+		}
+		return changed
+	}
+	p.Branches = append(p.Branches, BranchMeta{
+		Name:              name,
+		Machines:          []string{machine},
+		LastActiveMachine: machine,
+		LastActiveAt:      stamp,
+	})
+	return true
+}
+
 // RemoveBranch drops the entry for `name` from this project's Branches
 // slice unconditionally. Returns true if an entry was removed. Used by
 // `ws sync resolve` to clean up branch-orphan entries on machines that
@@ -276,10 +323,70 @@ type Daemon struct {
 
 type Workspace struct {
 	Meta     Meta               `toml:"meta"`
+	Agent    AgentConfig        `toml:"agent,omitempty"`
 	Daemon   Daemon             `toml:"daemon"`
 	Groups   map[string]Group   `toml:"groups"`
 	Projects map[string]Project `toml:"projects"`
 	Aliases  map[string]string  `toml:"aliases,omitempty"`
+}
+
+// AgentConfig holds workspace-wide user preferences for `ws agent`.
+// Synced across machines via workspace.toml. Per-machine preferences
+// would live in ~/.config/ws/config.toml instead; AgentConfig is
+// intentionally cross-machine.
+type AgentConfig struct {
+	// DefaultView is the view `ws agent` opens with: "all" (favorites
+	// + recent header above the full nested tree) or "favorites" (only
+	// the favorites section, flat). Empty string means "all".
+	DefaultView string `toml:"default_view,omitempty"`
+}
+
+// Agent view enumeration. Stored as the TOML value of agent.default_view.
+const (
+	AgentViewAll       = "all"
+	AgentViewFavorites = "favorites"
+)
+
+// AgentDefaultView returns the configured view, falling back to
+// AgentViewAll when unset or unrecognized. Callers never need to handle
+// the empty-string case.
+func (w *Workspace) AgentDefaultView() string {
+	switch w.Agent.DefaultView {
+	case AgentViewFavorites:
+		return AgentViewFavorites
+	default:
+		return AgentViewAll
+	}
+}
+
+// SetAgentDefaultView updates agent.default_view. Returns true when the
+// in-memory state actually moved. Unknown view values normalize to "all"
+// (and are stored as the empty string so the TOML stays compact).
+func (w *Workspace) SetAgentDefaultView(view string) bool {
+	var canonical string
+	switch view {
+	case AgentViewFavorites:
+		canonical = AgentViewFavorites
+	default:
+		canonical = ""
+	}
+	if w.Agent.DefaultView == canonical {
+		return false
+	}
+	w.Agent.DefaultView = canonical
+	return true
+}
+
+// SetFavorite flips this project's Favorite flag. Returns true when the
+// in-memory state actually moved. Idempotent: setting true on an
+// already-favorited project (or false on a non-favorited one) is a no-op
+// and returns false.
+func (p *Project) SetFavorite(fav bool) bool {
+	if p.Favorite == fav {
+		return false
+	}
+	p.Favorite = fav
+	return true
 }
 
 // ValidationKind enumerates the structural problems Validate can detect.
@@ -356,6 +463,20 @@ func FindRoot() (string, error) {
 		return root, nil
 	}
 	return "", fmt.Errorf("workspace.toml not found (set WS_ROOT or run from workspace directory)")
+}
+
+// FindRootFrom walks up from `start` (an arbitrary absolute path) to the
+// filesystem root, returning the first directory that contains
+// workspace.toml. Honors the same WS_ROOT env override as FindRoot for
+// consistency. Used by `ws agent`'s launch stampers, which receive a
+// worktree path that may live anywhere under a workspace.
+func FindRootFrom(start string) (string, bool) {
+	if env := os.Getenv("WS_ROOT"); env != "" {
+		if _, err := os.Stat(filepath.Join(env, "workspace.toml")); err == nil {
+			return env, true
+		}
+	}
+	return rootByWalkUp(start)
 }
 
 // rootFromEnv validates a WS_ROOT override: returns the path if it

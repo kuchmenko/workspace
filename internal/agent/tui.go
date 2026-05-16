@@ -41,6 +41,22 @@ type listItem struct {
 	indent     int
 	path       string   // filesystem path for shell navigation
 	parentProj *Project // for worktree/session: which project they belong to
+
+	// sectionTitle is the text rendered for KindSection rows. Empty
+	// sectionTitle on a KindSection row renders as a blank line —
+	// used as the spacer between Favorites/Recent and the full tree.
+	sectionTitle string
+	// inHeader marks a project row that lives inside the Favorites or
+	// Recent header section rather than the full workspace tree. Such
+	// rows skip worktree/session expansion (they are quick-nav only).
+	inHeader bool
+}
+
+// isSelectable reports whether the cursor is allowed to land on this
+// row. KindSection rows are visual-only and skipped by j/k movement,
+// flash-search match collection, and the initial-cursor placement.
+func (it listItem) isSelectable() bool {
+	return it.kind != KindSection
 }
 
 // LaunchRequest is set when the user selects an action that should
@@ -57,10 +73,16 @@ type LaunchRequest struct {
 type Model struct {
 	workspaces []WorkspaceData
 	mode       viewMode
-	items      []listItem // flattened visible items
-	cursor     int
-	expanded   map[string]bool // group/project name → expanded
-	scroll     int             // scroll offset for long lists
+	// agentView is "all" (Favorites+Recent header above full tree) or
+	// "favorites" (only the Favorites section, flat — no tree). Loaded
+	// from workspace.toml's [agent].default_view at startup. The user
+	// flips it via the which-key `space v` chord; the new value is
+	// persisted back to workspace.toml so other machines pick it up.
+	agentView string
+	items     []listItem // flattened visible items
+	cursor    int
+	expanded  map[string]bool // group/project name → expanded
+	scroll    int             // scroll offset for long lists
 
 	// Caches — loaded lazily, invalidated after mutations.
 	sessCache *SessionCache
@@ -110,13 +132,23 @@ type Model struct {
 // NewModel constructs the TUI model from loaded workspace data.
 // sessCache should be the cache returned by LoadWorkspaces (already
 // populated with session counts from the initial scan).
-func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
+//
+// initialView selects the opening view ("all" or "favorites"). The
+// caller typically reads it from workspace.toml's agent.default_view
+// via Workspace.AgentDefaultView(); pass the empty string to default
+// to "all".
+func NewModel(workspaces []WorkspaceData, sessCache *SessionCache, initialView string) *Model {
 	if sessCache == nil {
 		sessCache = NewSessionCache()
+	}
+	view := config.AgentViewAll
+	if initialView == config.AgentViewFavorites {
+		view = config.AgentViewFavorites
 	}
 	m := &Model{
 		workspaces: workspaces,
 		mode:       viewList,
+		agentView:  view,
 		expanded:   make(map[string]bool),
 		sessCache:  sessCache,
 		wtCache:    NewWorktreeCache(),
@@ -128,7 +160,39 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 		}
 	}
 	m.rebuildItems()
+	m.cursor = m.firstSelectableIndex()
 	return m
+}
+
+// firstSelectableIndex returns the index of the first row the cursor
+// can legally land on. Used to skip past the Favorites/Recent section
+// headers at startup. Returns 0 when nothing is selectable (degenerate
+// empty workspace) so the cursor still has a defined value.
+func (m *Model) firstSelectableIndex() int {
+	for i, it := range m.items {
+		if it.isSelectable() {
+			return i
+		}
+	}
+	return 0
+}
+
+// nextSelectable steps from `from` in direction `dir` (+1 down, -1 up)
+// over any KindSection rows until it lands on a selectable row.
+// Returns `from` when no selectable row exists in that direction —
+// callers use the no-change signal to skip the ensureVisible call.
+func (m *Model) nextSelectable(from, dir int) int {
+	if len(m.items) == 0 {
+		return from
+	}
+	i := from + dir
+	for i >= 0 && i < len(m.items) {
+		if m.items[i].isSelectable() {
+			return i
+		}
+		i += dir
+	}
+	return from
 }
 
 func (m *Model) Init() tea.Cmd { return nil }
@@ -212,13 +276,13 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q":
 		return m, tea.Quit
 	case "j", "down":
-		if m.cursor < len(m.items)-1 {
-			m.cursor++
+		if next := m.nextSelectable(m.cursor, +1); next != m.cursor {
+			m.cursor = next
 			m.ensureVisible()
 		}
 	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
+		if next := m.nextSelectable(m.cursor, -1); next != m.cursor {
+			m.cursor = next
 			m.ensureVisible()
 		}
 
@@ -289,6 +353,15 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if item != nil && item.path != "" {
 			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
 			return m, tea.Quit
+		}
+
+	case "f":
+		// Toggle favorite on the cursor project (works in both header
+		// and tree variants). Persists the new flag to workspace.toml
+		// and refreshes the in-memory model so the new state is visible
+		// without a TUI restart.
+		if item != nil && item.kind == KindProject && item.project != nil {
+			m.toggleFavoriteFor(item.project)
 		}
 
 	case "h", "left":
@@ -416,6 +489,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 			{"p", "+prompt"},
 			{"l", "shell"},
 			{"tab", "expand"},
+			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
@@ -423,10 +497,12 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"\u23ce", "open claude"},
 			{"p", "+prompt"},
+			{"f", m.favoriteToggleLabel(item)},
 			{"w", "worktree \u203a"},
 			{"e", "edit"},
 			{"l", "shell"},
 			{"tab", "expand"},
+			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
@@ -439,6 +515,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		if item.worktree != nil && !item.worktree.IsMain {
 			actions = append(actions, whichKeyAction{"d", "delete"})
 		}
+		actions = append(actions, whichKeyAction{"v", m.viewToggleLabel()})
 		actions = append(actions, whichKeyAction{"", ""})
 		actions = append(actions, whichKeyAction{"esc", "close"})
 		return actions
@@ -446,11 +523,32 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"\u23ce", "resume"},
 			{"p", "resume +prompt"},
+			{"v", m.viewToggleLabel()},
 			{"", ""},
 			{"esc", "close"},
 		}
 	}
 	return nil
+}
+
+// viewToggleLabel describes the `v` chord destination: "favorites view"
+// when currently in all, "all view" when currently in favorites. The
+// label is the *target*, not the current state, matching how which-key
+// hints describe what each key does next.
+func (m *Model) viewToggleLabel() string {
+	if m.agentView == config.AgentViewFavorites {
+		return "all view"
+	}
+	return "favorites view"
+}
+
+// favoriteToggleLabel describes the `f` action target: "favorite" if
+// the project is currently unfavorited, "unfavorite" if it already is.
+func (m *Model) favoriteToggleLabel(it *listItem) string {
+	if it != nil && it.project != nil && it.project.Favorite {
+		return "unfavorite"
+	}
+	return "favorite"
 }
 
 func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -505,11 +603,103 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		m.mode = viewList
 		return m.updateList(msg)
+	case "f":
+		// Favorite toggle is a per-project action; only meaningful when
+		// the cursor is on a project row. Closes the panel either way
+		// so the user sees the result immediately.
+		m.mode = viewList
+		if item != nil && item.kind == KindProject && item.project != nil {
+			m.toggleFavoriteFor(item.project)
+		}
+		return m, nil
+	case "v":
+		// View toggle is a global action — flips all<->favorites and
+		// persists to workspace.toml so the choice survives restart
+		// and syncs to other machines via the reconciler.
+		m.mode = viewList
+		m.toggleAgentView()
+		return m, nil
 	case "tab":
 		m.mode = viewList
 		return m.updateList(msg)
 	}
 	return m, nil
+}
+
+// toggleAgentView flips between "all" and "favorites", rebuilds the
+// item list, and persists the new view to workspace.toml so future
+// `ws agent` invocations open in the same mode and other machines
+// inherit the preference on the next reconciler tick.
+func (m *Model) toggleAgentView() {
+	if m.agentView == config.AgentViewFavorites {
+		m.agentView = config.AgentViewAll
+	} else {
+		m.agentView = config.AgentViewFavorites
+	}
+	m.rebuildItems()
+	m.cursor = m.firstSelectableIndex()
+	m.ensureVisible()
+	m.statusMsg = "view: " + m.agentView
+
+	root := m.primaryWorkspaceRoot()
+	if root == "" {
+		return
+	}
+	target := m.agentView
+	err := MutateAndSave(root, func(ws *config.Workspace) bool {
+		return ws.SetAgentDefaultView(target)
+	})
+	if err != nil {
+		m.statusMsg = "view saved locally only: " + err.Error()
+	}
+}
+
+// toggleFavoriteFor flips the favorite flag on `proj` and persists the
+// change. The in-memory pointer is mutated so the row repaint picks
+// up the new state without needing a TUI restart. The header section
+// is rebuilt: a freshly favorited project may need to leave Recent
+// and appear in Favorites, and vice versa.
+func (m *Model) toggleFavoriteFor(proj *Project) {
+	root := m.workspaceRootFor(proj)
+	if root == "" {
+		m.statusMsg = "cannot resolve workspace for project"
+		return
+	}
+	target := !proj.Favorite
+	err := MutateAndSave(root, func(ws *config.Workspace) bool {
+		p := ws.Projects[proj.ID]
+		if !p.SetFavorite(target) {
+			return false
+		}
+		ws.Projects[proj.ID] = p
+		return true
+	})
+	if err != nil {
+		m.statusMsg = "favorite: " + err.Error()
+		return
+	}
+	proj.Favorite = target
+	if target {
+		m.statusMsg = "* favorited " + proj.Name
+	} else {
+		m.statusMsg = "unfavorited " + proj.Name
+	}
+	m.rebuildItems()
+	m.clampCursor()
+	m.ensureVisible()
+}
+
+// primaryWorkspaceRoot returns the root used for workspace-wide
+// settings (currently just `agent.default_view`). The TUI displays
+// at most one workspace at a time in practice; when multiple are
+// registered we pick the first deterministically — the user has only
+// one global preference per session and `loadAgentDefaultView` reads
+// from the same workspace, so the round-trip is consistent.
+func (m *Model) primaryWorkspaceRoot() string {
+	if len(m.workspaces) == 0 {
+		return ""
+	}
+	return m.workspaces[0].Root
 }
 
 func (m *Model) whichKeyTitle() string {
@@ -771,8 +961,13 @@ func (m *Model) recomputeFlash() {
 	m.flashMatches = nil
 	m.flashLabels = nil
 
-	// Collect matches.
+	// Collect matches. Section rows are non-selectable and must never
+	// appear in the flash match list — pressing a label that targets
+	// a section row would be a no-op and confuse the user.
 	for i, item := range m.items {
+		if !item.isSelectable() {
+			continue
+		}
 		name := m.itemSearchName(item)
 		if query == "" || strings.Contains(strings.ToLower(name), query) {
 			m.flashMatches = append(m.flashMatches, i)
@@ -952,9 +1147,56 @@ func (m *Model) breadcrumb() string {
 }
 
 // rebuildItems flattens the workspace tree into a visible list,
-// respecting group expansion state.
+// respecting group expansion state and the active agent view.
+//
+// Layout depends on m.agentView:
+//
+//   - "favorites": only the Favorites header section is shown.
+//     Empty favorites produce a hint row pointing the user at the
+//     `f` hotkey. The full workspace tree is intentionally hidden.
+//
+//   - "all" (default): if there are any favorites or any recent
+//     non-favorite activity, emit a Favorites section then a
+//     Recent section then a `-- all workspaces --` divider above
+//     the regular tree. With no activity at all, the header is
+//     skipped entirely and the user sees just the tree.
 func (m *Model) rebuildItems() {
 	m.items = nil
+
+	favs, recent := headerSections(allProjects(m.workspaces))
+
+	if m.agentView == config.AgentViewFavorites {
+		m.appendSectionTitle("Favorites")
+		if len(favs) == 0 {
+			m.appendSectionHint("(no favorites yet — press f on a project)")
+		} else {
+			for i := range favs {
+				m.appendHeaderProject(&favs[i])
+			}
+		}
+		m.clampCursor()
+		return
+	}
+
+	headerShown := false
+	if len(favs) > 0 {
+		m.appendSectionTitle("Favorites")
+		for i := range favs {
+			m.appendHeaderProject(&favs[i])
+		}
+		headerShown = true
+	}
+	if len(recent) > 0 {
+		m.appendSectionTitle("Recent")
+		for i := range recent {
+			m.appendHeaderProject(&recent[i])
+		}
+		headerShown = true
+	}
+	if headerShown {
+		m.appendSectionDivider("-- all workspaces --")
+	}
+
 	for _, ws := range m.workspaces {
 		// Ungrouped projects first.
 		for i := range ws.Projects {
@@ -976,11 +1218,69 @@ func (m *Model) rebuildItems() {
 			}
 		}
 	}
+	m.clampCursor()
+}
+
+// appendSectionTitle pushes a non-selectable header row carrying the
+// label rendered above each shortcut section ("Favorites", "Recent").
+func (m *Model) appendSectionTitle(title string) {
+	m.items = append(m.items, listItem{kind: KindSection, sectionTitle: title})
+}
+
+// appendSectionHint pushes a non-selectable hint row used inside an
+// empty Favorites view to point the user at the `f` hotkey. Visually
+// distinct from a title via the leading "(" — the renderer uses the
+// same style block for both.
+func (m *Model) appendSectionHint(text string) {
+	m.items = append(m.items, listItem{kind: KindSection, sectionTitle: text})
+}
+
+// appendSectionDivider pushes a non-selectable divider line drawn
+// between the shortcut header and the full tree.
+func (m *Model) appendSectionDivider(text string) {
+	m.items = append(m.items, listItem{kind: KindSection, sectionTitle: text})
+}
+
+// appendHeaderProject emits a project row inside the Favorites/Recent
+// shortcut section. The row is fully selectable and launches just
+// like a tree-row project on Enter, but inHeader=true suppresses the
+// worktree/session expansion children — these are quick-nav rows,
+// not a place for nested navigation.
+func (m *Model) appendHeaderProject(p *Project) {
+	m.items = append(m.items, listItem{
+		kind:     KindProject,
+		project:  p,
+		indent:   0,
+		path:     p.Path,
+		inHeader: true,
+	})
+}
+
+// clampCursor keeps m.cursor inside the items range and pulls it off
+// any KindSection rows it might have landed on after a rebuild. When
+// the cursor is on a non-selectable row, prefer moving downward first
+// (the natural reading direction) and only fall back to upward if
+// nothing selectable lies below.
+func (m *Model) clampCursor() {
+	if len(m.items) == 0 {
+		m.cursor = 0
+		return
+	}
 	if m.cursor >= len(m.items) {
 		m.cursor = len(m.items) - 1
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+	if m.items[m.cursor].isSelectable() {
+		return
+	}
+	if next := m.nextSelectable(m.cursor, +1); next != m.cursor && m.items[next].isSelectable() {
+		m.cursor = next
+		return
+	}
+	if next := m.nextSelectable(m.cursor, -1); next != m.cursor && m.items[next].isSelectable() {
+		m.cursor = next
 	}
 }
 
@@ -1091,6 +1391,8 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
 		case KindPortal:
 			line = m.renderSession(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
+		case KindSection:
+			line = m.renderSection(item, listW, dimAll)
 		}
 
 		rows = append(rows, line)
@@ -1099,12 +1401,21 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 }
 
 // itemGroupKey returns a key that identifies the visual group boundary
-// for inserting blank lines between groups.
+// for inserting blank lines between groups. KindSection rows return
+// their own key per title so each section visually owns its block
+// (Favorites != Recent != divider); the rows beneath them inherit the
+// tree's normal keys because the shortcut projects are inHeader=true
+// without any Group of their own.
 func (m *Model) itemGroupKey(item listItem) string {
 	switch item.kind {
+	case KindSection:
+		return "section:" + item.sectionTitle
 	case KindGroup:
 		return "g:" + item.group
 	case KindProject:
+		if item.inHeader {
+			return "header"
+		}
 		if item.project.Group != "" {
 			return "g:" + item.project.Group
 		}
@@ -1116,6 +1427,22 @@ func (m *Model) itemGroupKey(item listItem) string {
 		return "ungrouped"
 	}
 	return ""
+}
+
+// renderSection draws the non-selectable header rows: section titles
+// ("Favorites" / "Recent"), the divider line above the full tree, and
+// the empty-state hint shown inside an empty Favorites view. All four
+// share one style block; the title text already disambiguates them.
+func (m *Model) renderSection(item listItem, w int, dimAll bool) string {
+	text := item.sectionTitle
+	if text == "" {
+		return strings.Repeat(" ", w)
+	}
+	label := "  " + text
+	if dimAll {
+		return dimStyle.Width(w).Render(label)
+	}
+	return sectionStyle.Width(w).Render(label)
 }
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
@@ -1141,6 +1468,15 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	p := item.project
 	indent := strings.Repeat("  ", item.indent)
+
+	// Project rows in the Favorites/Recent shortcut section have a
+	// distinct shape: a leading `*` marker for favorites, no
+	// expansion arrow (they never expand to worktrees here), and a
+	// trailing age column ("2m linux"). The tree variant below is
+	// unchanged.
+	if item.inHeader {
+		return m.renderHeaderProject(p, selected, inFlash, isMatch, flashLabel, w, dimAll)
+	}
 
 	expandMark := ""
 	if p.WorktreeCount > 1 || p.SessionCount > 0 {
@@ -1188,6 +1524,64 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		return itemStyle.Render(leftPart) + strings.Repeat(" ", padding) + badgeStyle.Render(badges)
 	}
 	return itemStyle.Width(w).Render(line)
+}
+
+// renderHeaderProject draws a project row inside the Favorites/Recent
+// shortcut section: `*` star for favorites, project icon, name, and a
+// right-aligned `2m linux` activity column. The row is fully selectable
+// and shares Enter/p/l semantics with tree rows — only the visual shape
+// differs.
+func (m *Model) renderHeaderProject(p *Project, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
+	name := p.Name
+	if inFlash && isMatch {
+		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+	}
+
+	star := "  "
+	if p.Favorite {
+		star = "* "
+	}
+	left := fmt.Sprintf("  %s%s %s", star, iconProject, name)
+
+	var rightParts []string
+	if age := humanizeAge(p.LastActiveAt); age != "" {
+		rightParts = append(rightParts, age)
+	}
+	if p.LastActiveMachine != "" {
+		rightParts = append(rightParts, p.LastActiveMachine)
+	}
+	right := strings.Join(rightParts, " ")
+
+	line := m.padRight(left, right, w)
+	if dimAll || (inFlash && !isMatch) {
+		return dimStyle.Width(w).Render(line)
+	}
+	if selected {
+		return m.renderSelected(line, itemStyle, w)
+	}
+	if right == "" {
+		// Star + project body share the project color; favorited
+		// projects get a brighter star via favoriteStarStyle for visual
+		// scanability without using a different background.
+		if p.Favorite {
+			body := fmt.Sprintf("  %s %s", iconProject, name)
+			return favoriteStarStyle.Render("  * ") + itemStyle.Render(body[len("  * "):]) + strings.Repeat(" ", w-lipgloss.Width(left))
+		}
+		return itemStyle.Width(w).Render(line)
+	}
+	padding := w - lipgloss.Width(left) - lipgloss.Width(right) - 1
+	if padding < 1 {
+		padding = 1
+	}
+	leftRendered := itemStyle.Render(left)
+	if p.Favorite {
+		// Overlay just the star with the brighter style. left already
+		// contains the star at positions 2-3 ("  * "+icon+...).
+		leftRendered = itemStyle.Render("  ") +
+			favoriteStarStyle.Render("* ") +
+			itemStyle.Render(left[len("  * "):])
+	}
+	return leftRendered + strings.Repeat(" ", padding) + activityAgeStyle.Render(right) + " "
 }
 
 func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
@@ -1520,6 +1914,24 @@ var (
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
+
+	// sectionStyle paints the "Favorites" / "Recent" / divider labels
+	// that head the quick-nav shortcuts above the workspace tree.
+	// Color is deliberately the same family as headerStyle so the eye
+	// reads it as chrome, not as a clickable row.
+	sectionStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("173")). // amber dim
+			Bold(true)
+
+	// favoriteStarStyle paints the leading `*` indicator placed
+	// before favorited projects in the header section.
+	favoriteStarStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("215")) // amber, slightly brighter than section
+
+	// activityAgeStyle is the right-aligned " 2m linux" column on
+	// header-section rows.
+	activityAgeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("240"))
 
 	// Flash search.
 	flashSearchStyle = lipgloss.NewStyle().

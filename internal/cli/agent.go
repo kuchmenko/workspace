@@ -6,8 +6,25 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/agent"
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/spf13/cobra"
 )
+
+// loadAgentDefaultView returns the workspace.toml-stored agent.default_view
+// for the first workspace in the list. The TUI is single-view (no per-
+// workspace switching), so we pick the active workspace's preference and
+// use it for the whole session. Returns "all" on any read error so the
+// launcher never fails on a corrupt or missing workspace.toml.
+func loadAgentDefaultView(workspaces []agent.WorkspaceData) string {
+	if len(workspaces) == 0 {
+		return config.AgentViewAll
+	}
+	ws, err := config.Load(workspaces[0].Root)
+	if err != nil {
+		return config.AgentViewAll
+	}
+	return ws.AgentDefaultView()
+}
 
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,6 +63,7 @@ func newAgentLaunchCmd() *cobra.Command {
 		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			stampLaunchActivity(args[0])
 			return agent.LaunchClaude(args[0], "", prompt)
 		},
 	}
@@ -63,6 +81,7 @@ func newAgentShellCmd() *cobra.Command {
 		},
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			stampLaunchActivity(args[0])
 			return agent.LaunchShell(args[0])
 		},
 	}
@@ -84,6 +103,7 @@ func newAgentResumeCmd() *cobra.Command {
 			if session == nil {
 				return fmt.Errorf("session %s not found", sessionID)
 			}
+			stampLaunchActivity(session.Cwd)
 			return agent.LaunchClaude(session.Cwd, session.ID, prompt)
 		},
 	}
@@ -101,7 +121,7 @@ func runAgentTUI() error {
 		return fmt.Errorf("no workspaces found")
 	}
 
-	m := agent.NewModel(workspaces, sessCache)
+	m := agent.NewModel(workspaces, sessCache, loadAgentDefaultView(workspaces))
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -111,10 +131,21 @@ func runAgentTUI() error {
 	// If the user selected a launch action, exec into claude now.
 	// bubbletea has already restored the terminal at this point.
 	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
+		stampLaunchActivity(final.Launch.Cwd)
 		if final.Launch.ShellOnly {
 			return agent.LaunchShell(final.Launch.Cwd)
 		}
 		return agent.LaunchClaude(final.Launch.Cwd, final.Launch.ResumeID, final.Launch.Prompt)
 	}
 	return nil
+}
+
+// stampLaunchActivity runs StampLaunchFromPath synchronously and
+// writes any error to stderr without failing the launch. Activity
+// stamping is UX-only: an unwritable workspace.toml or down daemon
+// must not prevent the user from getting into their shell.
+func stampLaunchActivity(cwd string) {
+	if err := agent.StampLaunchFromPath(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "ws agent: stamp activity: %v\n", err)
+	}
 }
