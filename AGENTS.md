@@ -685,6 +685,76 @@ Do not invent. Ask the human:
 - "Activate gate now?" — when the project hasn't activated yet but the
   PR is foundational enough that establishing a baseline matters.
 
+## Mechanical rules — apply proactively, no permission needed
+
+### 1. No big files
+
+A `.go` file beyond ~500 lines is a signal to split. Hard thresholds:
+
+- **> 500 lines**: extract on the next touch — find the cohesive
+  cluster inside that wants its own file/package and pull it out.
+- **> 800 lines**: extract *now*, before adding the change that
+  brought you here. Do not append to a file already that large.
+
+Tests count, but the `_test.go` sibling is one unit — split the
+production file first; tests usually follow naturally.
+
+### 2. No decorative section separators
+
+Never write `// ─── X ───`, `// --- X ---`, `// === X ===`, or any
+other in-file visual delimiter to break up a single `.go` file. If
+you reach for one, the chunk underneath is asking to be its own
+file or package. Extract instead.
+
+Not this rule: godoc headings on exported symbols, `// Package foo`
+comments, and license headers at file top.
+
+### 3. Comments are a last resort
+
+Default to no comment. Before adding one, try a clearer name or a
+small extraction so the code carries the meaning on its own. A
+comment is justified when it captures a non-obvious *why* the reader
+cannot derive from the code (workaround for a specific bug, invariant
+maintained off-screen, deliberate inefficiency, external protocol
+nuance).
+
+Not justified: "// init defaults", "// loop over projects", "//
+returns the count", paraphrasing an obvious branch, or marking
+sections with `// ── header ──` (see rule 2).
+
+## Architectural changes — ask first
+
+The agent does not decide module boundaries, new abstractions,
+provider/transport contracts, or any cross-cutting structural change
+on its own. For these:
+
+1. State the proposed shape (ASCII diagram, file list, dependency
+   direction, blast radius, what stays the same).
+2. List one or two rejected alternatives with why.
+3. Wait for human approval before writing code.
+
+The reason is signal, not capability. The human grows this system
+over time and needs to know what's happening at the architecture
+level to keep later decisions consistent. The agent implementing an
+architectural choice without surfacing it short-circuits that loop.
+
+**Counter-examples (agent does NOT ask first):**
+- Splitting a 800-line file along an obviously cohesive seam
+  (mechanical rule 1) — just do it.
+- Pulling a `// ─── helpers ───` chunk into its own `helpers.go`
+  (mechanical rule 2) — just do it.
+- Renaming a local variable for clarity, deleting dead branches,
+  inlining a single-use helper — just do it.
+
+**Examples (agent asks first):**
+- Introducing a new interface or abstraction layer.
+- Moving a cluster of files under a new parent package.
+- Changing the daemon ↔ CLI IPC contract or socket shape.
+- Reconciler phase semantics (what each phase owns, what it touches).
+- Sidecar protocol additions (new kinds, new fields, lifecycle changes).
+- New feature flags or build-time toggles.
+- Anything the agent would label "architecture" in a PR title.
+
 ## Other agent conventions
 
 - Use `ws` for workspace operations: `ws status`, `ws sync`,
