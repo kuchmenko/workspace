@@ -1,14 +1,14 @@
-# Agent TUI
+# Explorer TUI
 
-`ws` (run with no arguments in a TTY) — or `ws agent` explicitly —
-opens a Bubble Tea TUI nested-list launcher across every workspace
-the daemon knows about. It is the fastest path from "I want to work
-on something" to a shell or a Claude Code session in the right
-directory.
+`ws` (run with no arguments in a TTY) — or `ws explorer` explicitly —
+opens a Bubble Tea TUI explorer across every workspace the daemon
+knows about. It is the fastest path from "I want to work on something"
+to a shell or a Claude Code session in the right directory.
 
 ```sh
-ws                          # bare invocation; same as `ws agent`
-ws agent                    # explicit
+ws                          # bare invocation; same as `ws explorer`
+ws explorer                 # explicit
+ws agent                    # legacy alias, still works
 ```
 
 When stdout is not a TTY, `ws` falls through to `cmd.Help()` so
@@ -16,52 +16,44 @@ piping / scripts get help instead of a TUI prompt.
 
 ## What you see
 
-The agent reads `~/.config/ws/daemon.toml` to find every registered
+The explorer reads `~/.config/ws/daemon.toml` to find every registered
 workspace, walks each one for projects / groups / worktrees / Claude
-sessions, and renders a single nested list, optionally topped by a
-quick-nav header.
+sessions, and renders a pinned quick-nav header above a scrollable
+tree.
 
 ```text
-  Favorites
-   * myapp           2m   linux
-   * api             1h   linux
-  Recent
-     docs-site       3h   linux
-     experiments     1d   linux
-  -- all workspaces --
+*1.myapp 2m  2.api 1h    3.docs 3h  4.experiments 1d  5.utils 2d
+6.proj-a 5m  7.proj-b 1h  8.proj-c 4h  9.proj-d 1d
+
 ~/dev — workspace
-├── personal
-│   ├── dotfiles
-│   ├── ws (workspace itself)
-│   │   ├── main
-│   │   ├── feat/foo                 (mine, ↑2)
-│   │   └── feat/auth-refactor       (shared with archlinux)
-│   └── …
-└── work
-    └── api-gateway
-        └── …
+    personal
+         dotfiles
+         workspace
+              main
+              feat/foo                (mine, ↑2)
+              feat/auth-refactor      (shared with archlinux)
+    work
+         api-gateway
 ```
 
-Group / project rows expand and collapse. Worktrees show the same
-ownership tags as `ws worktree list` (`main`, `mine`,
+### Pinned chip header
+
+Up to nine numbered chips, sorted favorites-first then
+recently-touched. The leading `*` marks favorited projects. Each chip
+shows `N.name age` — press the digit `1`-`9` to launch the matching
+project immediately (claude in its directory). The chip row stays
+pinned above the tree while you scroll, so the shortcuts never
+disappear off the top.
+
+A project icon is rendered per ecosystem (Go, Rust, Python, Node, TS,
+Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
+`Cargo.toml`, `pyproject.toml`, etc.) in the project directory.
+
+### Tree
+
+Group / project rows expand and collapse with `tab`. Worktrees show
+the same ownership tags as `ws worktree list` (`main`, `mine`,
 `shared with <machines>`, `legacy-wt`).
-
-The header shows up to five favorited projects, then up to five
-recently-touched non-favorite projects, sorted by activity desc.
-Activity = the most recent `last_active_at` across the project's
-`[[branches]]`. Every `enter`, `p`, `l`, and `ctrl+s` launch stamps
-the current branch (creating a minimal `[[branches]]` entry for the
-default branch on first launch). Projects with zero activity never
-appear in Recent; favorites with zero activity sort to the end of
-the Favorites section but still show.
-
-Two views are available, persisted to `[agent].default_view` in
-`workspace.toml`:
-
-- `all` (default) — header above the full tree.
-- `favorites` — only the Favorites section, flat. Tree is hidden.
-
-Toggle via `space v`.
 
 ## Keys
 
@@ -72,6 +64,7 @@ Navigation:
 - `h` / `←` — collapse one level. Smart: from a worktree row it
   closes the parent project; from a project row under a group it
   closes the group.
+- `1`-`9` — launch the matching chip (claude in its directory)
 - `q` — quit
 
 Per-row actions:
@@ -92,13 +85,6 @@ Per-row actions:
   persisted to `workspace.toml` and synced across machines via the
   reconciler.
 
-View toggle (via the which-key chord):
-
-- `space` then `v` — flip between `all` and `favorites` view. The new
-  value is written to `[agent].default_view` in `workspace.toml` so
-  the next `ws agent` invocation opens in the same mode, and other
-  machines inherit the preference.
-
 Search:
 
 - `s` — flash search inside the current view (jump labels per match).
@@ -110,8 +96,8 @@ Help:
 
 ## Worktree creation from the TUI
 
-Press `w` on a project row → "Branch name" input → confirm. The TUI
-runs the same path as `ws worktree add <project> <branch>`:
+Press `w` on a project row → "Branch name" input → confirm. The
+explorer runs the same path as `ws worktree add <project> <branch>`:
 
 - Auto-detects an existing remote ref and checks it out.
 - Auto-detects an existing local-only ref and attaches.
@@ -120,15 +106,15 @@ runs the same path as `ws worktree add <project> <branch>`:
   without creating a duplicate.
 - Otherwise creates a fresh branch from the project's default branch.
 
-After the form closes, the agent invalidates its worktree cache and
-re-renders so the new entry appears immediately.
+After the form closes, the explorer invalidates its worktree cache
+and re-renders so the new entry appears immediately.
 
 ## Project edit
 
 Press `e` on a project row → group / category form. Edits update
 `workspace.toml` directly (Phase 1 of the next reconciler tick
 commits + pushes the change). Useful when reorganizing the layout
-without leaving the launcher.
+without leaving the explorer.
 
 ## Sessions
 
@@ -141,10 +127,10 @@ at the session's recorded `cwd`. The session cache is shared with
 
 Three reasons it earns its keep:
 
-- **One key per worktree.** Beats remembering aliases for branches
-  that come and go.
+- **One key per pinned project.** Number hotkeys 1-9 beat
+  remembering aliases for branches that come and go.
 - **Cross-workspace.** If you have several `ws daemon register`'d
   directories, they all show up in one list.
-- **Claude integration.** The launcher is the primary way to drop
+- **Claude integration.** The explorer is the primary way to drop
   into a Claude session that already has the right `cwd` and an
   optional resume target.

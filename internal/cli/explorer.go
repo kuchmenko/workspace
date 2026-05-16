@@ -9,33 +9,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newAgentCmd() *cobra.Command {
+func newExplorerCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "agent",
-		Short: "TUI launcher for Claude Code sessions across workspaces",
+		Use:     "explorer",
+		Aliases: []string{"agent"}, // backwards-compat: ws agent still works
+		Short:   "TUI explorer for projects, worktrees, and Claude sessions",
 		Annotations: map[string]string{
-			"capability":   "agent",
-			"agent:when":   "Browse workspaces and projects, then launch or resume Claude Code sessions",
+			"capability":   "explorer",
+			"agent:when":   "Browse workspaces, projects, and worktrees, then launch or resume Claude Code sessions",
 			"agent:safety": "Interactive TUI. Use subcommands (launch, shell, resume) for non-interactive access.",
 		},
-		Long: `Launch an interactive TUI that lets you browse workspaces, projects,
-and worktrees, then start or resume Claude Code sessions.
+		Long: `Launch the interactive TUI explorer over every registered workspace.
+The pinned quick-nav header shows up to nine numbered chips (favorites
++ recently-touched) — press 1-9 to launch the matching project. Below
+the header, the full project tree scrolls with j/k navigation.
 
 Navigation: j/k to move, Enter to open, h/Esc to go back, q to quit.
-Subcommands provide non-interactive access to the same actions.`,
+1-9 to launch a chip directly. Subcommands provide non-interactive
+access to the same actions.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentTUI()
+			return runExplorerTUI()
 		},
 	}
 	cmd.AddCommand(
-		newAgentLaunchCmd(),
-		newAgentShellCmd(),
-		newAgentResumeCmd(),
+		newExplorerLaunchCmd(),
+		newExplorerShellCmd(),
+		newExplorerResumeCmd(),
 	)
 	return cmd
 }
 
-func newAgentLaunchCmd() *cobra.Command {
+func newExplorerLaunchCmd() *cobra.Command {
 	var prompt string
 	cmd := &cobra.Command{
 		Use:   "launch <project-path>",
@@ -54,7 +58,7 @@ func newAgentLaunchCmd() *cobra.Command {
 	return cmd
 }
 
-func newAgentShellCmd() *cobra.Command {
+func newExplorerShellCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "shell <path>",
 		Short: "Open shell in a directory (non-interactive)",
@@ -70,7 +74,7 @@ func newAgentShellCmd() *cobra.Command {
 	}
 }
 
-func newAgentResumeCmd() *cobra.Command {
+func newExplorerResumeCmd() *cobra.Command {
 	var prompt string
 	cmd := &cobra.Command{
 		Use:   "resume <session-id>",
@@ -94,7 +98,7 @@ func newAgentResumeCmd() *cobra.Command {
 	return cmd
 }
 
-func runAgentTUI() error {
+func runExplorerTUI() error {
 	cwd, _ := os.Getwd()
 	workspaces, sessCache, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {
