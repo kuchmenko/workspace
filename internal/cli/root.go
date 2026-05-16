@@ -64,10 +64,10 @@ func NewRootCmd() *cobra.Command {
 			}
 			return nil
 		},
-		// Bare `ws` in a TTY launches the agent TUI. In pipe/CI → help.
+		// Bare `ws` in a TTY launches the explorer TUI. In pipe/CI → help.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
-				return runAgentTUI()
+				return runExplorerTUI()
 			}
 			return cmd.Help()
 		},
@@ -90,7 +90,8 @@ func NewRootCmd() *cobra.Command {
 		newMigrateCmd(),
 		newWorktreeCmd(),
 		newBootstrapCmd(),
-		newAgentCmd(),
+		newExplorerCmd(),
+		newFavoriteCmd(),
 		newDocsCmd(),
 		newDoctorCmd(),
 	)

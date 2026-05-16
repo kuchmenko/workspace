@@ -10,7 +10,6 @@ package migrate
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,52 +73,6 @@ type Result struct {
 // directory. Callers (notably MigrateAll) should treat this as a skip, not
 // a hard error.
 var ErrAlreadyMigrated = errors.New("project already migrated")
-
-// CheckResult reports the migration-related state of one project without
-// making any changes.
-type CheckResult struct {
-	Project    string
-	State      string // "migrated" | "needs-migration" | "missing" | "not-a-repo"
-	MainPath   string
-	BarePath   string
-	HasStash   bool
-	IsDirty    bool
-	Detached   bool
-	Branch     string
-	HooksFound int
-}
-
-// Check inspects a project on disk and reports its layout state without
-// touching anything. Useful for `ws migrate --check`.
-func Check(wsRoot string, name string, proj config.Project) CheckResult {
-	mainPath := filepath.Join(wsRoot, proj.Path)
-	barePath := layout.BarePath(mainPath)
-	res := CheckResult{Project: name, MainPath: mainPath, BarePath: barePath}
-
-	if _, err := os.Stat(barePath); err == nil {
-		res.State = "migrated"
-		return res
-	}
-	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
-		res.State = "missing"
-		return res
-	}
-	if !git.IsRepo(mainPath) {
-		res.State = "not-a-repo"
-		return res
-	}
-	res.State = "needs-migration"
-	res.HasStash = git.HasStash(mainPath)
-	res.IsDirty = git.IsDirty(mainPath)
-	if br, _ := git.CurrentBranch(mainPath); br == "" {
-		res.Detached = true
-	} else {
-		res.Branch = br
-	}
-	hooks, _ := listActiveHooks(filepath.Join(mainPath, ".git", "hooks"))
-	res.HooksFound = len(hooks)
-	return res
-}
 
 // MigrateProject runs the full migration for one named project. The caller
 // owns the workspace.toml save: this function may mutate `proj` to fill in
@@ -481,134 +434,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		DetachedBranch: detachedBranch,
 		BranchesPushed: len(localBranches),
 	}, nil
-}
-
-// commitReachableFromAnyBranch reports whether commit `sha` is an ancestor
-// of any local branch in repoPath. Used by detached-HEAD recovery to decide
-// whether the current commit needs to be preserved on a side branch before
-// we walk away from it.
-func commitReachableFromAnyBranch(repoPath, sha string) (bool, error) {
-	if sha == "" {
-		return false, nil
-	}
-	branches, err := git.Branches(repoPath)
-	if err != nil {
-		return false, err
-	}
-	for _, b := range branches {
-		if err := runGit(repoPath, "merge-base", "--is-ancestor", sha, b); err == nil {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// resolveDefaultBranch returns the project's default branch, prompting the
-// user (via opts.PromptDefaultBranch) only when it cannot be inferred.
-func resolveDefaultBranch(name string, proj *config.Project, mainPath string, opts Options) (string, error) {
-	if proj.DefaultBranch != "" {
-		return proj.DefaultBranch, nil
-	}
-	if br := git.SymbolicRef(mainPath, "refs/remotes/origin/HEAD"); br != "" {
-		// strip "origin/"
-		if i := strings.Index(br, "/"); i >= 0 {
-			br = br[i+1:]
-		}
-		return br, nil
-	}
-	// Try common candidates that actually exist locally.
-	var candidates []string
-	for _, c := range []string{"main", "master", "trunk"} {
-		if git.HasBranch(mainPath, c) {
-			candidates = append(candidates, c)
-		}
-	}
-	if opts.PromptDefaultBranch == nil {
-		if len(candidates) == 1 {
-			return candidates[0], nil
-		}
-		return "", fmt.Errorf("cannot determine default branch for %s and no prompter configured", name)
-	}
-	picked, err := opts.PromptDefaultBranch(name, candidates)
-	if err != nil {
-		return "", err
-	}
-	picked = strings.TrimSpace(picked)
-	if picked == "" {
-		return "", fmt.Errorf("no default branch selected for %s", name)
-	}
-	return picked, nil
-}
-
-// listActiveHooks returns hook filenames in dir that are NOT *.sample and
-// have at least one executable bit set. Returns nil, nil if dir is missing.
-func listActiveHooks(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasSuffix(name, ".sample") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.Mode()&0o111 == 0 {
-			continue
-		}
-		out = append(out, name)
-	}
-	return out, nil
-}
-
-// copyHooks copies the named hook files from srcDir to dstDir, preserving
-// the executable bit. Returns the names that were successfully copied.
-func copyHooks(srcDir, dstDir string, names []string) ([]string, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
-		return nil, err
-	}
-	var copied []string
-	for _, name := range names {
-		if err := copyFilePreservingMode(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
-			return copied, fmt.Errorf("copy hook %s: %w", name, err)
-		}
-		copied = append(copied, name)
-	}
-	return copied, nil
-}
-
-func copyFilePreservingMode(src, dst string) error {
-	info, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
 }
 
 // rollbackBare removes a partially-created bare repo. Best-effort.

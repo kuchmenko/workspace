@@ -1,14 +1,8 @@
 package agent
 
 import (
-	"fmt"
-	"strings"
-
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 // View mode.
@@ -21,17 +15,20 @@ const (
 	viewPromptInput                 // optional prompt input before launching claude
 	viewWhichKey                    // which-key action panel (? or space)
 	viewEditProject                 // edit project group/category
+	viewChipAction                  // chip launch modal (c/p/s/esc)
 )
 
 // Nerd Font icons.
 const (
-	iconProject  = "\uf487" //  nf-oct-package
-	iconWorktree = "\ue725" //  nf-dev-git_branch
-	iconSession  = "\uf4a6" //  nf-md-message_text_outline
-	iconSearch   = "\uf002" //  nf-fa-search
+	iconProject  = "" //  nf-oct-package
+	iconWorktree = "" //  nf-dev-git_branch
+	iconSession  = "" //  nf-md-message_text_outline
+	iconSearch   = "" //  nf-fa-search
 )
 
-// listItem is one row in the nested list.
+// listItem is one row in the scrollable nested list. Header chips
+// (Favorites/Recent quick-nav) live outside m.items and are rendered
+// directly by viewList — they are not items the cursor can land on.
 type listItem struct {
 	kind       NodeKind
 	group      string    // group name (for KindGroup rows)
@@ -57,10 +54,21 @@ type LaunchRequest struct {
 type Model struct {
 	workspaces []WorkspaceData
 	mode       viewMode
-	items      []listItem // flattened visible items
+	items      []listItem // flattened scrollable tree items (no header)
 	cursor     int
 	expanded   map[string]bool // group/project name → expanded
 	scroll     int             // scroll offset for long lists
+
+	// headerChips is the ordered list of project-or-group chips
+	// rendered in the pinned quick-nav above the tree. Recomputed in
+	// rebuildItems from favorited groups + favorite/recent projects.
+	headerChips []Chip
+
+	// chipAction modal state: when the user presses 1-9 to pick a
+	// chip, we open a small action modal asking what to do (claude /
+	// prompt / shell / etc.). chipTarget holds the picked chip until
+	// the modal resolves.
+	chipTarget *Chip
 
 	// Caches — loaded lazily, invalidated after mutations.
 	sessCache *SessionCache
@@ -168,375 +176,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == viewEditProject {
 			return m.updateEditProject(msg)
 		}
+		if m.mode == viewChipAction {
+			return m.updateChipAction(msg)
+		}
 		return m.updateList(msg)
 	}
 	return m, nil
 }
 
-func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle pending delete confirmation.
-	if m.pendingDelete {
-		m.pendingDelete = false
-		if msg.String() == "y" && m.deleteItem != nil {
-			it := m.deleteItem
-			m.deleteItem = nil
-			// Use the registry-aware variant so the [[branches]] entry
-			// is released alongside the worktree directory; otherwise
-			// this machine stays listed as owner with stale
-			// last_pushed_* and the reconciler keeps recreating
-			// branch-orphan after the on-disk worktree is gone.
-			projID := ""
-			if it.parentProj != nil {
-				projID = it.parentProj.ID
-			}
-			wsRoot := m.workspaceRootFor(it.parentProj)
-			if err := DeleteWorktreeWithRegistry(it.parentProj.Path, it.worktree.Path, false, wsRoot, projID, it.worktree.Branch); err != nil {
-				m.statusMsg = err.Error()
-				return m, nil
-			}
-			m.wtCache.Invalidate(it.parentProj.Path)
-			m.rebuildItems()
-			m.ensureVisible()
-			m.statusMsg = "worktree deleted"
-			return m, nil
-		}
-		m.deleteItem = nil
-		m.statusMsg = ""
-		return m, nil
+func (m *Model) View() string {
+	if m.width == 0 {
+		return "loading…"
 	}
-
-	m.statusMsg = "" // clear status on any key
-	item := m.currentItem()
-
-	switch msg.String() {
-	case "q":
-		return m, tea.Quit
-	case "j", "down":
-		if m.cursor < len(m.items)-1 {
-			m.cursor++
-			m.ensureVisible()
-		}
-	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureVisible()
-		}
-
-	case "enter":
-		if item == nil {
-			break
-		}
-		switch item.kind {
-		case KindGroup:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
-		case KindProject:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
-		case KindWorktree:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
-		case KindPortal:
-			if item.session != nil {
-				m.Launch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
-				return m, tea.Quit
-			}
-		}
-
-	case "p":
-		// Claude with prompt — available on group, project, worktree.
-		if item != nil && item.path != "" && (item.kind == KindGroup || item.kind == KindProject || item.kind == KindWorktree) {
-			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
-			m.promptInput = ""
-			m.mode = viewPromptInput
-			return m, nil
-		}
-		// Prompt resume for sessions.
-		if item != nil && item.kind == KindPortal && item.session != nil {
-			m.pendingLaunch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
-			m.promptInput = ""
-			m.mode = viewPromptInput
-			return m, nil
-		}
-
-	case "w":
-		// New worktree — only on projects.
-		if item != nil && item.kind == KindProject {
-			m.wtNoLaunch = true
-			m.wtBranch = ""
-			m.wtField = 0
-			m.popupProj = item.project
-			m.mode = viewNewWorktree
-			return m, nil
-		}
-
-	case "e":
-		// Edit project metadata (group / category) — only on projects.
-		if item != nil && item.kind == KindProject && item.project != nil {
-			m.popupProj = item.project
-			m.editGroup = item.project.Group
-			m.editCategory = config.Category(item.project.Category)
-			if m.editCategory == "" {
-				m.editCategory = config.CategoryPersonal
-			}
-			m.editField = 0
-			m.editErr = ""
-			m.mode = viewEditProject
-			return m, nil
-		}
-
-	case "l", "right":
-		if item != nil && item.path != "" {
-			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
-			return m, tea.Quit
-		}
-
-	case "h", "left":
-		if item != nil {
-			switch {
-			case item.kind == KindProject && m.expanded["proj:"+item.project.ID]:
-				m.expanded["proj:"+item.project.ID] = false
-				m.rebuildItems()
-				m.ensureVisible()
-			case item.kind == KindProject && item.project.Group != "":
-				m.expanded[item.project.Group] = false
-				m.rebuildItems()
-				m.jumpToGroup(item.project.Group)
-			case (item.kind == KindWorktree || item.kind == KindPortal) && item.parentProj != nil:
-				m.expanded["proj:"+item.parentProj.ID] = false
-				m.rebuildItems()
-				m.jumpToProject(item.parentProj.ID)
-			case item.kind == KindGroup && m.expanded[item.group]:
-				m.expanded[item.group] = false
-				m.rebuildItems()
-				m.ensureVisible()
-			}
-		}
-
-	case "tab":
-		// Expand/collapse — groups and projects.
-		if item != nil {
-			switch item.kind {
-			case KindGroup:
-				m.toggleExpand(item.group)
-			case KindProject:
-				key := "proj:" + item.project.ID
-				m.expanded[key] = !m.expanded[key]
-				m.rebuildItems()
-				m.ensureVisible()
-			}
-		}
-
-	case "d":
-		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
-			wt := item.worktree
-			if git.IsDirty(wt.Path) {
-				m.statusMsg = "cannot delete: uncommitted changes"
-				break
-			}
-			ahead, _, hasUpstream := git.AheadBehind(wt.Path, wt.Branch)
-			if hasUpstream && ahead > 0 {
-				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
-				break
-			}
-			// Ask for confirmation.
-			name := worktreeDisplayName(*wt)
-			m.statusMsg = fmt.Sprintf("delete %s? y to confirm", name)
-			m.pendingDelete = true
-			m.deleteItem = item
-		}
-
-	case "s", "/":
-		m.flashGlobal = false
-		m.mode = viewFlash
-		m.flashQuery = ""
-		m.recomputeFlash()
-
-	case "S":
-		// Global search — expand everything, search all items.
-		m.flashGlobal = true
-		m.savedExpanded = make(map[string]bool)
-		for k, v := range m.expanded {
-			m.savedExpanded[k] = v
-		}
-		// Expand all groups and projects.
-		for _, ws := range m.workspaces {
-			for _, g := range ws.Groups {
-				m.expanded[g] = true
-			}
-			for i := range ws.Projects {
-				m.expanded["proj:"+ws.Projects[i].ID] = true
-			}
-		}
-		m.rebuildItems()
-		m.mode = viewFlash
-		m.flashQuery = ""
-		m.recomputeFlash()
-
-	case "?", " ":
-		m.whichKeyLevel = 0
-		m.mode = viewWhichKey
-
-	case "G":
-		m.cursor = len(m.items) - 1
-		m.ensureVisible()
-	case "g":
-		m.cursor = 0
-		m.scroll = 0
+	if m.mode == viewPromptInput {
+		return m.viewPromptInput()
 	}
-	return m, nil
-}
-
-// --- which-key action panel ---
-
-type whichKeyAction struct {
-	key  string
-	desc string
-}
-
-func (m *Model) whichKeyActions() []whichKeyAction {
-	item := m.currentItem()
-	if item == nil {
-		return nil
+	if m.mode == viewNewWorktree {
+		return m.viewNewWorktree()
 	}
-
-	if m.whichKeyLevel == 1 {
-		// Worktree sub-menu.
-		return []whichKeyAction{
-			{"n", "new worktree"},
-			{"", ""},
-			{"esc", "back"},
-		}
+	if m.mode == viewEditProject {
+		return m.viewEditProject()
 	}
-
-	switch item.kind {
-	case KindGroup:
-		return []whichKeyAction{
-			{"\u23ce", "open claude"},
-			{"p", "+prompt"},
-			{"l", "shell"},
-			{"tab", "expand"},
-			{"", ""},
-			{"esc", "close"},
-		}
-	case KindProject:
-		return []whichKeyAction{
-			{"\u23ce", "open claude"},
-			{"p", "+prompt"},
-			{"w", "worktree \u203a"},
-			{"e", "edit"},
-			{"l", "shell"},
-			{"tab", "expand"},
-			{"", ""},
-			{"esc", "close"},
-		}
-	case KindWorktree:
-		actions := []whichKeyAction{
-			{"\u23ce", "open claude"},
-			{"p", "+prompt"},
-			{"l", "shell"},
-		}
-		if item.worktree != nil && !item.worktree.IsMain {
-			actions = append(actions, whichKeyAction{"d", "delete"})
-		}
-		actions = append(actions, whichKeyAction{"", ""})
-		actions = append(actions, whichKeyAction{"esc", "close"})
-		return actions
-	case KindPortal:
-		return []whichKeyAction{
-			{"\u23ce", "resume"},
-			{"p", "resume +prompt"},
-			{"", ""},
-			{"esc", "close"},
-		}
+	if m.mode == viewChipAction {
+		return m.viewChipAction()
 	}
-	return nil
-}
-
-func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	item := m.currentItem()
-
-	// Handle worktree sub-level.
-	if m.whichKeyLevel == 1 {
-		switch key {
-		case "esc":
-			m.whichKeyLevel = 0
-			return m, nil
-		case "n":
-			if item != nil && item.kind == KindProject {
-				m.wtNoLaunch = true
-				m.wtBranch = ""
-				m.wtField = 0
-				m.popupProj = item.project
-				m.mode = viewNewWorktree
-				return m, nil
-			}
-		}
-		return m, nil
+	if m.mode == viewWhichKey {
+		return m.viewWhichKey()
 	}
-
-	// Root level — dispatch action.
-	switch key {
-	case "esc":
-		m.mode = viewList
-		return m, nil
-	case "enter":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "p":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "w":
-		if item != nil && item.kind == KindProject {
-			m.whichKeyLevel = 1
-			return m, nil
-		}
-		m.mode = viewList
-	case "l":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "d":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "m":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "e":
-		m.mode = viewList
-		return m.updateList(msg)
-	case "tab":
-		m.mode = viewList
-		return m.updateList(msg)
-	}
-	return m, nil
-}
-
-func (m *Model) whichKeyTitle() string {
-	item := m.currentItem()
-	if item == nil {
-		return "actions"
-	}
-	if m.whichKeyLevel == 1 {
-		return "worktree"
-	}
-	switch item.kind {
-	case KindGroup:
-		return item.group
-	case KindProject:
-		return item.project.Name
-	case KindWorktree:
-		return item.group // display name
-	case KindPortal:
-		if item.session != nil {
-			t := item.session.Title
-			if len(t) > 16 {
-				t = t[:16] + "\u2026"
-			}
-			return t
-		}
-	}
-	return "actions"
+	return m.viewList()
 }
 
 func (m *Model) currentItem() *listItem {
@@ -585,295 +252,6 @@ func (m *Model) jumpToProject(projID string) {
 	m.ensureVisible()
 }
 
-func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-
-	switch key {
-	case "esc":
-		m.mode = viewList
-		return m, nil
-	case "tab", "down":
-		m.wtField = (m.wtField + 1) % 2
-		return m, nil
-	case "shift+tab", "up":
-		m.wtField = (m.wtField + 1) % 2
-		return m, nil
-	case "enter":
-		if m.wtField == 1 { // confirm
-			return m.executeNewWorktree()
-		}
-		m.wtField = (m.wtField + 1) % 2
-		return m, nil
-	case "backspace":
-		if m.wtField == 0 && len(m.wtBranch) > 0 {
-			m.wtBranch = m.wtBranch[:len(m.wtBranch)-1]
-		}
-		return m, nil
-	default:
-		if m.wtField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			m.wtBranch += key
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
-	branch := strings.TrimSpace(m.wtBranch)
-	if branch == "" {
-		return m, nil
-	}
-
-	wsRoot := m.workspaceRootFor(m.popupProj)
-	result, err := CreateWorktree(m.popupProj, branch, wsRoot, m.popupProj.ID)
-	if err != nil {
-		m.statusMsg = err.Error()
-		m.mode = viewList
-		return m, nil
-	}
-	m.wtCache.Invalidate(m.popupProj.Path)
-
-	// If "create worktree only" (w key), go back to list.
-	if m.wtNoLaunch {
-		m.wtNoLaunch = false
-		m.mode = viewList
-		m.rebuildItems()
-		m.ensureVisible()
-		m.statusMsg = "worktree created"
-		return m, nil
-	}
-
-	// Go to prompt input before launching.
-	m.pendingLaunch = &LaunchRequest{Cwd: result.Path}
-	m.promptInput = ""
-	m.mode = viewPromptInput
-	return m, nil
-}
-
-func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
-	case "esc":
-		m.mode = viewList
-		m.pendingLaunch = nil
-	case "enter":
-		// Launch with or without prompt.
-		m.pendingLaunch.Prompt = strings.TrimSpace(m.promptInput)
-		m.Launch = m.pendingLaunch
-		m.pendingLaunch = nil
-		return m, tea.Quit
-	case "backspace":
-		if len(m.promptInput) > 0 {
-			m.promptInput = m.promptInput[:len(m.promptInput)-1]
-		}
-	default:
-		if len(key) == 1 && key[0] >= 32 {
-			m.promptInput += key
-		} else if key == "space" || key == " " {
-			m.promptInput += " "
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) viewPromptInput() string {
-	if m.pendingLaunch == nil {
-		m.mode = viewList
-		return m.viewList()
-	}
-	popupW := 56
-	if m.width < 62 {
-		popupW = m.width - 6
-	}
-	innerW := popupW - 6
-
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render("Launch claude"))
-	lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("in: %s", m.pendingLaunch.Cwd)))
-	lines = append(lines, "")
-	lines = append(lines, popupItemStyle.Width(innerW).Render("  Initial prompt (optional):"))
-
-	input := m.promptInput + "\u2588"
-	lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+input))
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("  Enter: launch (empty = interactive)"))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("  Esc: back"))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
-}
-
-// jumpLabels is the alphabet used for flash jump labels.
-const jumpLabels = "asdfghjklqwertyuiopzxcvbnm"
-
-func (m *Model) updateFlash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
-	case "ctrl+c":
-		return m, tea.Quit
-	case "esc":
-		m.exitFlash(false)
-	case "backspace":
-		if len(m.flashQuery) > 0 {
-			m.flashQuery = m.flashQuery[:len(m.flashQuery)-1]
-			m.recomputeFlash()
-		} else {
-			m.exitFlash(false)
-		}
-	case "enter":
-		// Jump to first match.
-		if len(m.flashMatches) > 0 {
-			m.cursor = m.flashMatches[0]
-			m.ensureVisible()
-		}
-		m.exitFlash(true)
-	default:
-		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			ch := rune(key[0])
-			// Check if this character is a non-conflicting jump label.
-			// Labels are only assigned from characters that would NOT
-			// match if appended to the query, so this is unambiguous.
-			if m.flashQuery != "" {
-				for i, label := range m.flashLabels {
-					if label != 0 && ch == label && i < len(m.flashMatches) {
-						m.cursor = m.flashMatches[i]
-						m.ensureVisible()
-						m.exitFlash(true)
-						return m, nil
-					}
-				}
-			}
-			// Not a label — append to query to narrow results.
-			m.flashQuery += key
-			m.recomputeFlash()
-		}
-	}
-	return m, nil
-}
-
-// exitFlash leaves flash mode. For global search (S), if the user
-// canceled (jumped=false), restore the original expansion state.
-// If they jumped to an item, keep expansions so the target is visible.
-func (m *Model) exitFlash(jumped bool) {
-	m.mode = viewList
-	if m.flashGlobal && !jumped && m.savedExpanded != nil {
-		m.expanded = m.savedExpanded
-		m.savedExpanded = nil
-		m.rebuildItems()
-		m.ensureVisible()
-	}
-	m.flashGlobal = false
-}
-
-func (m *Model) recomputeFlash() {
-	query := strings.ToLower(m.flashQuery)
-	m.flashMatches = nil
-	m.flashLabels = nil
-
-	// Collect matches.
-	for i, item := range m.items {
-		name := m.itemSearchName(item)
-		if query == "" || strings.Contains(strings.ToLower(name), query) {
-			m.flashMatches = append(m.flashMatches, i)
-		}
-	}
-
-	// Compute non-conflicting labels: only use characters that, when
-	// appended to the current query, would NOT match any item. This
-	// makes label presses unambiguous — they can never be mistaken for
-	// "continue typing to narrow results".
-	available := m.availableJumpLabels()
-	for i := 0; i < len(m.flashMatches); i++ {
-		if i < len(available) {
-			m.flashLabels = append(m.flashLabels, available[i])
-		} else {
-			m.flashLabels = append(m.flashLabels, 0) // no label — need more query chars
-		}
-	}
-}
-
-// availableJumpLabels returns characters safe to use as jump labels:
-// letters that, if appended to the current query, would produce zero
-// matches. This guarantees pressing a label always means "jump", never
-// "keep filtering".
-func (m *Model) availableJumpLabels() []rune {
-	query := strings.ToLower(m.flashQuery)
-	if query == "" {
-		return nil // no labels until user types at least one char
-	}
-	var available []rune
-	for _, r := range jumpLabels {
-		extended := query + string(r)
-		productive := false
-		for _, item := range m.items {
-			name := strings.ToLower(m.itemSearchName(item))
-			if strings.Contains(name, extended) {
-				productive = true
-				break
-			}
-		}
-		if !productive {
-			available = append(available, r)
-		}
-	}
-	return available
-}
-
-// itemSearchName returns the searchable text for a list item.
-func (m *Model) itemSearchName(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return item.group
-	case KindProject:
-		return item.project.Name
-	case KindWorktree:
-		return item.group // display name
-	case KindPortal:
-		if item.session != nil {
-			return item.session.Title
-		}
-	}
-	return ""
-}
-
-// flashInlineLabel highlights the query match in a name and, when a
-// non-zero label is available, overlays it on the character after the
-// match. When label is 0 (no label assigned yet), only the match is
-// highlighted — the user needs to type more chars.
-func flashInlineLabel(name, query string, label rune) string {
-	if query == "" {
-		return name
-	}
-	lower := strings.ToLower(name)
-	q := strings.ToLower(query)
-	idx := strings.Index(lower, q)
-	if idx < 0 {
-		return name
-	}
-	matchEnd := idx + len(q)
-	runes := []rune(name)
-
-	var b strings.Builder
-	if idx > 0 {
-		b.WriteString(string(runes[:idx]))
-	}
-	b.WriteString(flashMatchStyle.Render(string(runes[idx:matchEnd])))
-	if label != 0 {
-		// Overlay label on the next character.
-		b.WriteString(flashLabelStyle.Render(string(label)))
-		if matchEnd+1 < len(runes) {
-			b.WriteString(string(runes[matchEnd+1:]))
-		}
-	} else {
-		// No label — just show the rest of the name.
-		if matchEnd < len(runes) {
-			b.WriteString(string(runes[matchEnd:]))
-		}
-	}
-	return b.String()
-}
-
 func (m *Model) ensureVisible() {
 	// Keep cursor pinned to the vertical center of the viewport.
 	maxVisible := m.listHeight()
@@ -890,7 +268,16 @@ func (m *Model) ensureVisible() {
 }
 
 func (m *Model) listHeight() int {
-	h := m.height - 5 // header + 2 footer lines + borders
+	// 5 = breadcrumb (1) + 2 footer lines + borders (2). Add room for
+	// the pinned chip header when present: up to 2 chip lines plus a
+	// 1-line separator below them. headerProjects may be empty (idle
+	// workspace) — listHeight then matches the pre-rework value so a
+	// fresh install has the same vertical density.
+	chrome := 5
+	if len(m.headerChips) > 0 {
+		chrome += 3
+	}
+	h := m.height - chrome
 	if h < 3 {
 		h = 3
 	}
@@ -901,26 +288,26 @@ func (m *Model) listHeight() int {
 // Line 1: actions available for the currently selected item type.
 // Line 2: universal navigation shortcuts.
 func (m *Model) footerHints() (actions, nav string) {
-	nav = "j/k:\u2195  tab:expand  s:find  S:all  ?:more"
+	nav = "j/k:↕  tab:expand  s:find  S:all  ?:more"
 	item := m.currentItem()
 	if item == nil {
-		return "\u23ce:open  s:find  S:all", nav
+		return "⏎:open  s:find  S:all", nav
 	}
 	switch item.kind {
 	case KindGroup:
-		actions = "\u23ce:claude  p:+prompt  l:shell"
+		actions = "⏎:claude  p:+prompt  l:shell"
 	case KindProject:
-		actions = "\u23ce:claude  p:+prompt  w:worktree  e:edit  l:shell"
+		actions = "⏎:claude  p:+prompt  w:worktree  e:edit  l:shell"
 	case KindWorktree:
 		if item.worktree != nil && !item.worktree.IsMain {
-			actions = "\u23ce:claude  p:+prompt  l:shell  m:promote  d:delete"
+			actions = "⏎:claude  p:+prompt  l:shell  m:promote  d:delete"
 		} else {
-			actions = "\u23ce:claude  p:+prompt  l:shell"
+			actions = "⏎:claude  p:+prompt  l:shell"
 		}
 	case KindPortal:
-		actions = "\u23ce:resume  p:+prompt"
+		actions = "⏎:resume  p:+prompt"
 	default:
-		actions = "\u23ce:open"
+		actions = "⏎:open"
 	}
 	return actions, nav
 }
@@ -933,16 +320,16 @@ func (m *Model) breadcrumb() string {
 	}
 	switch item.kind {
 	case KindGroup:
-		return item.group + " \u203a"
+		return item.group + " ›"
 	case KindProject:
 		if item.project.Group != "" {
-			return item.project.Group + " \u203a"
+			return item.project.Group + " ›"
 		}
 		return "ws"
 	case KindWorktree, KindPortal:
 		if item.parentProj != nil {
 			if item.parentProj.Group != "" {
-				return item.parentProj.Group + " \u203a " + item.parentProj.Name
+				return item.parentProj.Group + " › " + item.parentProj.Name
 			}
 			return item.parentProj.Name
 		}
@@ -950,627 +337,3 @@ func (m *Model) breadcrumb() string {
 	}
 	return "ws"
 }
-
-// rebuildItems flattens the workspace tree into a visible list,
-// respecting group expansion state.
-func (m *Model) rebuildItems() {
-	m.items = nil
-	for _, ws := range m.workspaces {
-		// Ungrouped projects first.
-		for i := range ws.Projects {
-			p := &ws.Projects[i]
-			if p.Group == "" {
-				m.addProjectItem(p, 0)
-			}
-		}
-		// Then groups.
-		for _, g := range ws.Groups {
-			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
-			if m.expanded[g] {
-				for i := range ws.Projects {
-					p := &ws.Projects[i]
-					if p.Group == g {
-						m.addProjectItem(p, 1)
-					}
-				}
-			}
-		}
-	}
-	if m.cursor >= len(m.items) {
-		m.cursor = len(m.items) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-}
-
-func (m *Model) addProjectItem(p *Project, indent int) {
-	m.items = append(m.items, listItem{kind: KindProject, project: p, indent: indent, path: p.Path})
-
-	// If project is expanded (tab), show worktrees + sessions inline.
-	if !m.expanded["proj:"+p.ID] {
-		return
-	}
-
-	wts := m.wtCache.Get(p.Path)
-	for i := range wts {
-		wt := &wts[i]
-		name := worktreeDisplayName(*wt)
-		m.items = append(m.items, listItem{
-			kind:       KindWorktree,
-			worktree:   wt,
-			indent:     indent + 1,
-			path:       wt.Path,
-			parentProj: p,
-			group:      name,
-		})
-	}
-
-	sessions := m.sessCache.Get(p.Path)
-	if len(sessions) > 5 {
-		sessions = sessions[:5]
-	}
-	for i := range sessions {
-		s := &sessions[i]
-		m.items = append(m.items, listItem{
-			kind:       KindPortal,
-			session:    s,
-			indent:     indent + 1,
-			path:       s.Cwd,
-			parentProj: p,
-		})
-	}
-}
-
-func (m *Model) View() string {
-	if m.width == 0 {
-		return "loading\u2026"
-	}
-	if m.mode == viewPromptInput {
-		return m.viewPromptInput()
-	}
-	if m.mode == viewNewWorktree {
-		return m.viewNewWorktree()
-	}
-	if m.mode == viewEditProject {
-		return m.viewEditProject()
-	}
-	if m.mode == viewWhichKey {
-		return m.viewWhichKey()
-	}
-	return m.viewList()
-}
-
-// --- list rendering ---
-
-func (m *Model) renderListRows(listW int, dimAll bool) []string {
-	var rows []string
-	inFlash := m.mode == viewFlash
-
-	maxH := m.listHeight()
-	end := m.scroll + maxH
-	if end > len(m.items) {
-		end = len(m.items)
-	}
-
-	// Track group boundaries for visual spacing.
-	prevGroup := ""
-	for i := m.scroll; i < end; i++ {
-		item := m.items[i]
-		selected := i == m.cursor
-
-		// Inject empty line between groups.
-		curGroup := m.itemGroupKey(item)
-		if prevGroup != "" && curGroup != prevGroup {
-			rows = append(rows, strings.Repeat(" ", listW))
-		}
-		prevGroup = curGroup
-
-		// In flash mode: check if this item is in the match set.
-		isMatch := false
-		flashLabel := rune(0)
-		if inFlash {
-			for mi, idx := range m.flashMatches {
-				if idx == i {
-					isMatch = true
-					if mi < len(m.flashLabels) {
-						flashLabel = m.flashLabels[mi]
-					}
-					break
-				}
-			}
-		}
-
-		var line string
-		switch item.kind {
-		case KindGroup:
-			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
-		case KindProject:
-			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
-		case KindWorktree:
-			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
-		case KindPortal:
-			line = m.renderSession(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
-		}
-
-		rows = append(rows, line)
-	}
-	return rows
-}
-
-// itemGroupKey returns a key that identifies the visual group boundary
-// for inserting blank lines between groups.
-func (m *Model) itemGroupKey(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return "g:" + item.group
-	case KindProject:
-		if item.project.Group != "" {
-			return "g:" + item.project.Group
-		}
-		return "ungrouped"
-	case KindWorktree, KindPortal:
-		if item.parentProj != nil && item.parentProj.Group != "" {
-			return "g:" + item.parentProj.Group
-		}
-		return "ungrouped"
-	}
-	return ""
-}
-
-func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
-	arrow := "\u25b8"
-	if m.expanded[item.group] {
-		arrow = "\u25be"
-	}
-	name := item.group
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
-	}
-	label := fmt.Sprintf("   %s %s", arrow, name)
-
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, groupStyle, w)
-	}
-	return groupStyle.Width(w).Render(label)
-}
-
-func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
-	p := item.project
-	indent := strings.Repeat("  ", item.indent)
-
-	expandMark := ""
-	if p.WorktreeCount > 1 || p.SessionCount > 0 {
-		if m.expanded["proj:"+p.ID] {
-			expandMark = "\u25be "
-		} else {
-			expandMark = "\u25b8 "
-		}
-	}
-
-	name := p.Name
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
-	}
-
-	// Build left part: indent + expand + icon + name
-	left := fmt.Sprintf(" %s%s%s %s", indent, expandMark, iconProject, name)
-
-	// Build right part: badges (right-aligned)
-	var badgeParts []string
-	if p.WorktreeCount > 1 {
-		badgeParts = append(badgeParts, fmt.Sprintf("%dwt", p.WorktreeCount))
-	}
-	if p.SessionCount > 0 {
-		badgeParts = append(badgeParts, fmt.Sprintf("%ds", p.SessionCount))
-	}
-	badges := strings.Join(badgeParts, " \u00b7 ")
-
-	// Pad between left and right to fill width.
-	line := m.padRight(left, badges, w)
-
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(line)
-	}
-	if selected {
-		return m.renderSelected(line, itemStyle, w)
-	}
-	// Render with styled badges.
-	if badges != "" {
-		leftPart := fmt.Sprintf(" %s%s%s %s", indent, expandMark, iconProject, name)
-		padding := w - lipgloss.Width(leftPart) - lipgloss.Width(badges) - 1
-		if padding < 1 {
-			padding = 1
-		}
-		return itemStyle.Render(leftPart) + strings.Repeat(" ", padding) + badgeStyle.Render(badges)
-	}
-	return itemStyle.Width(w).Render(line)
-}
-
-func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("  ", item.indent)
-	name := item.group // worktreeDisplayName stored in group field
-	if name == "" {
-		name = "worktree"
-	}
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
-	}
-
-	// Status indicators: * for dirty, ↑N for ahead.
-	var status string
-	if item.worktree != nil {
-		if item.worktree.Dirty {
-			status += "*"
-		}
-		if item.worktree.Ahead > 0 {
-			status += fmt.Sprintf(" \u2191%d", item.worktree.Ahead)
-		}
-		status = strings.TrimSpace(status)
-	}
-
-	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
-	// Truncate name to fit available width.
-	maxName := w - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
-	if maxName > 0 && !inFlash {
-		name = truncateStr(name, maxName)
-	}
-
-	left := prefix + name
-	if status != "" {
-		line := m.padRight(left, status+" ", w)
-		if dimAll || (inFlash && !isMatch) {
-			return dimStyle.Width(w).Render(line)
-		}
-		if selected {
-			return m.renderSelected(line, wtStyle, w)
-		}
-		leftRendered := wtStyle.Render(left)
-		padding := w - lipgloss.Width(left) - lipgloss.Width(status) - 1
-		if padding < 1 {
-			padding = 1
-		}
-		return leftRendered + strings.Repeat(" ", padding) + wtStatusStyle.Render(status)
-	}
-
-	label := left
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, wtStyle, w)
-	}
-	return wtStyle.Width(w).Render(label)
-}
-
-func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("  ", item.indent)
-	title := "(session)"
-	if item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated), item.session.Title)
-	}
-	if inFlash && isMatch && item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated),
-			flashInlineLabel(item.session.Title, m.flashQuery, flashLabel))
-	}
-
-	// Truncate to prevent multiline wrapping.
-	prefix := fmt.Sprintf(" %s%s ", indent, iconSession)
-	maxTitle := w - len([]rune(prefix)) - 1
-	if maxTitle > 0 {
-		title = truncateStr(title, maxTitle)
-	}
-	label := prefix + title
-
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, sessionStyle, w)
-	}
-	return sessionStyle.Width(w).Render(label)
-}
-
-// truncateStr truncates a string to maxLen runes, adding … if needed.
-func truncateStr(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	if maxLen <= 1 {
-		return "\u2026"
-	}
-	return string(runes[:maxLen-1]) + "\u2026"
-}
-
-// renderSelected renders a line with the amber ▌ selection bar.
-func (m *Model) renderSelected(content string, base lipgloss.Style, w int) string {
-	bar := accentBarStyle.Render("\u258c")
-	// Render content with selected style, leave room for the bar.
-	rest := selectedStyle.Width(w - 1).Render(content)
-	return bar + rest
-}
-
-// padRight fills space between left content and right badges.
-func (m *Model) padRight(left, right string, w int) string {
-	lw := lipgloss.Width(left)
-	rw := lipgloss.Width(right)
-	gap := w - lw - rw - 1
-	if gap < 1 {
-		gap = 1
-	}
-	return left + strings.Repeat(" ", gap) + right
-}
-
-func (m *Model) viewList() string {
-	listW := 60
-	if m.width > 80 {
-		listW = 70
-	}
-	if m.width < 66 {
-		listW = m.width - 6
-	}
-
-	var rows []string
-
-	// Header — breadcrumb + position.
-	inFlash := m.mode == viewFlash
-	if inFlash {
-		prefix := iconSearch
-		if m.flashGlobal {
-			prefix = iconSearch + " all"
-		}
-		searchLine := fmt.Sprintf(" %s %s\u2588", prefix, m.flashQuery)
-		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
-	} else {
-		bc := m.breadcrumb()
-		pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-		hdr := m.padRight(" "+bc, pos+" ", listW)
-		rows = append(rows, headerStyle.Width(listW).Render(hdr))
-	}
-
-	// List items.
-	rows = append(rows, m.renderListRows(listW, false)...)
-
-	// Footer — status message or context-sensitive hints.
-	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
-	} else if inFlash {
-		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
-		hint := "letter to jump \u00b7 esc cancel"
-		footer := m.padRight(matchInfo, hint+" ", listW)
-		rows = append(rows, footerStyle.Width(listW).Render(footer))
-	} else {
-		actions, nav := m.footerHints()
-		rows = append(rows, footerStyle.Width(listW).Render(" "+actions))
-		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
-	}
-
-	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
-
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		panel,
-	)
-}
-
-// --- which-key panel rendering ---
-
-func (m *Model) viewWhichKey() string {
-	listW := 48
-	if m.width < 72 {
-		listW = m.width - 28
-		if listW < 30 {
-			listW = 30
-		}
-	}
-
-	// Render the list (dimmed).
-	var rows []string
-	bc := m.breadcrumb()
-	pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-	hdr := m.padRight(" "+bc, pos+" ", listW)
-	rows = append(rows, headerStyle.Width(listW).Render(hdr))
-	rows = append(rows, m.renderListRows(listW, true)...)
-	rows = append(rows, footerStyle.Width(listW).Render(" press a key or esc"))
-
-	listPanel := lipgloss.JoinVertical(lipgloss.Left, rows...)
-
-	// Render the action panel.
-	actions := m.whichKeyActions()
-	title := m.whichKeyTitle()
-
-	panelW := 20
-	var actionLines []string
-	actionLines = append(actionLines, whichKeyTitleStyle.Width(panelW-4).Render(title))
-	actionLines = append(actionLines, "")
-
-	for _, a := range actions {
-		if a.key == "" {
-			actionLines = append(actionLines, "")
-			continue
-		}
-		keyPart := whichKeyKeyStyle.Render(a.key)
-		descPart := whichKeyDescStyle.Render(" " + a.desc)
-		actionLines = append(actionLines, " "+keyPart+descPart)
-	}
-
-	actionContent := strings.Join(actionLines, "\n")
-	actionPanel := whichKeyBorderStyle.Width(panelW).Render(actionContent)
-
-	// Position the action panel vertically aligned with the cursor.
-	listH := lipgloss.Height(listPanel)
-	panelH := lipgloss.Height(actionPanel)
-	topPad := (listH - panelH) / 2
-	if topPad < 0 {
-		topPad = 0
-	}
-	paddedPanel := strings.Repeat("\n", topPad) + actionPanel
-
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", paddedPanel)
-
-	return lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		combined,
-	)
-}
-
-func (m *Model) viewNewWorktree() string {
-	p := m.popupProj
-	popupW := 50
-	if m.width < 56 {
-		popupW = m.width - 6
-	}
-	innerW := popupW - 6
-
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("%s New worktree for %s", iconWorktree, p.Name)))
-	lines = append(lines, "")
-
-	// Field 0: branch (single input \u2014 user types the literal branch name).
-	branchLabel := "  Branch name:"
-	branchVal := m.wtBranch + "\u2588"
-	if m.wtField != 0 {
-		branchVal = m.wtBranch
-		if branchVal == "" {
-			branchVal = "(required)"
-		}
-	}
-	if m.wtField == 0 {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(branchLabel))
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+branchVal))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(branchLabel))
-		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+branchVal))
-	}
-	if branch := strings.TrimSpace(m.wtBranch); branch != "" {
-		pathPreview := fmt.Sprintf("  \u2192 dir: %s-wt-<machine>-%s", p.Name, layout.SlugifyBranch(branch))
-		lines = append(lines, popupDimStyle.Width(innerW).Render(pathPreview))
-	}
-	lines = append(lines, "")
-
-	// Field 1: confirm button
-	confirmLabel := "  \u2192 Create worktree"
-	if m.wtField == 1 {
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
-	} else {
-		lines = append(lines, popupItemStyle.Width(innerW).Render(confirmLabel))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  esc:back"))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
-}
-
-// ---- styles ----
-// Warm amber "command post" palette.
-
-var (
-	// Header / footer bars.
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")). // amber dim — breadcrumb
-			Background(lipgloss.Color("235"))
-
-	footerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Background(lipgloss.Color("235"))
-
-	// Selection: amber accent bar.
-	accentBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")) // warm amber ▌
-
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")). // bright text
-			Background(lipgloss.Color("236")). // subtle dark bg
-			Bold(true)
-
-	// Type colors.
-	groupStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("182")). // soft mauve
-			Bold(true)
-
-	itemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")) // white — primary items
-
-	wtStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("108")) // muted sage — git/branch
-
-	sessionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("110")) // cool steel — history
-
-	badgeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // subtle
-
-	wtStatusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")) // warm amber dim — dirty/ahead indicators
-
-	statusMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")). // amber
-			Bold(true)
-
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	// Flash search.
-	flashSearchStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("215")). // amber
-				Background(lipgloss.Color("235"))
-
-	flashLabelStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("235")). // dark on amber
-			Background(lipgloss.Color("215"))
-
-	flashMatchStyle = lipgloss.NewStyle().
-			Underline(true).
-			Foreground(lipgloss.Color("215")) // amber underlined match
-
-	// Popup forms.
-	popupBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("173")).
-				Padding(1, 1)
-
-	popupTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("215")) // amber
-
-	popupSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("215")).
-				Background(lipgloss.Color("237"))
-
-	popupItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254"))
-
-	popupDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	// Which-key panel.
-	whichKeyBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("173")).
-				Padding(0, 1)
-
-	whichKeyTitleStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")).
-				Bold(true)
-
-	whichKeyKeyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")). // amber key
-				Bold(true)
-
-	whichKeyDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")) // secondary text
-)
