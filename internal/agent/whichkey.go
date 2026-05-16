@@ -1,0 +1,324 @@
+package agent
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/config"
+)
+
+type whichKeyAction struct {
+	key  string
+	desc string
+}
+
+func (m *Model) whichKeyActions() []whichKeyAction {
+	item := m.currentItem()
+	if item == nil {
+		return nil
+	}
+
+	if m.whichKeyLevel == 1 {
+		// Worktree sub-menu.
+		return []whichKeyAction{
+			{"n", "new worktree"},
+			{"", ""},
+			{"esc", "back"},
+		}
+	}
+
+	switch item.kind {
+	case KindGroup:
+		return []whichKeyAction{
+			{"⏎", "open claude"},
+			{"p", "+prompt"},
+			{"l", "shell"},
+			{"tab", "expand"},
+			{"v", m.viewToggleLabel()},
+			{"", ""},
+			{"esc", "close"},
+		}
+	case KindProject:
+		return []whichKeyAction{
+			{"⏎", "open claude"},
+			{"p", "+prompt"},
+			{"f", m.favoriteToggleLabel(item)},
+			{"w", "worktree ›"},
+			{"e", "edit"},
+			{"l", "shell"},
+			{"tab", "expand"},
+			{"v", m.viewToggleLabel()},
+			{"", ""},
+			{"esc", "close"},
+		}
+	case KindWorktree:
+		actions := []whichKeyAction{
+			{"⏎", "open claude"},
+			{"p", "+prompt"},
+			{"l", "shell"},
+		}
+		if item.worktree != nil && !item.worktree.IsMain {
+			actions = append(actions, whichKeyAction{"d", "delete"})
+		}
+		actions = append(actions, whichKeyAction{"v", m.viewToggleLabel()})
+		actions = append(actions, whichKeyAction{"", ""})
+		actions = append(actions, whichKeyAction{"esc", "close"})
+		return actions
+	case KindPortal:
+		return []whichKeyAction{
+			{"⏎", "resume"},
+			{"p", "resume +prompt"},
+			{"v", m.viewToggleLabel()},
+			{"", ""},
+			{"esc", "close"},
+		}
+	}
+	return nil
+}
+
+// viewToggleLabel describes the `v` chord destination: "favorites view"
+// when currently in all, "all view" when currently in favorites. The
+// label is the *target*, not the current state, matching how which-key
+// hints describe what each key does next.
+func (m *Model) viewToggleLabel() string {
+	if m.agentView == config.AgentViewFavorites {
+		return "all view"
+	}
+	return "favorites view"
+}
+
+// favoriteToggleLabel describes the `f` action target: "favorite" if
+// the project is currently unfavorited, "unfavorite" if it already is.
+func (m *Model) favoriteToggleLabel(it *listItem) string {
+	if it != nil && it.project != nil && it.project.Favorite {
+		return "unfavorite"
+	}
+	return "favorite"
+}
+
+func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	item := m.currentItem()
+
+	// Handle worktree sub-level.
+	if m.whichKeyLevel == 1 {
+		switch key {
+		case "esc":
+			m.whichKeyLevel = 0
+			return m, nil
+		case "n":
+			if item != nil && item.kind == KindProject {
+				m.wtNoLaunch = true
+				m.wtBranch = ""
+				m.wtField = 0
+				m.popupProj = item.project
+				m.mode = viewNewWorktree
+				return m, nil
+			}
+		}
+		return m, nil
+	}
+
+	// Root level — dispatch action.
+	switch key {
+	case "esc":
+		m.mode = viewList
+		return m, nil
+	case "enter":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "p":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "w":
+		if item != nil && item.kind == KindProject {
+			m.whichKeyLevel = 1
+			return m, nil
+		}
+		m.mode = viewList
+	case "l":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "d":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "m":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "e":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "f":
+		// Favorite toggle is a per-project action; only meaningful when
+		// the cursor is on a project row. Closes the panel either way
+		// so the user sees the result immediately.
+		m.mode = viewList
+		if item != nil && item.kind == KindProject && item.project != nil {
+			m.toggleFavoriteFor(item.project)
+		}
+		return m, nil
+	case "v":
+		// View toggle is a global action — flips all<->favorites and
+		// persists to workspace.toml so the choice survives restart
+		// and syncs to other machines via the reconciler.
+		m.mode = viewList
+		m.toggleAgentView()
+		return m, nil
+	case "tab":
+		m.mode = viewList
+		return m.updateList(msg)
+	}
+	return m, nil
+}
+
+// toggleAgentView flips between "all" and "favorites", rebuilds the
+// item list, and persists the new view to workspace.toml so future
+// `ws agent` invocations open in the same mode and other machines
+// inherit the preference on the next reconciler tick.
+func (m *Model) toggleAgentView() {
+	if m.agentView == config.AgentViewFavorites {
+		m.agentView = config.AgentViewAll
+	} else {
+		m.agentView = config.AgentViewFavorites
+	}
+	m.rebuildItems()
+	m.cursor = m.firstSelectableIndex()
+	m.ensureVisible()
+	m.statusMsg = "view: " + m.agentView
+
+	root := m.primaryWorkspaceRoot()
+	if root == "" {
+		return
+	}
+	target := m.agentView
+	err := MutateAndSave(root, func(ws *config.Workspace) bool {
+		return ws.SetAgentDefaultView(target)
+	})
+	if err != nil {
+		m.statusMsg = "view saved locally only: " + err.Error()
+	}
+}
+
+// toggleFavoriteFor flips the favorite flag on `proj` and persists the
+// change. The in-memory pointer is mutated so the row repaint picks
+// up the new state without needing a TUI restart. The header section
+// is rebuilt: a freshly favorited project may need to leave Recent
+// and appear in Favorites, and vice versa.
+func (m *Model) toggleFavoriteFor(proj *Project) {
+	root := m.workspaceRootFor(proj)
+	if root == "" {
+		m.statusMsg = "cannot resolve workspace for project"
+		return
+	}
+	target := !proj.Favorite
+	err := MutateAndSave(root, func(ws *config.Workspace) bool {
+		p := ws.Projects[proj.ID]
+		if !p.SetFavorite(target) {
+			return false
+		}
+		ws.Projects[proj.ID] = p
+		return true
+	})
+	if err != nil {
+		m.statusMsg = "favorite: " + err.Error()
+		return
+	}
+	proj.Favorite = target
+	if target {
+		m.statusMsg = "* favorited " + proj.Name
+	} else {
+		m.statusMsg = "unfavorited " + proj.Name
+	}
+	m.rebuildItems()
+	m.clampCursor()
+	m.ensureVisible()
+}
+
+func (m *Model) whichKeyTitle() string {
+	item := m.currentItem()
+	if item == nil {
+		return "actions"
+	}
+	if m.whichKeyLevel == 1 {
+		return "worktree"
+	}
+	switch item.kind {
+	case KindGroup:
+		return item.group
+	case KindProject:
+		return item.project.Name
+	case KindWorktree:
+		return item.group // display name
+	case KindPortal:
+		if item.session != nil {
+			t := item.session.Title
+			if len(t) > 16 {
+				t = t[:16] + "…"
+			}
+			return t
+		}
+	}
+	return "actions"
+}
+
+func (m *Model) viewWhichKey() string {
+	listW := 48
+	if m.width < 72 {
+		listW = m.width - 28
+		if listW < 30 {
+			listW = 30
+		}
+	}
+
+	// Render the list (dimmed).
+	var rows []string
+	bc := m.breadcrumb()
+	pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
+	hdr := m.padRight(" "+bc, pos+" ", listW)
+	rows = append(rows, headerStyle.Width(listW).Render(hdr))
+	rows = append(rows, m.renderListRows(listW, true)...)
+	rows = append(rows, footerStyle.Width(listW).Render(" press a key or esc"))
+
+	listPanel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	// Render the action panel.
+	actions := m.whichKeyActions()
+	title := m.whichKeyTitle()
+
+	panelW := 20
+	var actionLines []string
+	actionLines = append(actionLines, whichKeyTitleStyle.Width(panelW-4).Render(title))
+	actionLines = append(actionLines, "")
+
+	for _, a := range actions {
+		if a.key == "" {
+			actionLines = append(actionLines, "")
+			continue
+		}
+		keyPart := whichKeyKeyStyle.Render(a.key)
+		descPart := whichKeyDescStyle.Render(" " + a.desc)
+		actionLines = append(actionLines, " "+keyPart+descPart)
+	}
+
+	actionContent := strings.Join(actionLines, "\n")
+	actionPanel := whichKeyBorderStyle.Width(panelW).Render(actionContent)
+
+	// Position the action panel vertically aligned with the cursor.
+	listH := lipgloss.Height(listPanel)
+	panelH := lipgloss.Height(actionPanel)
+	topPad := (listH - panelH) / 2
+	if topPad < 0 {
+		topPad = 0
+	}
+	paddedPanel := strings.Repeat("\n", topPad) + actionPanel
+
+	combined := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", paddedPanel)
+
+	return lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		combined,
+	)
+}
