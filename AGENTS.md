@@ -709,7 +709,25 @@ file or package. Extract instead.
 Not this rule: godoc headings on exported symbols, `// Package foo`
 comments, and license headers at file top.
 
-### 3. Comments are a last resort
+### 3. Function complexity
+
+Cyclomatic complexity (gocyclo) thresholds for production `.go`:
+
+- **> 15**: extract *now* — pull state branches into their own
+  dispatch (one handler per case, a table, or a sub-state file).
+  Do this before adding the change that brought you here.
+- **> 10**: extract on the next touch — when you edit a function
+  already over 10, split before adding more branches.
+
+Bubbletea `Update` and cobra builders are naturally branchy; the rule
+trusts the writer to recognize when the switch is masking a real
+sub-machine that deserves its own file. Check with:
+
+```
+go run github.com/fzipp/gocyclo/cmd/gocyclo@latest -over 10 -ignore '_test\.go' .
+```
+
+### 4. Comments are a last resort
 
 Default to no comment. Before adding one, try a clearer name or a
 small extraction so the code carries the meaning on its own. A
