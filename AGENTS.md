@@ -54,7 +54,7 @@ Many design decisions were deliberate trade-offs and are non-obvious.
 After `ws migrate`, every project lives as a sibling triplet under its
 category directory:
 
-```
+```text
 personal/
 ├── myapp/                       ← main worktree (project.default_branch)
 │   └── .git                     ← file pointing into ../myapp.bare

@@ -226,19 +226,6 @@ func (m *Model) workspaceRootFor(proj *Project) string {
 	return ""
 }
 
-// primaryWorkspaceRoot returns the root used for workspace-wide
-// settings (currently just `agent.default_view`). The TUI displays
-// at most one workspace at a time in practice; when multiple are
-// registered we pick the first deterministically — the user has only
-// one global preference per session and `loadAgentDefaultView` reads
-// from the same workspace, so the round-trip is consistent.
-func (m *Model) primaryWorkspaceRoot() string {
-	if len(m.workspaces) == 0 {
-		return ""
-	}
-	return m.workspaces[0].Root
-}
-
 func (m *Model) toggleExpand(key string) {
 	m.expanded[key] = !m.expanded[key]
 	m.rebuildItems()

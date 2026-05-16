@@ -283,9 +283,7 @@ func (m *Model) viewList() string {
 	// above the breadcrumb. They never scroll — the chip row stays put
 	// while the tree below scrolls under them.
 	chipLines := renderHeaderChips(m.headerChips, listW-2, 2)
-	for _, l := range styleHeaderLines(chipLines) {
-		rows = append(rows, l)
-	}
+	rows = append(rows, styleHeaderLines(chipLines)...)
 	if len(chipLines) > 0 {
 		rows = append(rows, strings.Repeat(" ", listW))
 	}

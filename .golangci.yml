@@ -65,17 +65,17 @@ linters:
 
   settings:
     gocognit:
-      # tkach's clippy.toml: cognitive-complexity-threshold = 7. Same
-      # metric as Sonar's cognitive complexity — penalizes nested control
-      # flow more heavily than cyclomatic. 7 is strict; offending files
-      # are path-excluded below (Bubble Tea reducers, MigrateProject,
-      # syncProject) where the switch-on-state pattern is the design.
-      min-complexity: 7
+      # Cognitive complexity threshold. AGENTS.md sets the policy:
+      # functions over 10 split on next touch, functions over 15
+      # split now. CI fails at the hard 15 line; the 10-line soft
+      # rule is enforced by reviewer/agent discipline, not gocognit.
+      min-complexity: 15
 
     gocyclo:
-      # Cyclomatic complexity (decision-point count) — a secondary signal
-      # since gocognit is the primary cognitive-complexity check.
-      min-complexity: 20
+      # Cyclomatic complexity (decision-point count) — a secondary
+      # signal since gocognit is the primary cognitive-complexity
+      # check. Aligned with the AGENTS.md 15-hard / 10-soft policy.
+      min-complexity: 15
 
     funlen:
       # tkach's clippy.toml: too-many-lines-threshold = 200.

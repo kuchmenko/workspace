@@ -49,14 +49,6 @@ var (
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
 
-	// sectionStyle paints the "Favorites" / "Recent" / divider labels
-	// that head the quick-nav shortcuts above the workspace tree.
-	// Color is deliberately the same family as headerStyle so the eye
-	// reads it as chrome, not as a clickable row.
-	sectionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")). // amber dim
-			Bold(true)
-
 	// favoriteStarStyle paints the leading `*` indicator placed
 	// before favorited projects in the header section.
 	favoriteStarStyle = lipgloss.NewStyle().

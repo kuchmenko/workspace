@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -143,8 +144,13 @@ func TestStampLaunchFromPath_FindRootFrom_HandlesSubpath(t *testing.T) {
 	})
 	seedMachine(t, "linux")
 
-	// Launch from a deeper path inside the worktree.
-	deep := filepath.Join(mainPath, ".") // alphabetically minimal subpath
+	// Launch from a real subdir inside the worktree to exercise the
+	// walk-up logic in FindRootFrom — using mainPath itself or "." on
+	// it would skip the walk entirely.
+	deep := filepath.Join(mainPath, "src", "deep")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatalf("mkdir deep: %v", err)
+	}
 	if err := StampLaunchFromPath(deep); err != nil {
 		t.Fatalf("StampLaunchFromPath: %v", err)
 	}
