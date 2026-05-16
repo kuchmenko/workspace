@@ -43,6 +43,18 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear status on any key
 	item := m.currentItem()
 
+	// Number hotkeys 1-9 launch the corresponding chip in the pinned
+	// quick-nav header. Handled here before the navigation switch so
+	// the digits never collide with future bindings.
+	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
+		idx := int(s[0] - '1')
+		if idx < len(m.headerProjects) {
+			p := m.headerProjects[idx]
+			m.Launch = &LaunchRequest{Cwd: p.Path}
+			return m, tea.Quit
+		}
+	}
+
 	switch msg.String() {
 	case "q":
 		return m, tea.Quit
