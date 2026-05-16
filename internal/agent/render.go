@@ -106,30 +106,23 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	p := item.project
 	indent := strings.Repeat("    ", item.indent)
 
-	expandMark := ""
-	if p.WorktreeCount > 1 || p.SessionCount > 0 {
-		if m.expanded["proj:"+p.ID] {
-			expandMark = "▾ "
-		} else {
-			expandMark = "▸ "
-		}
-	}
-
 	name := p.Name
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
 
-	// Build left part: indent + expand + icon + name. Icon is
-	// language-detected via marker files so a Go project shows the Go
-	// glyph, a Rust project shows the Rust glyph, etc.
+	// Build left part: indent + icon + name. Icon is language-detected
+	// via marker files so a Go project shows the Go glyph, a Rust
+	// project shows the Rust glyph, etc.
 	icon := DetectIcon(p.Path)
-	left := fmt.Sprintf(" %s%s%s %s", indent, expandMark, icon, name)
+	left := fmt.Sprintf(" %s%s %s", indent, icon, name)
 
-	// Build right part: badges (right-aligned)
+	// Build right part: badges (right-aligned). Worktree count gets a
+	// lightning-bolt prefix so it reads as "branches in flight" at a
+	// glance; session count keeps the unprefixed `Ns` form.
 	var badgeParts []string
 	if p.WorktreeCount > 1 {
-		badgeParts = append(badgeParts, fmt.Sprintf("%dwt", p.WorktreeCount))
+		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
 	}
 	if p.SessionCount > 0 {
 		badgeParts = append(badgeParts, fmt.Sprintf("%ds", p.SessionCount))
@@ -147,7 +140,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 	// Render with styled badges.
 	if badges != "" {
-		leftPart := fmt.Sprintf(" %s%s%s %s", indent, expandMark, icon, name)
+		leftPart := fmt.Sprintf(" %s%s %s", indent, icon, name)
 		padding := w - lipgloss.Width(leftPart) - lipgloss.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
