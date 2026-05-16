@@ -15,55 +15,63 @@ import (
 // worth the cognitive cost.
 const HeaderCap = 9
 
-// headerProjects returns the single ordered list of projects rendered
-// in the pinned quick-nav chip header. Favorites come first (always
-// visible regardless of activity), then non-favorite recently-touched
-// projects. The result is capped at HeaderCap so the chips fit in the
-// 1-9 number-key hotkey range. Returns nil when nothing qualifies —
-// the caller skips header rendering entirely in that case.
-func headerProjects(projects []Project) []Project {
-	var favs, recent []Project
-	for _, p := range projects {
-		if p.Favorite {
-			favs = append(favs, p)
-		} else if !p.LastActiveAt.IsZero() {
-			recent = append(recent, p)
+// buildHeaderChips returns the ordered list of chips rendered in the
+// pinned quick-nav. Favorites come first (groups and projects merged,
+// sorted by activity desc with name asc tiebreak; groups carry zero
+// activity so they sort last among favs), then non-favorite
+// recently-touched projects. Capped at HeaderCap so chips fit in the
+// 1-9 hotkey range.
+func buildHeaderChips(workspaces []WorkspaceData) []Chip {
+	var favs, recent []Chip
+	for i := range workspaces {
+		ws := &workspaces[i]
+		for j := range ws.Projects {
+			p := &ws.Projects[j]
+			c := Chip{
+				Kind:          KindProject,
+				Name:          p.Name,
+				Path:          p.Path,
+				Favorite:      p.Favorite,
+				LastActiveAt:  p.LastActiveAt,
+				Project:       p,
+				WorkspaceRoot: ws.Root,
+			}
+			if p.Favorite {
+				favs = append(favs, c)
+			} else if !p.LastActiveAt.IsZero() {
+				recent = append(recent, c)
+			}
+		}
+		for _, g := range ws.Groups {
+			if !ws.FavoriteGroups[g] {
+				continue
+			}
+			favs = append(favs, Chip{
+				Kind:          KindGroup,
+				Name:          g,
+				Path:          GroupPath(ws.Root, g),
+				Favorite:      true,
+				WorkspaceRoot: ws.Root,
+			})
 		}
 	}
-	sortByActivity(favs)
-	sortByActivity(recent)
+	sortChipsByActivity(favs)
+	sortChipsByActivity(recent)
 	merged := append(favs, recent...)
-	return capProjects(merged, HeaderCap)
+	if len(merged) > HeaderCap {
+		merged = merged[:HeaderCap]
+	}
+	return merged
 }
 
-func sortByActivity(ps []Project) {
-	sort.Slice(ps, func(i, j int) bool {
-		ai, aj := ps[i].LastActiveAt, ps[j].LastActiveAt
+func sortChipsByActivity(cs []Chip) {
+	sort.Slice(cs, func(i, j int) bool {
+		ai, aj := cs[i].LastActiveAt, cs[j].LastActiveAt
 		if !ai.Equal(aj) {
 			return ai.After(aj)
 		}
-		return ps[i].Name < ps[j].Name
+		return cs[i].Name < cs[j].Name
 	})
-}
-
-func capProjects(ps []Project, n int) []Project {
-	if len(ps) <= n {
-		return ps
-	}
-	return ps[:n]
-}
-
-// allProjects flattens every workspace's Projects into a single slice.
-// Header sorting is global across workspaces — a Favorites pin from a
-// work workspace and one from a personal workspace appear in the same
-// list, ordered purely by activity. The category column on the row
-// disambiguates if the user is multi-workspace.
-func allProjects(workspaces []WorkspaceData) []Project {
-	var out []Project
-	for _, ws := range workspaces {
-		out = append(out, ws.Projects...)
-	}
-	return out
 }
 
 // humanizeAge returns a short human-readable age for the activity
@@ -98,39 +106,44 @@ func humanizeAgeAt(t, now time.Time) string {
 	}
 }
 
-// renderHeaderChips formats `projects` as numbered chips packed into
-// at most `maxLines` lines of width `w`. Each chip is rendered as
-// `1.name 2m` with a leading `*` for favorites. Chips wrap to a new
-// line when the next chip would overflow `w`; chips that would not
-// fit in `maxLines` are dropped (HeaderCap=9 already keeps the count
-// small enough that this is rare).
+// renderHeaderChips formats `chips` as numbered hotkey chips packed
+// into at most `maxLines` lines of width `w`. Each chip is rendered
+// as `1.name 2m` (project) or `1.@group` (group, with `@` prefix to
+// disambiguate at a glance). A leading `*` marks favorites. Chips
+// that wouldn't fit in `maxLines` are dropped — HeaderCap=9 keeps
+// the count small enough that this is rare.
 //
-// Returns nil when projects is empty — callers omit the header rows
-// entirely so an idle workspace doesn't burn vertical space on chrome.
-func renderHeaderChips(projects []Project, w, maxLines int) []string {
-	if len(projects) == 0 || w <= 0 || maxLines <= 0 {
+// Returns nil on an empty input so callers omit the header rows
+// entirely; an idle workspace doesn't burn vertical space on chrome.
+func renderHeaderChips(chips []Chip, w, maxLines int) []string {
+	if len(chips) == 0 || w <= 0 || maxLines <= 0 {
 		return nil
 	}
-	chips := make([]string, len(projects))
-	for i, p := range projects {
-		chips[i] = formatChip(i+1, p)
+	tokens := make([]string, len(chips))
+	for i, c := range chips {
+		tokens[i] = formatChip(i+1, c)
 	}
-	return packChips(chips, w, maxLines)
+	return packChips(tokens, w, maxLines)
 }
 
-// formatChip builds the "1.name 2m" string for one header project,
-// prefixed with `*` when the project is favorited. The age is omitted
-// when LastActiveAt is zero (favorited but never stamped).
-func formatChip(num int, p Project) string {
+// formatChip builds the chip token: `*N.name age` for projects and
+// `*N.@group` for groups. The age column is omitted when LastActiveAt
+// is zero (favorited but never stamped) so chips stay compact on a
+// fresh install.
+func formatChip(num int, c Chip) string {
 	star := ""
-	if p.Favorite {
+	if c.Favorite {
 		star = "*"
 	}
-	age := humanizeAge(p.LastActiveAt)
-	if age == "" {
-		return fmt.Sprintf("%s%d.%s", star, num, p.Name)
+	body := c.Name
+	if c.Kind == KindGroup {
+		body = "@" + c.Name
 	}
-	return fmt.Sprintf("%s%d.%s %s", star, num, p.Name, age)
+	age := humanizeAge(c.LastActiveAt)
+	if age == "" {
+		return fmt.Sprintf("%s%d.%s", star, num, body)
+	}
+	return fmt.Sprintf("%s%d.%s %s", star, num, body, age)
 }
 
 // packChips greedily fills lines with chips separated by two spaces,

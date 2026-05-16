@@ -7,7 +7,7 @@ package agent
 // scrollable region.
 func (m *Model) rebuildItems() {
 	m.items = nil
-	m.headerProjects = headerProjects(allProjects(m.workspaces))
+	m.headerChips = buildHeaderChips(m.workspaces)
 
 	for _, ws := range m.workspaces {
 		// Ungrouped projects first.

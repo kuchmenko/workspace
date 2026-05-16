@@ -43,15 +43,16 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.statusMsg = "" // clear status on any key
 	item := m.currentItem()
 
-	// Number hotkeys 1-9 launch the corresponding chip in the pinned
-	// quick-nav header. Handled here before the navigation switch so
-	// the digits never collide with future bindings.
+	// Number hotkeys 1-9 open the chip-action modal for the
+	// corresponding chip. Handled before the navigation switch so the
+	// digits never collide with future bindings.
 	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 		idx := int(s[0] - '1')
-		if idx < len(m.headerProjects) {
-			p := m.headerProjects[idx]
-			m.Launch = &LaunchRequest{Cwd: p.Path}
-			return m, tea.Quit
+		if idx < len(m.headerChips) {
+			c := m.headerChips[idx]
+			m.chipTarget = &c
+			m.mode = viewChipAction
+			return m, nil
 		}
 	}
 
@@ -139,12 +140,16 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "f":
-		// Toggle favorite on the cursor project (works in both header
-		// and tree variants). Persists the new flag to workspace.toml
-		// and refreshes the in-memory model so the new state is visible
-		// without a TUI restart.
+		// Toggle favorite on the cursor row. Works on projects and on
+		// groups; both kinds appear as chips in the pinned header.
+		// Persists the new flag to workspace.toml and refreshes the
+		// in-memory model so the new state is visible without a TUI
+		// restart.
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
+		}
+		if item != nil && item.kind == KindGroup && item.group != "" {
+			m.toggleFavoriteGroup(item.group)
 		}
 
 	case "h", "left":

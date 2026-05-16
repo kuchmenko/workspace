@@ -6,6 +6,7 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -40,32 +41,71 @@ any project row.`,
 
 func newFavoriteAddCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <project>",
-		Short: "Mark a project as favorite",
+		Use:   "add <project | @group>",
+		Short: "Mark a project or group as favorite",
 		Args:  cobra.ExactArgs(1),
 		Annotations: map[string]string{
 			"capability": "organization",
-			"agent:when": "Pin a project to the Favorites section of `ws agent`",
+			"agent:when": "Pin a project or group to the quick-nav chips of `ws explorer`",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return setProjectFavorite(args[0], true)
+			return setFavorite(args[0], true)
 		},
 	}
 }
 
 func newFavoriteRmCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "rm <project>",
-		Short: "Unmark a favorite project",
+		Use:   "rm <project | @group>",
+		Short: "Unmark a favorite project or group",
 		Args:  cobra.ExactArgs(1),
 		Annotations: map[string]string{
 			"capability": "organization",
-			"agent:when": "Unpin a project from the Favorites section of `ws agent`",
+			"agent:when": "Unpin a project or group from the quick-nav chips of `ws explorer`",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return setProjectFavorite(args[0], false)
+			return setFavorite(args[0], false)
 		},
 	}
+}
+
+// setFavorite dispatches by `@`-prefix: `@group` toggles a group
+// favorite, anything else toggles a project favorite. Keeps the CLI
+// surface symmetric with the TUI hotkey, which uses the cursor's
+// row type to decide.
+func setFavorite(arg string, fav bool) error {
+	if len(arg) > 1 && arg[0] == '@' {
+		return setGroupFavoriteCLI(arg[1:], fav)
+	}
+	return setProjectFavorite(arg, fav)
+}
+
+func setGroupFavoriteCLI(name string, fav bool) error {
+	if _, ok := ws.Groups[name]; !ok {
+		// Auto-register the group so the favorite flag has somewhere
+		// to live. Empty Group{} is fine — the user can fill it later.
+		if ws.Groups == nil {
+			ws.Groups = map[string]config.Group{}
+		}
+		ws.Groups[name] = config.Group{}
+	}
+	if !ws.SetGroupFavorite(name, fav) {
+		if fav {
+			fmt.Printf("@%s is already a favorite.\n", name)
+		} else {
+			fmt.Printf("@%s is not a favorite.\n", name)
+		}
+		return nil
+	}
+	if err := saveWorkspace(); err != nil {
+		return err
+	}
+	if fav {
+		fmt.Printf("Added @%s to favorites.\n", name)
+	} else {
+		fmt.Printf("Removed @%s from favorites.\n", name)
+	}
+	return nil
 }
 
 func newFavoriteListCmd() *cobra.Command {
@@ -77,26 +117,35 @@ func newFavoriteListCmd() *cobra.Command {
 			"agent:when": "Print favorited projects with their category and group",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			names := make([]string, 0)
+			var projNames, groupNames []string
 			for n, p := range ws.Projects {
 				if p.Favorite {
-					names = append(names, n)
+					projNames = append(projNames, n)
 				}
 			}
-			if len(names) == 0 {
-				fmt.Println("No favorites. Use `ws favorite add <project>` to pin one.")
+			for n, g := range ws.Groups {
+				if g.Favorite {
+					groupNames = append(groupNames, n)
+				}
+			}
+			if len(projNames)+len(groupNames) == 0 {
+				fmt.Println("No favorites. Use `ws favorite add <project | @group>` to pin one.")
 				return nil
 			}
-			sort.Strings(names)
+			sort.Strings(projNames)
+			sort.Strings(groupNames)
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tCATEGORY\tGROUP")
-			for _, n := range names {
+			fmt.Fprintln(tw, "NAME\tKIND\tCATEGORY\tGROUP")
+			for _, n := range groupNames {
+				fmt.Fprintf(tw, "@%s\tgroup\t-\t-\n", n)
+			}
+			for _, n := range projNames {
 				p := ws.Projects[n]
 				group := p.Group
 				if group == "" {
 					group = "-"
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", n, p.Category, group)
+				fmt.Fprintf(tw, "%s\tproject\t%s\t%s\n", n, p.Category, group)
 			}
 			return tw.Flush()
 		},

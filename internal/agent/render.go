@@ -282,7 +282,7 @@ func (m *Model) viewList() string {
 	// Pinned quick-nav chips: up to two lines of numbered 1-9 hotkeys
 	// above the breadcrumb. They never scroll — the chip row stays put
 	// while the tree below scrolls under them.
-	chipLines := renderHeaderChips(m.headerProjects, listW-2, 2)
+	chipLines := renderHeaderChips(m.headerChips, listW-2, 2)
 	for _, l := range styleHeaderLines(chipLines) {
 		rows = append(rows, l)
 	}

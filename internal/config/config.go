@@ -11,6 +11,30 @@ import (
 
 type Group struct {
 	Description string `toml:"description"`
+	// Favorite pins this group to the quick-nav chips of `ws explorer`.
+	// Cross-machine — synced via workspace.toml just like project
+	// favorites. Toggled by `ws favorite add` / `rm` with a group name
+	// or by `f` on a group row in the TUI.
+	Favorite bool `toml:"favorite,omitempty"`
+}
+
+// SetGroupFavorite flips the named group's Favorite flag. Returns
+// true when the in-memory state actually moved. No-op when the group
+// is not registered or already in the requested state.
+func (w *Workspace) SetGroupFavorite(name string, fav bool) bool {
+	if w.Groups == nil {
+		return false
+	}
+	g, ok := w.Groups[name]
+	if !ok {
+		return false
+	}
+	if g.Favorite == fav {
+		return false
+	}
+	g.Favorite = fav
+	w.Groups[name] = g
+	return true
 }
 
 type Meta struct {

@@ -18,11 +18,6 @@ const (
 	KindProject
 	KindWorktree
 	KindPortal
-	// KindSection is a non-selectable visual element: the "Favorites"
-	// / "Recent" headers above the tree, the "-- all workspaces --"
-	// divider beneath them, and the empty-state hint inside an empty
-	// Favorites view. Cursor movement skips KindSection rows.
-	KindSection
 )
 
 // Project is one navigable project in the workspace tree.
@@ -57,8 +52,28 @@ func GroupPath(wsRoot, group string) string {
 // Workspace is the top-level data structure loaded from workspace.toml
 // and daemon.toml, used by the TUI.
 type WorkspaceData struct {
-	Name     string
-	Root     string
-	Groups   []string
-	Projects []Project
+	Name           string
+	Root           string
+	Groups         []string
+	Projects       []Project
+	FavoriteGroups map[string]bool // group name → pinned to header chips
+}
+
+// Chip is one entry in the pinned quick-nav header. Either a project
+// (Project != nil) or a group (Group != ""); never both. Chips can
+// represent favorites from either kind, plus recently-touched
+// non-favorite projects.
+type Chip struct {
+	Kind         NodeKind // KindProject or KindGroup
+	Name         string   // display name
+	Path         string   // cwd to launch in
+	Favorite     bool
+	LastActiveAt time.Time
+	// Project is set when Kind == KindProject. Groups do not carry
+	// per-row metadata beyond name and path so this is nil for them.
+	Project *Project
+	// WorkspaceRoot is the root of the workspace this chip belongs to.
+	// Needed so toggleFavoriteFor can resolve which workspace.toml to
+	// mutate when the chip is a group.
+	WorkspaceRoot string
 }

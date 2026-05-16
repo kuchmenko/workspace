@@ -15,6 +15,7 @@ const (
 	viewPromptInput                 // optional prompt input before launching claude
 	viewWhichKey                    // which-key action panel (? or space)
 	viewEditProject                 // edit project group/category
+	viewChipAction                  // chip launch modal (c/p/s/esc)
 )
 
 // Nerd Font icons.
@@ -58,11 +59,16 @@ type Model struct {
 	expanded   map[string]bool // group/project name → expanded
 	scroll     int             // scroll offset for long lists
 
-	// headerProjects is the ordered list of projects rendered as
-	// numbered chips in the pinned quick-nav header above the tree.
-	// Recomputed in rebuildItems from favorites + recently-touched
-	// projects across all workspaces.
-	headerProjects []Project
+	// headerChips is the ordered list of project-or-group chips
+	// rendered in the pinned quick-nav above the tree. Recomputed in
+	// rebuildItems from favorited groups + favorite/recent projects.
+	headerChips []Chip
+
+	// chipAction modal state: when the user presses 1-9 to pick a
+	// chip, we open a small action modal asking what to do (claude /
+	// prompt / shell / etc.). chipTarget holds the picked chip until
+	// the modal resolves.
+	chipTarget *Chip
 
 	// Caches — loaded lazily, invalidated after mutations.
 	sessCache *SessionCache
@@ -170,6 +176,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == viewEditProject {
 			return m.updateEditProject(msg)
 		}
+		if m.mode == viewChipAction {
+			return m.updateChipAction(msg)
+		}
 		return m.updateList(msg)
 	}
 	return m, nil
@@ -187,6 +196,9 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewEditProject {
 		return m.viewEditProject()
+	}
+	if m.mode == viewChipAction {
+		return m.viewChipAction()
 	}
 	if m.mode == viewWhichKey {
 		return m.viewWhichKey()
@@ -275,7 +287,7 @@ func (m *Model) listHeight() int {
 	// workspace) — listHeight then matches the pre-rework value so a
 	// fresh install has the same vertical density.
 	chrome := 5
-	if len(m.headerProjects) > 0 {
+	if len(m.headerChips) > 0 {
 		chrome += 3
 	}
 	h := m.height - chrome

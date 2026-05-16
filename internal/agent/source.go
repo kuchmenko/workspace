@@ -46,11 +46,14 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	}
 
 	ws := &WorkspaceData{
-		Name: filepath.Base(root),
-		Root: root,
+		Name:           filepath.Base(root),
+		Root:           root,
+		FavoriteGroups: map[string]bool{},
 	}
 
-	// Collect groups.
+	// Collect groups. A group is registered when at least one project
+	// references it OR when it has an explicit [groups.<name>] entry
+	// (the explicit entry is what carries the Favorite flag).
 	groupSet := map[string]bool{}
 	names := make([]string, 0, len(w.Projects))
 	for n, p := range w.Projects {
@@ -62,9 +65,15 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 			groupSet[p.Group] = true
 		}
 	}
+	for g := range w.Groups {
+		groupSet[g] = true
+	}
 	sort.Strings(names)
 	for g := range groupSet {
 		ws.Groups = append(ws.Groups, g)
+		if entry, ok := w.Groups[g]; ok && entry.Favorite {
+			ws.FavoriteGroups[g] = true
+		}
 	}
 	sort.Strings(ws.Groups)
 

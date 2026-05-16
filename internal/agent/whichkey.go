@@ -34,6 +34,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"⏎", "open claude"},
 			{"p", "+prompt"},
+			{"f", m.favoriteToggleLabelGroup(item.group)},
 			{"l", "shell"},
 			{"tab", "expand"},
 			{"", ""},
@@ -79,6 +80,18 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 func (m *Model) favoriteToggleLabel(it *listItem) string {
 	if it != nil && it.project != nil && it.project.Favorite {
 		return "unfavorite"
+	}
+	return "favorite"
+}
+
+// favoriteToggleLabelGroup is the group-row variant. Reads the
+// favorite flag from the in-memory WorkspaceData.FavoriteGroups set
+// for whichever workspace owns this group.
+func (m *Model) favoriteToggleLabelGroup(group string) string {
+	for _, ws := range m.workspaces {
+		if ws.FavoriteGroups[group] {
+			return "unfavorite"
+		}
 	}
 	return "favorite"
 }
@@ -136,12 +149,15 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewList
 		return m.updateList(msg)
 	case "f":
-		// Favorite toggle is a per-project action; only meaningful when
-		// the cursor is on a project row. Closes the panel either way
-		// so the user sees the result immediately.
+		// Favorite toggle is per-row: project rows toggle the project,
+		// group rows toggle the group. Either way close the panel so
+		// the user sees the result immediately.
 		m.mode = viewList
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
+		}
+		if item != nil && item.kind == KindGroup && item.group != "" {
+			m.toggleFavoriteGroup(item.group)
 		}
 		return m, nil
 	case "tab":
@@ -149,6 +165,66 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateList(msg)
 	}
 	return m, nil
+}
+
+// toggleFavoriteGroup flips the favorite flag on the named group in
+// the workspace that owns the current cursor row. The in-memory
+// WorkspaceData is updated so the chip header repaint picks up the
+// change without a TUI restart. Symmetric to toggleFavoriteFor.
+func (m *Model) toggleFavoriteGroup(group string) {
+	root := m.workspaceRootForGroup(group)
+	if root == "" {
+		m.statusMsg = "cannot resolve workspace for group"
+		return
+	}
+	current := false
+	for i := range m.workspaces {
+		if m.workspaces[i].Root == root {
+			current = m.workspaces[i].FavoriteGroups[group]
+			break
+		}
+	}
+	target := !current
+	err := MutateAndSave(root, func(ws *config.Workspace) bool {
+		return ws.SetGroupFavorite(group, target)
+	})
+	if err != nil {
+		m.statusMsg = "favorite: " + err.Error()
+		return
+	}
+	for i := range m.workspaces {
+		if m.workspaces[i].Root != root {
+			continue
+		}
+		if m.workspaces[i].FavoriteGroups == nil {
+			m.workspaces[i].FavoriteGroups = map[string]bool{}
+		}
+		if target {
+			m.workspaces[i].FavoriteGroups[group] = true
+			m.statusMsg = "* favorited @" + group
+		} else {
+			delete(m.workspaces[i].FavoriteGroups, group)
+			m.statusMsg = "unfavorited @" + group
+		}
+		break
+	}
+	m.rebuildItems()
+	m.clampCursor()
+	m.ensureVisible()
+}
+
+// workspaceRootForGroup finds the workspace whose Groups slice
+// contains `name`. Returns "" when unmatched (e.g. group was just
+// removed in a parallel save).
+func (m *Model) workspaceRootForGroup(name string) string {
+	for _, ws := range m.workspaces {
+		for _, g := range ws.Groups {
+			if g == name {
+				return ws.Root
+			}
+		}
+	}
+	return ""
 }
 
 // toggleFavoriteFor flips the favorite flag on `proj` and persists the

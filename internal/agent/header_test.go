@@ -6,24 +6,54 @@ import (
 	"time"
 )
 
-func TestHeaderProjects_FavoritesFirstThenRecent(t *testing.T) {
+func TestBuildHeaderChips_FavoritesFirstThenRecent(t *testing.T) {
 	now := time.Now().UTC()
-	projects := []Project{
-		{Name: "fav-old", Favorite: true, LastActiveAt: now.Add(-48 * time.Hour)},
-		{Name: "recent-new", Favorite: false, LastActiveAt: now.Add(-5 * time.Minute)},
-		{Name: "fav-new", Favorite: true, LastActiveAt: now.Add(-1 * time.Minute)},
-		{Name: "stale", Favorite: false, LastActiveAt: time.Time{}},
-		{Name: "recent-old", Favorite: false, LastActiveAt: now.Add(-3 * time.Hour)},
-	}
+	ws := []WorkspaceData{{
+		Root: "/ws",
+		Projects: []Project{
+			{Name: "fav-old", Favorite: true, LastActiveAt: now.Add(-48 * time.Hour)},
+			{Name: "recent-new", Favorite: false, LastActiveAt: now.Add(-5 * time.Minute)},
+			{Name: "fav-new", Favorite: true, LastActiveAt: now.Add(-1 * time.Minute)},
+			{Name: "stale", Favorite: false, LastActiveAt: time.Time{}},
+			{Name: "recent-old", Favorite: false, LastActiveAt: now.Add(-3 * time.Hour)},
+		},
+	}}
 
-	got := names(headerProjects(projects))
+	got := chipNames(buildHeaderChips(ws))
 	want := []string{"fav-new", "fav-old", "recent-new", "recent-old"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v (favs first by activity desc, then recent by activity desc; zero-activity non-favs excluded)", got, want)
 	}
 }
 
-func TestHeaderProjects_CappedAtNine(t *testing.T) {
+func TestBuildHeaderChips_IncludesFavoriteGroups(t *testing.T) {
+	now := time.Now().UTC()
+	ws := []WorkspaceData{{
+		Root:           "/ws",
+		Groups:         []string{"work", "personal"},
+		FavoriteGroups: map[string]bool{"work": true},
+		Projects: []Project{
+			{Name: "active", Favorite: false, LastActiveAt: now.Add(-10 * time.Minute)},
+		},
+	}}
+	chips := buildHeaderChips(ws)
+	got := chipNames(chips)
+	// fav group `work` is favorited with zero activity; sorted last
+	// among favs (none here), then non-favorite recent project.
+	want := []string{"work", "active"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v (fav group first, then recent project)", got, want)
+	}
+	// Verify the chip is marked as a group.
+	if chips[0].Kind != KindGroup {
+		t.Errorf("first chip should be KindGroup, got %v", chips[0].Kind)
+	}
+	if chips[1].Kind != KindProject {
+		t.Errorf("second chip should be KindProject, got %v", chips[1].Kind)
+	}
+}
+
+func TestBuildHeaderChips_CappedAtNine(t *testing.T) {
 	now := time.Now().UTC()
 	var projects []Project
 	for i := 0; i < 8; i++ {
@@ -38,39 +68,27 @@ func TestHeaderProjects_CappedAtNine(t *testing.T) {
 			LastActiveAt: now.Add(time.Duration(-i-100) * time.Hour),
 		})
 	}
-
-	got := headerProjects(projects)
+	ws := []WorkspaceData{{Root: "/ws", Projects: projects}}
+	got := buildHeaderChips(ws)
 	if len(got) != HeaderCap {
 		t.Errorf("expected cap of %d, got %d", HeaderCap, len(got))
 	}
 }
 
-func TestHeaderProjects_TiesByName(t *testing.T) {
+func TestBuildHeaderChips_TiesByName(t *testing.T) {
 	t0 := time.Date(2026, 5, 16, 10, 0, 0, 0, time.UTC)
-	projects := []Project{
-		{Name: "z-app", Favorite: false, LastActiveAt: t0},
-		{Name: "a-app", Favorite: false, LastActiveAt: t0},
-		{Name: "m-app", Favorite: false, LastActiveAt: t0},
-	}
-	got := names(headerProjects(projects))
+	ws := []WorkspaceData{{
+		Root: "/ws",
+		Projects: []Project{
+			{Name: "z-app", Favorite: false, LastActiveAt: t0},
+			{Name: "a-app", Favorite: false, LastActiveAt: t0},
+			{Name: "m-app", Favorite: false, LastActiveAt: t0},
+		},
+	}}
+	got := chipNames(buildHeaderChips(ws))
 	want := []string{"a-app", "m-app", "z-app"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("equal-activity tie should sort by name asc: got %v, want %v", got, want)
-	}
-}
-
-func TestHeaderProjects_FavoritesIncludeZeroActivity(t *testing.T) {
-	now := time.Now().UTC()
-	projects := []Project{
-		{Name: "fresh-fav", Favorite: true, LastActiveAt: time.Time{}},
-		{Name: "old-fav", Favorite: true, LastActiveAt: now.Add(-1 * time.Hour)},
-	}
-	got := names(headerProjects(projects))
-	// Order: activity desc; zero comes last because nothing is greater
-	// than zero in time.After semantics.
-	want := []string{"old-fav", "fresh-fav"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("favorites with mixed activity: got %v, want %v", got, want)
 	}
 }
 
@@ -100,10 +118,10 @@ func TestHumanizeAgeAt(t *testing.T) {
 	}
 }
 
-func names(ps []Project) []string {
-	out := make([]string, len(ps))
-	for i, p := range ps {
-		out[i] = p.Name
+func chipNames(cs []Chip) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Name
 	}
 	return out
 }
