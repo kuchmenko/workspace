@@ -39,6 +39,14 @@ type Reconciler struct {
 	// autoBootstrap controls whether the daemon clones missing projects on
 	// each tick. Default true; set false via daemon.toml to disable.
 	autoBootstrap bool
+
+	// pushCooldown coalesces consecutive auto-sync commits of workspace.toml
+	// into a single squashed commit. While the most recent local commit is
+	// our own auto-sync and younger than this duration, syncTOML amends
+	// further dirty changes into it and defers the push. Zero disables
+	// coalescing (push immediately after each commit) — that's the safe
+	// default for `ws sync`, while the daemon opts in via SetPushCooldown.
+	pushCooldown time.Duration
 }
 
 type backoffState struct {
@@ -72,6 +80,16 @@ func NewReconciler(root string, interval time.Duration, logger *log.Logger) *Rec
 // daemon.toml during workspace registration.
 func (r *Reconciler) SetAutoBootstrap(v bool) {
 	r.autoBootstrap = v
+}
+
+// SetPushCooldown configures how long a local auto-sync commit may be amended
+// before it must be pushed. Zero disables amend+defer (push every commit
+// immediately). Negative values are clamped to zero.
+func (r *Reconciler) SetPushCooldown(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	r.pushCooldown = d
 }
 
 // Run starts the reconciler loop. It performs an immediate tick at startup

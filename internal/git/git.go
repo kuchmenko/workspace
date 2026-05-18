@@ -77,6 +77,19 @@ func LastCommitTime(repoPath string) (time.Time, error) {
 	return time.Parse(time.RFC3339, strings.TrimSpace(string(out)))
 }
 
+// LastCommitAuthorTime returns the author date of HEAD. Unlike LastCommitTime
+// (committer date), this is preserved across `git commit --amend --no-edit`,
+// which makes it the right anchor for cooldowns that must bound the maximum
+// time a coalesced commit can sit unpushed while activity keeps refreshing it.
+func LastCommitAuthorTime(repoPath string) (time.Time, error) {
+	cmd := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%aI")
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339, strings.TrimSpace(string(out)))
+}
+
 func LastCommitMessage(repoPath string) (string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%s")
 	out, err := cmd.Output()
