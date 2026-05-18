@@ -181,6 +181,7 @@ func (d *Daemon) startWorkspace(ws WorkspaceEntry) {
 
 	r := NewReconciler(ws.Root, interval, d.logger)
 	r.SetAutoBootstrap(ws.AutoBootstrapEnabled())
+	r.SetPushCooldown(ws.ResolvedPushCooldown())
 	d.reconcilers[ws.Root] = r
 
 	d.wg.Add(1)
