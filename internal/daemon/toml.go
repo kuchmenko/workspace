@@ -74,7 +74,19 @@ func (r *Reconciler) syncTOML() (bool, error) {
 		}
 		headMsg, _ := git.LastCommitMessage(repoRoot)
 		if ahead > 0 && headMsg == autoSyncMsg {
-			if err := runIn(repoRoot, "git", "commit", "--amend", "--no-edit"); err != nil {
+			// If the staged tree now matches HEAD's parent, the held commit's
+			// net change has been undone (e.g. a favorite toggled on then off
+			// inside the cooldown). git refuses an amend that produces an
+			// empty diff vs parent; without this branch we'd return an error
+			// every subsequent tick and leave workspace.toml staged forever.
+			// Drop the held commit instead — the right history outcome is
+			// "no commit at all".
+			if err := runIn(repoRoot, "git", "diff", "--cached", "--quiet", "HEAD~1"); err == nil {
+				if err := runIn(repoRoot, "git", "reset", "--mixed", "HEAD~1"); err != nil {
+					return false, fmt.Errorf("drop empty held auto-sync: %w", err)
+				}
+				ahead--
+			} else if err := runIn(repoRoot, "git", "commit", "--amend", "--no-edit"); err != nil {
 				return false, fmt.Errorf("git commit --amend: %w", err)
 			}
 		} else {

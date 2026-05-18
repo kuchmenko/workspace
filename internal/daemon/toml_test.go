@@ -162,6 +162,59 @@ func TestSyncTOMLAmendPreservesAuthorTimeAndReleasesGate(t *testing.T) {
 	}
 }
 
+// TestSyncTOMLAmendRevertedEditDropsHeldCommit covers the toggle-and-untoggle
+// case: an auto-sync commit is held under the cooldown, then a follow-up
+// edit puts workspace.toml back to its pre-commit contents. git refuses an
+// amend whose tree equals its parent's, so the reconciler must drop the
+// held commit entirely instead of erroring forever and leaving the file
+// permanently staged.
+func TestSyncTOMLAmendRevertedEditDropsHeldCommit(t *testing.T) {
+	wsRoot, bareDir := setupSyncTOMLRepo(t)
+
+	r := NewReconciler(wsRoot, 5*time.Minute, log.New(io.Discard, "", 0))
+	r.SetPushCooldown(time.Hour)
+
+	parentHead := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD")
+	remoteHead := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main")
+	tomlPath := filepath.Join(wsRoot, "workspace.toml")
+	original, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Held auto-sync commit lands under the cooldown.
+	if err := os.WriteFile(tomlPath, []byte(string(original)+"# toggled on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.syncTOML(); err != nil {
+		t.Fatalf("syncTOML hold: %v", err)
+	}
+	if a := countAhead(t, wsRoot); a != 1 {
+		t.Fatalf("expected ahead=1 after first tick, got %d", a)
+	}
+
+	// Undo the edit before the cooldown elapses.
+	if err := os.WriteFile(tomlPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.syncTOML(); err != nil {
+		t.Fatalf("syncTOML revert: %v", err)
+	}
+
+	if got := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD"); got != parentHead {
+		t.Fatalf("expected HEAD to roll back to %s, got %s", parentHead, got)
+	}
+	if a := countAhead(t, wsRoot); a != 0 {
+		t.Fatalf("expected ahead=0 after revert, got %d", a)
+	}
+	if got := testutil.RunGit(t, wsRoot, "status", "--porcelain", "workspace.toml"); got != "" {
+		t.Fatalf("workspace.toml should be clean after revert, got %q", got)
+	}
+	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != remoteHead {
+		t.Fatalf("remote should not move when the held commit is dropped; got %s, want %s", got, remoteHead)
+	}
+}
+
 // setupSyncTOMLRepo builds a workspace clone wired to a bare upstream with a
 // seeded workspace.toml committed on main. Returns (wsRoot, bareDir).
 func setupSyncTOMLRepo(t *testing.T) (string, string) {
