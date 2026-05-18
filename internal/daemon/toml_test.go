@@ -80,7 +80,7 @@ func TestSyncTOMLAmendCooldownSquashesAutoSyncCommits(t *testing.T) {
 	}
 }
 
-// TestSyncTOMLZeroCooldownPushesEveryCommit pins the legacy behaviour for
+// TestSyncTOMLZeroCooldownPushesEveryCommit pins the legacy behavior for
 // `ws sync` (cooldown 0): every dirty edit produces its own commit and is
 // pushed immediately, no amend.
 func TestSyncTOMLZeroCooldownPushesEveryCommit(t *testing.T) {
@@ -110,6 +110,55 @@ func TestSyncTOMLZeroCooldownPushesEveryCommit(t *testing.T) {
 	}
 	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != headB {
 		t.Fatalf("expected immediate push to %s, remote at %s", headB, got)
+	}
+}
+
+// TestSyncTOMLAmendPreservesAuthorTimeAndReleasesGate is the regression test
+// for the bug where the cooldown gate used the committer date. `git commit
+// --amend --no-edit` refreshes %cI on every amend, so under continuous
+// activity the gate would never elapse and the held auto-sync commit would
+// never be pushed. shouldHoldPush now anchors on the author date (%aI), which
+// is preserved across amends — so once enough wall time has passed since the
+// first hold, the next dirty tick must push, not amend-and-hold again.
+func TestSyncTOMLAmendPreservesAuthorTimeAndReleasesGate(t *testing.T) {
+	wsRoot, bareDir := setupSyncTOMLRepo(t)
+
+	r := NewReconciler(wsRoot, 5*time.Minute, log.New(io.Discard, "", 0))
+	// Cooldown chosen well above git's 1s author-date resolution so the
+	// "held" assertion is not racing the truncation of %aI to whole
+	// seconds. Sleep below uses cooldown + a buffer for the same reason.
+	const cooldown = 2 * time.Second
+	r.SetPushCooldown(cooldown)
+
+	remoteHead := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main")
+
+	// First tick: dirty edit creates the held auto-sync commit (cooldown
+	// has not elapsed yet, so push must be held).
+	appendFile(t, filepath.Join(wsRoot, "workspace.toml"), "# edit 1\n")
+	if _, err := r.syncTOML(); err != nil {
+		t.Fatalf("syncTOML 1: %v", err)
+	}
+	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != remoteHead {
+		t.Fatalf("first edit pushed too early; cooldown should have held")
+	}
+	authorTime1 := testutil.RunGit(t, wsRoot, "log", "-1", "--format=%aI")
+
+	// Wait past the cooldown, then make another dirty edit. The amend must
+	// preserve the author time so time.Since(author) > cooldown is true and
+	// shouldHoldPush releases the gate.
+	time.Sleep(cooldown + time.Second)
+	appendFile(t, filepath.Join(wsRoot, "workspace.toml"), "# edit 2\n")
+	if _, err := r.syncTOML(); err != nil {
+		t.Fatalf("syncTOML 2: %v", err)
+	}
+
+	authorTime2 := testutil.RunGit(t, wsRoot, "log", "-1", "--format=%aI")
+	if authorTime2 != authorTime1 {
+		t.Fatalf("amend changed author time (%q → %q); cooldown anchor would drift", authorTime1, authorTime2)
+	}
+	headAfter := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD")
+	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != headAfter {
+		t.Fatalf("expected remote at %s after cooldown elapsed, got %s", headAfter, got)
 	}
 }
 

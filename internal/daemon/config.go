@@ -19,9 +19,10 @@ type WorkspaceEntry struct {
 	// an explicit false written to daemon.toml.
 	AutoBootstrap *bool `toml:"auto_bootstrap,omitempty"`
 	// PushCooldown coalesces consecutive auto-sync commits of workspace.toml
-	// into a single squashed commit. Empty string → default 1h; "0" disables
-	// coalescing (legacy behaviour: push every commit immediately). Parsed
-	// via time.ParseDuration; unparseable values fall back to the default.
+	// into a single squashed commit. Empty string → default 1h; literal "0"
+	// (or any zero-valued duration like "0s") disables coalescing — legacy
+	// behavior, push every commit immediately. Parsed via time.ParseDuration;
+	// unparseable values fall back to the default.
 	PushCooldown string `toml:"push_cooldown,omitempty"`
 }
 
@@ -33,10 +34,14 @@ const DefaultPushCooldown = time.Hour
 
 // ResolvedPushCooldown returns the duration parsed from PushCooldown, with
 // DefaultPushCooldown as the fallback for empty/invalid values. The literal
-// "0" (zero duration) is honoured as "disable coalescing".
+// "0" is honored as "disable coalescing" — time.ParseDuration rejects a bare
+// "0" because it has no unit, so this is the natural way to spell it.
 func (w WorkspaceEntry) ResolvedPushCooldown() time.Duration {
 	if w.PushCooldown == "" {
 		return DefaultPushCooldown
+	}
+	if w.PushCooldown == "0" {
+		return 0
 	}
 	d, err := time.ParseDuration(w.PushCooldown)
 	if err != nil {

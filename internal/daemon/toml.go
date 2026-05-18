@@ -123,7 +123,13 @@ func (r *Reconciler) syncTOML() (bool, error) {
 
 // shouldHoldPush reports whether HEAD is our own auto-sync commit that is
 // still young enough to absorb further amends. Zero pushCooldown disables
-// the gate entirely (the historical behaviour, kept for `ws sync`).
+// the gate entirely (the historical behavior, kept for `ws sync`).
+//
+// The age check uses the author date — preserved by `git commit --amend
+// --no-edit` — so continuous activity that keeps amending into the held
+// commit cannot indefinitely defer the push. The committer date would
+// refresh on every amend and silently turn the cooldown into "never push
+// while busy", which is the failure mode this gate exists to prevent.
 func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string) bool {
 	if r.pushCooldown <= 0 {
 		return false
@@ -132,7 +138,7 @@ func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string) bool {
 	if headMsg != autoSyncMsg {
 		return false
 	}
-	t, err := git.LastCommitTime(repoRoot)
+	t, err := git.LastCommitAuthorTime(repoRoot)
 	if err != nil {
 		return false
 	}
