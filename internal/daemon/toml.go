@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -63,17 +64,25 @@ func (r *Reconciler) syncTOML() (bool, error) {
 	}
 
 	// Commit dirty changes first so the rest of the matrix only deals with
-	// committed state.
+	// committed state. When HEAD is already an unpushed auto-sync commit from
+	// this host, amend into it instead of stacking another one — see the
+	// pushCooldown design note in reconciler.go.
+	autoSyncMsg := fmt.Sprintf("ws: auto-sync workspace.toml from %s", machineHostname())
 	if localDirty {
 		if err := git.Add(repoRoot, relFile); err != nil {
 			return false, fmt.Errorf("git add: %w", err)
 		}
-		host := machineHostname()
-		msg := fmt.Sprintf("ws: auto-sync workspace.toml from %s", host)
-		if err := git.Commit(repoRoot, msg); err != nil {
-			return false, fmt.Errorf("git commit: %w", err)
+		headMsg, _ := git.LastCommitMessage(repoRoot)
+		if ahead > 0 && headMsg == autoSyncMsg {
+			if err := runIn(repoRoot, "git", "commit", "--amend", "--no-edit"); err != nil {
+				return false, fmt.Errorf("git commit --amend: %w", err)
+			}
+		} else {
+			if err := git.Commit(repoRoot, autoSyncMsg); err != nil {
+				return false, fmt.Errorf("git commit: %w", err)
+			}
+			ahead++
 		}
-		ahead++
 	}
 
 	// Re-evaluate behind in case fetch happened pre-commit.
@@ -88,9 +97,14 @@ func (r *Reconciler) syncTOML() (bool, error) {
 		_ = r.clearTOMLConflicts()
 	}
 
-	// Push if anything to push.
+	// Push if anything to push — unless the pushCooldown gate is holding our
+	// auto-sync commit open for further amending. The held commit will be
+	// pushed on a later tick once its age exceeds the cooldown, or sooner if
+	// a non-auto-sync commit lands on top of it.
 	if ahead > 0 || behind > 0 {
-		if err := git.Push(repoRoot); err != nil {
+		if r.shouldHoldPush(repoRoot, autoSyncMsg) {
+			r.logger.Printf("reconciler: %s holding auto-sync commit for amend (cooldown %s)", repoRoot, r.pushCooldown)
+		} else if err := git.Push(repoRoot); err != nil {
 			// One retry: fetch + rebase + push, mirror of the legacy syncer.
 			if perr := runIn(repoRoot, "git", "pull", "--rebase"); perr != nil {
 				r.recordTOMLConflict(repoRoot, conflict.KindTOMLMerge, perr)
@@ -105,6 +119,24 @@ func (r *Reconciler) syncTOML() (bool, error) {
 
 	newHead := git.RevParse(repoRoot, "HEAD")
 	return newHead != originalHead, nil
+}
+
+// shouldHoldPush reports whether HEAD is our own auto-sync commit that is
+// still young enough to absorb further amends. Zero pushCooldown disables
+// the gate entirely (the historical behaviour, kept for `ws sync`).
+func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string) bool {
+	if r.pushCooldown <= 0 {
+		return false
+	}
+	headMsg, _ := git.LastCommitMessage(repoRoot)
+	if headMsg != autoSyncMsg {
+		return false
+	}
+	t, err := git.LastCommitTime(repoRoot)
+	if err != nil {
+		return false
+	}
+	return time.Since(t) < r.pushCooldown
 }
 
 func (r *Reconciler) recordTOMLConflict(workspace string, kind conflict.Kind, cause error) {

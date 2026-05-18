@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/kuchmenko/workspace/internal/auth"
@@ -17,6 +18,31 @@ type WorkspaceEntry struct {
 	// each tick. Pointer so we can distinguish "unset" (default true) from
 	// an explicit false written to daemon.toml.
 	AutoBootstrap *bool `toml:"auto_bootstrap,omitempty"`
+	// PushCooldown coalesces consecutive auto-sync commits of workspace.toml
+	// into a single squashed commit. Empty string → default 1h; "0" disables
+	// coalescing (legacy behaviour: push every commit immediately). Parsed
+	// via time.ParseDuration; unparseable values fall back to the default.
+	PushCooldown string `toml:"push_cooldown,omitempty"`
+}
+
+// DefaultPushCooldown is the daemon's default coalescing window when the
+// workspace entry does not override it. One hour keeps git history almost
+// free of auto-sync noise on machines that edit workspace.toml frequently,
+// while still bounding the worst-case "my change isn't on origin yet" gap.
+const DefaultPushCooldown = time.Hour
+
+// ResolvedPushCooldown returns the duration parsed from PushCooldown, with
+// DefaultPushCooldown as the fallback for empty/invalid values. The literal
+// "0" (zero duration) is honoured as "disable coalescing".
+func (w WorkspaceEntry) ResolvedPushCooldown() time.Duration {
+	if w.PushCooldown == "" {
+		return DefaultPushCooldown
+	}
+	d, err := time.ParseDuration(w.PushCooldown)
+	if err != nil {
+		return DefaultPushCooldown
+	}
+	return d
 }
 
 // AutoBootstrapEnabled reports whether auto-clone of missing projects is on.
