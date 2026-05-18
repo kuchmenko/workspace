@@ -114,7 +114,7 @@ func (r *Reconciler) syncTOML() (bool, error) {
 	// pushed on a later tick once its age exceeds the cooldown, or sooner if
 	// a non-auto-sync commit lands on top of it.
 	if ahead > 0 || behind > 0 {
-		if r.shouldHoldPush(repoRoot, autoSyncMsg) {
+		if r.shouldHoldPush(repoRoot, autoSyncMsg, ahead) {
 			r.logger.Printf("reconciler: %s holding auto-sync commit for amend (cooldown %s)", repoRoot, r.pushCooldown)
 		} else if err := git.Push(repoRoot); err != nil {
 			// One retry: fetch + rebase + push, mirror of the legacy syncer.
@@ -142,8 +142,16 @@ func (r *Reconciler) syncTOML() (bool, error) {
 // commit cannot indefinitely defer the push. The committer date would
 // refresh on every amend and silently turn the cooldown into "never push
 // while busy", which is the failure mode this gate exists to prevent.
-func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string) bool {
+//
+// The ahead==1 guard prevents the gate from withholding a user's manual
+// commit that sits below the auto-sync: in that case `git push` would
+// publish *both* commits, and the cooldown is only entitled to defer the
+// auto-sync one. When ahead > 1 we always push.
+func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string, ahead int) bool {
 	if r.pushCooldown <= 0 {
+		return false
+	}
+	if ahead != 1 {
 		return false
 	}
 	headMsg, _ := git.LastCommitMessage(repoRoot)

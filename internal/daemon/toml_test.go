@@ -215,6 +215,42 @@ func TestSyncTOMLAmendRevertedEditDropsHeldCommit(t *testing.T) {
 	}
 }
 
+// TestSyncTOMLDoesNotHoldPushWhenManualCommitIsAhead protects the user's
+// manual (non-auto-sync) commits from getting trapped behind the cooldown.
+// When ahead > 1 — i.e. a manual commit sits below a held auto-sync —
+// `git push` would publish both, so the gate must release. Otherwise the
+// daemon would happily withhold the user's work for an hour.
+func TestSyncTOMLDoesNotHoldPushWhenManualCommitIsAhead(t *testing.T) {
+	wsRoot, bareDir := setupSyncTOMLRepo(t)
+
+	r := NewReconciler(wsRoot, 5*time.Minute, log.New(io.Discard, "", 0))
+	r.SetPushCooldown(time.Hour)
+
+	// User commits a manual workspace.toml edit but has not pushed yet.
+	tomlPath := filepath.Join(wsRoot, "workspace.toml")
+	appendFile(t, tomlPath, "# manual edit by user\n")
+	testutil.RunGit(t, wsRoot, "add", "workspace.toml")
+	testutil.RunGit(t, wsRoot, "commit", "-m", "manual: tweak workspace.toml")
+	if a := countAhead(t, wsRoot); a != 1 {
+		t.Fatalf("setup: expected ahead=1 after manual commit, got %d", a)
+	}
+
+	// Daemon tick fires with a fresh dirty edit — would stack an auto-sync
+	// commit on top, leaving ahead=2.
+	appendFile(t, tomlPath, "# auto edit\n")
+	if _, err := r.syncTOML(); err != nil {
+		t.Fatalf("syncTOML: %v", err)
+	}
+
+	headAfter := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD")
+	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != headAfter {
+		t.Fatalf("manual commit was withheld behind cooldown; remote at %s, HEAD %s", got, headAfter)
+	}
+	if a := countAhead(t, wsRoot); a != 0 {
+		t.Fatalf("expected ahead=0 after push, got %d", a)
+	}
+}
+
 // setupSyncTOMLRepo builds a workspace clone wired to a bare upstream with a
 // seeded workspace.toml committed on main. Returns (wsRoot, bareDir).
 func setupSyncTOMLRepo(t *testing.T) (string, string) {
