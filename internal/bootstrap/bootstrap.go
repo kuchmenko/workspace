@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 type State string
@@ -154,4 +156,62 @@ func normalizeRemote(s string) string {
 	s = strings.TrimSuffix(s, "/")
 	s = strings.TrimSuffix(s, ".git")
 	return strings.ToLower(s)
+}
+
+type DoneEntry struct {
+	DefaultBranch string    `json:"default_branch"`
+	ClonedAt      time.Time `json:"cloned_at"`
+}
+
+type Sidecar struct {
+	*sidecar.Sidecar
+}
+
+func New(wsRoot string) *Sidecar {
+	return &Sidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindBootstrap)}
+}
+
+func Load(wsRoot string) (*Sidecar, error) {
+	sc, err := sidecar.Load(wsRoot, sidecar.KindBootstrap)
+	if err != nil || sc == nil {
+		return nil, err
+	}
+	return &Sidecar{Sidecar: sc}, nil
+}
+
+func Save(sc *Sidecar) error {
+	if sc == nil {
+		return nil
+	}
+	return sidecar.Save(sc.Sidecar)
+}
+
+func Delete(wsRoot string) error {
+	return sidecar.Delete(wsRoot, sidecar.KindBootstrap)
+}
+
+func IsAlive(sc *Sidecar) bool {
+	if sc == nil {
+		return false
+	}
+	return sidecar.IsAlive(sc.Sidecar)
+}
+
+func (s *Sidecar) MarkDone(name, defaultBranch string) error {
+	return s.Set(name, DoneEntry{
+		DefaultBranch: defaultBranch,
+		ClonedAt:      time.Now().UTC(),
+	})
+}
+
+func (s *Sidecar) DoneEntries() (map[string]DoneEntry, error) {
+	out := make(map[string]DoneEntry, len(s.Done))
+	for name := range s.Done {
+		var entry DoneEntry
+		if _, err := s.Get(name, &entry); err != nil {
+			return nil, err
+		}
+		out[name] = entry
+	}
+	return out, nil
 }

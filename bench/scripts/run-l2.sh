@@ -2,7 +2,7 @@
 # Run L2 macrobenchmarks against synthetic workspaces.
 #
 # These exercise cross-package flows (reconciler.Tick, scan, validate) on
-# fixtures built by internal/benchfixture. Bench files are tagged with
+# fixtures built by bench/benchfixture. Bench files are tagged with
 # `//go:build bench_l2` so they don't run on `go test ./...`.
 
 . "$(dirname "$0")/lib.sh"
@@ -26,6 +26,6 @@ GOTOOLCHAIN=auto go test \
     -count="$COUNT" \
     -benchtime="$TIME" \
     -timeout=20m \
-    ./internal/benchfixture/... 2>&1 | tee "$out"
+    ./bench/benchfixture/... 2>&1 | tee "$out"
 
 echo "✓ L2 complete: $out"

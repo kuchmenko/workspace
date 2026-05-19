@@ -4,10 +4,170 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
+
+type BranchMeta struct {
+	Name              string   `toml:"name"`
+	Machines          []string `toml:"machines,omitempty"`
+	LastActiveMachine string   `toml:"last_active_machine,omitempty"`
+	LastActiveAt      string   `toml:"last_active_at,omitempty"`
+
+	LastPushedMachine string `toml:"last_pushed_machine,omitempty"`
+	LastPushedAt      string `toml:"last_pushed_at,omitempty"`
+	CreatedBy         string `toml:"created_by,omitempty"`
+	CreatedAt         string `toml:"created_at,omitempty"`
+}
+
+func (p *Project) LookupBranch(name string) *BranchMeta {
+	for i := range p.Branches {
+		if p.Branches[i].Name == name {
+			return &p.Branches[i]
+		}
+	}
+	return nil
+}
+
+func (p *Project) ClaimBranch(name, machine string) (changed bool, isNew bool) {
+	if name == "" || machine == "" {
+		return false, false
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if b := p.LookupBranch(name); b != nil {
+		updateBranchClaim(b, machine, now)
+		return true, false
+	}
+	p.Branches = append(p.Branches, BranchMeta{
+		Name:              name,
+		Machines:          []string{machine},
+		LastActiveMachine: machine,
+		LastActiveAt:      now,
+		CreatedBy:         machine,
+		CreatedAt:         now,
+	})
+	return true, true
+}
+
+func updateBranchClaim(b *BranchMeta, machine, now string) {
+	if !contains(b.Machines, machine) {
+		b.Machines = sortedDedup(append(b.Machines, machine))
+	}
+	b.LastActiveMachine = machine
+	b.LastActiveAt = now
+}
+
+func (p *Project) ReleaseBranch(name, machine string) (changed bool, removed bool) {
+	for i := range p.Branches {
+		if p.Branches[i].Name == name {
+			return p.releaseAt(i, machine)
+		}
+	}
+	return false, false
+}
+
+func (p *Project) releaseAt(idx int, machine string) (changed bool, removed bool) {
+	b := &p.Branches[idx]
+	filtered, dropped := removeMachine(b.Machines, machine)
+	if !dropped {
+		return false, false
+	}
+	if len(filtered) == 0 {
+		p.Branches = append(p.Branches[:idx], p.Branches[idx+1:]...)
+		return true, true
+	}
+	b.Machines = filtered
+
+	if b.LastActiveMachine == machine {
+		b.LastActiveMachine = ""
+		b.LastActiveAt = ""
+	}
+	return true, false
+}
+
+func removeMachine(machines []string, target string) (filtered []string, dropped bool) {
+	out := make([]string, 0, len(machines))
+	for _, m := range machines {
+		if m == target {
+			dropped = true
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, dropped
+}
+
+func (p *Project) TouchActive(name, machine string, when time.Time) bool {
+	b := p.LookupBranch(name)
+	if b == nil {
+		return false
+	}
+	stamp := when.UTC().Format(time.RFC3339)
+	if b.LastActiveMachine == machine && b.LastActiveAt == stamp {
+		return false
+	}
+	b.LastActiveMachine = machine
+	b.LastActiveAt = stamp
+	return true
+}
+
+func (p *Project) StampActivity(name, machine string, when time.Time) bool {
+	if name == "" || machine == "" {
+		return false
+	}
+	stamp := when.UTC().Format(time.RFC3339)
+	if b := p.LookupBranch(name); b != nil {
+		changed := false
+		if !contains(b.Machines, machine) {
+			b.Machines = sortedDedup(append(b.Machines, machine))
+			changed = true
+		}
+		if b.LastActiveMachine != machine || b.LastActiveAt != stamp {
+			b.LastActiveMachine = machine
+			b.LastActiveAt = stamp
+			changed = true
+		}
+		return changed
+	}
+	p.Branches = append(p.Branches, BranchMeta{
+		Name:              name,
+		Machines:          []string{machine},
+		LastActiveMachine: machine,
+		LastActiveAt:      stamp,
+	})
+	return true
+}
+
+func (p *Project) RemoveBranch(name string) bool {
+	for i := range p.Branches {
+		if p.Branches[i].Name == name {
+			p.Branches = append(p.Branches[:i], p.Branches[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Project) MarkPushed(name, machine string, when time.Time) bool {
+	b := p.LookupBranch(name)
+	if b == nil {
+		return false
+	}
+	stamp := when.UTC().Format(time.RFC3339)
+	if b.LastPushedMachine == machine && b.LastPushedAt == stamp &&
+		b.LastActiveMachine == machine && b.LastActiveAt == stamp {
+		return false
+	}
+	b.LastPushedMachine = machine
+	b.LastPushedAt = stamp
+	b.LastActiveMachine = machine
+	b.LastActiveAt = stamp
+	return true
+}
 
 type Group struct {
 	Description string `toml:"description"`
@@ -232,5 +392,225 @@ func sortedDedup(in []string) []string {
 		out = append(out, s)
 	}
 	sort.Strings(out)
+	return out
+}
+
+type legacyAutopush struct {
+	Branches []string            `toml:"branches,omitempty"`
+	Owned    []legacyOwnedBranch `toml:"owned,omitempty"`
+}
+
+type legacyOwnedBranch struct {
+	Branch  string `toml:"branch"`
+	Machine string `toml:"machine"`
+	Since   string `toml:"since,omitempty"`
+}
+
+func migrateLegacyAutopush(p *Project) {
+	if p.LegacyAutopush == nil {
+		return
+	}
+	defer func() { p.LegacyAutopush = nil }()
+	for _, o := range p.LegacyAutopush.Owned {
+		p.appendLegacyOwned(o)
+	}
+	for _, name := range p.LegacyAutopush.Branches {
+		p.appendLegacyBare(name)
+	}
+}
+
+func (p *Project) appendLegacyOwned(o legacyOwnedBranch) {
+	if o.Branch == "" || p.LookupBranch(o.Branch) != nil {
+		return
+	}
+	machines := []string{}
+	if o.Machine != "" {
+		machines = []string{o.Machine}
+	}
+	p.Branches = append(p.Branches, BranchMeta{
+		Name:              o.Branch,
+		Machines:          machines,
+		LastActiveMachine: o.Machine,
+		LastActiveAt:      o.Since,
+		LastPushedMachine: o.Machine,
+		LastPushedAt:      o.Since,
+		CreatedBy:         o.Machine,
+		CreatedAt:         o.Since,
+	})
+}
+
+func (p *Project) appendLegacyBare(name string) {
+	if name == "" || p.LookupBranch(name) != nil {
+		return
+	}
+	p.Branches = append(p.Branches, BranchMeta{Name: name})
+}
+
+type MachineConfig struct {
+	MachineName string `toml:"machine_name"`
+}
+
+var machineNameSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
+
+func SanitizeMachineName(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	s = machineNameSanitizer.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	return s
+}
+
+func MachineConfigPath() (string, error) {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "ws", "config.toml"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "ws", "config.toml"), nil
+}
+
+func LoadMachineConfig() (*MachineConfig, error) {
+	path, err := MachineConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	var cfg MachineConfig
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return &cfg, nil
+	} else if err != nil {
+		return nil, err
+	}
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return &cfg, nil
+}
+
+func SaveMachineConfig(cfg *MachineConfig) error {
+	path, err := MachineConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return toml.NewEncoder(f).Encode(cfg)
+}
+
+func DefaultMachineName() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "unknown"
+	}
+
+	if i := strings.IndexByte(h, '.'); i > 0 {
+		h = h[:i]
+	}
+	s := SanitizeMachineName(h)
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+
+type Status string
+
+const (
+	StatusActive   Status = "active"
+	StatusArchived Status = "archived"
+	StatusDormant  Status = "dormant"
+)
+
+type Category string
+
+const (
+	CategoryPersonal Category = "personal"
+	CategoryWork     Category = "work"
+)
+
+type Project struct {
+	Remote        string   `toml:"remote"`
+	Path          string   `toml:"path"`
+	Status        Status   `toml:"status"`
+	Category      Category `toml:"category"`
+	Group         string   `toml:"group,omitempty"`
+	DefaultBranch string   `toml:"default_branch,omitempty"`
+
+	AutoSync *bool `toml:"auto_sync,omitempty"`
+
+	Favorite bool `toml:"favorite,omitempty"`
+
+	Branches []BranchMeta `toml:"branches,omitempty"`
+
+	LegacyAutopush *legacyAutopush `toml:"autopush,omitempty"`
+}
+
+func (p Project) SyncEnabled() bool {
+	if p.AutoSync == nil {
+		return true
+	}
+	return *p.AutoSync
+}
+
+func (p *Project) SetFavorite(fav bool) bool {
+	if p.Favorite == fav {
+		return false
+	}
+	p.Favorite = fav
+	return true
+}
+
+type ValidationKind string
+
+const (
+	ValidationDuplicateBranch ValidationKind = "duplicate-branch"
+)
+
+type ValidationIssue struct {
+	Kind    ValidationKind
+	Project string
+	Branch  string
+	Detail  string
+}
+
+func (w *Workspace) Validate() []ValidationIssue {
+	var issues []ValidationIssue
+	for projName, proj := range w.Projects {
+		issues = append(issues, duplicateBranchIssues(projName, proj.Branches)...)
+	}
+	sort.Slice(issues, func(i, j int) bool {
+		if issues[i].Project != issues[j].Project {
+			return issues[i].Project < issues[j].Project
+		}
+		return issues[i].Branch < issues[j].Branch
+	})
+	return issues
+}
+
+func duplicateBranchIssues(projName string, branches []BranchMeta) []ValidationIssue {
+	seen := make(map[string]int, len(branches))
+	var out []ValidationIssue
+	for _, b := range branches {
+		if b.Name == "" {
+			continue
+		}
+		prev, isDup := seen[b.Name]
+		if !isDup {
+			seen[b.Name] = len(seen)
+			continue
+		}
+		out = append(out, ValidationIssue{
+			Kind:    ValidationDuplicateBranch,
+			Project: projName,
+			Branch:  b.Name,
+			Detail:  fmt.Sprintf("branch %q has %d entries (first at index %d)", b.Name, prev+1, prev),
+		})
+	}
 	return out
 }

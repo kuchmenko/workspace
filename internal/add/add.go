@@ -1,29 +1,17 @@
-// Package add is the shared core behind `ws add`. The same Run entry
-// point handles three flavors:
-//
-//   - Standalone CLI: `ws add [url...]` and `ws add -` (stdin).
-//   - Interactive TUI when invoked without URLs on a TTY.
-//   - Embedded inside another bubbletea program (currently a stub
-//     returning ErrEmbedNotSupported; reserved for the planned `ws
-//     agent` add screen).
-//
-// The sidecar at ~/.local/state/ws/add/<sha>.toml is acquired before
-// any workspace.toml mutation and released on every exit path (defer).
-// The daemon reconciler's AnyActive sweep includes KindAdd, so a
-// running `ws add` pauses the daemon for the affected workspace — no
-// interleaving writes.
 package add
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/clipboard"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -114,7 +102,7 @@ func buildSources(opts Options) []Source {
 
 	return []Source{
 		NewDiskSource(opts.WsRoot, opts.Workspace),
-		&ClipboardSource{Reader: clipboard.DefaultReader},
+		&ClipboardSource{Reader: DefaultClipboardReader},
 		&GitHubSource{
 			Provider:     gh,
 			KnownRemotes: knownRemotesFromWorkspace(opts.Workspace),
@@ -197,4 +185,231 @@ func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 		res.Added = append(res.Added, regRes.Project)
 	}
 	return res, nil
+}
+
+var ErrAlreadyRegistered = errors.New("project already registered")
+
+type RegisterResult struct {
+	Project config.Project
+	Name    string
+	Cloned  bool
+}
+
+func Register(opts Options, url string) (*RegisterResult, error) {
+	if opts.WsRoot == "" {
+		return nil, errors.New("register: empty WsRoot")
+	}
+	if opts.Workspace == nil {
+		return nil, errors.New("register: nil Workspace")
+	}
+
+	name := opts.Name
+	if name == "" {
+		name = git.ParseRepoName(url)
+	}
+	if name == "" {
+		return nil, fmt.Errorf("register: could not derive project name from %q", url)
+	}
+
+	if _, exists := opts.Workspace.Projects[name]; exists {
+		return nil, fmt.Errorf("%w: %q", ErrAlreadyRegistered, name)
+	}
+
+	cat := opts.Category
+	if cat == "" {
+		cat = config.CategoryPersonal
+	}
+	if cat != config.CategoryPersonal && cat != config.CategoryWork {
+		return nil, fmt.Errorf("register: category must be personal|work, got %q", cat)
+	}
+
+	group := opts.Group
+	if group == "" {
+		group = inferGroup(url, cat)
+	}
+
+	relPath := buildPath(group, cat, name)
+
+	proj := config.Project{
+		Remote:   url,
+		Path:     relPath,
+		Status:   config.StatusActive,
+		Category: cat,
+		Group:    group,
+	}
+
+	cloned := false
+	if !opts.NoClone {
+		_, err := git.CloneIntoLayout(opts.WsRoot, name, &proj, git.CloneOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("clone %s: %w", name, err)
+		}
+		cloned = true
+	}
+
+	if opts.Workspace.Projects == nil {
+		opts.Workspace.Projects = make(map[string]config.Project)
+	}
+	opts.Workspace.Projects[name] = proj
+
+	saveFn := opts.Save
+	if saveFn == nil {
+		saveFn = func(ws *config.Workspace) error {
+			return config.Save(opts.WsRoot, ws)
+		}
+	}
+	if err := saveFn(opts.Workspace); err != nil {
+		return nil, fmt.Errorf("save workspace.toml: %w", err)
+	}
+
+	return &RegisterResult{Project: proj, Name: name, Cloned: cloned}, nil
+}
+
+func inferGroup(_ string, cat config.Category) string {
+	return string(cat)
+}
+
+func buildPath(group string, cat config.Category, name string) string {
+	if group != "" {
+		return filepath.Join(group, name)
+	}
+	return filepath.Join(string(cat), name)
+}
+
+type Mode int
+
+const (
+	ModeAuto Mode = iota
+
+	ModeHeadless
+
+	ModeTUI
+
+	ModeEmbedded
+)
+
+type Options struct {
+	URLs []string
+
+	Category config.Category
+
+	Group string
+
+	Name string
+
+	NoClone bool
+
+	Mode Mode
+
+	WsRoot string
+
+	Workspace *config.Workspace
+
+	Save func(*config.Workspace) error
+
+	GhProvider github.Provider
+}
+
+type Result struct {
+	Added []config.Project
+
+	Skipped []SkipReason
+
+	Errors []error
+}
+
+type SkipReason struct {
+	URL    string
+	Reason string
+}
+
+type AddDoneMsg struct {
+	Added   []config.Project
+	Skipped []SkipReason
+	Errors  []error
+}
+
+type cloneDoneMsg struct {
+	idx     int
+	project config.Project
+	skipped *SkipReason
+	err     error
+}
+
+type allClonesDoneMsg struct{}
+
+type needsBranchMsg struct {
+	project    string
+	candidates []string
+	answer     chan branchAnswer
+}
+
+type sourceDoneMsg struct {
+	name  string
+	items []Suggestion
+	err   error
+	took  time.Duration
+}
+
+type sidecarPayload struct {
+	Mode Mode     `json:"mode"`
+	URLs []string `json:"urls,omitempty"`
+}
+
+const sidecarPayloadKey = "__session__"
+
+func acquireSidecar(wsRoot string, mode Mode, urls []string) (*sidecar.Sidecar, error) {
+	existing, err := sidecar.Load(wsRoot, sidecar.KindAdd)
+	if err != nil {
+		return nil, fmt.Errorf("read add sidecar: %w", err)
+	}
+	if existing != nil {
+		if sidecar.IsAlive(existing) {
+			var pay sidecarPayload
+			_, _ = existing.Get(sidecarPayloadKey, &pay)
+			return nil, fmt.Errorf(
+				"another `ws add` is running (pid %d, started %s, %s)",
+				existing.Meta.PID,
+				existing.Meta.Started.Local().Format(time.RFC3339),
+				describePayload(pay),
+			)
+		}
+
+		if err := sidecar.Delete(wsRoot, sidecar.KindAdd); err != nil {
+			return nil, fmt.Errorf("clear stale add sidecar: %w", err)
+		}
+	}
+
+	sc := sidecar.New(wsRoot, sidecar.KindAdd)
+	if err := sc.Set(sidecarPayloadKey, sidecarPayload{Mode: mode, URLs: urls}); err != nil {
+		return nil, fmt.Errorf("encode sidecar payload: %w", err)
+	}
+	if err := sidecar.Save(sc); err != nil {
+		return nil, fmt.Errorf("save add sidecar: %w", err)
+	}
+	return sc, nil
+}
+
+func releaseSidecar(wsRoot string) {
+	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
+}
+
+func describePayload(p sidecarPayload) string {
+	modeName := "auto"
+	switch p.Mode {
+	case ModeHeadless:
+		modeName = "headless"
+	case ModeTUI:
+		modeName = "tui"
+	case ModeEmbedded:
+		modeName = "embedded"
+	}
+	if len(p.URLs) == 0 {
+		return modeName + " mode"
+	}
+	if len(p.URLs) == 1 {
+		return fmt.Sprintf("%s mode, adding %s", modeName, p.URLs[0])
+	}
+	return fmt.Sprintf("%s mode, adding %d URLs: %s",
+		modeName, len(p.URLs), strings.Join(p.URLs, ", "))
 }
