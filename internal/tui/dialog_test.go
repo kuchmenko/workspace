@@ -1,21 +1,17 @@
 package tui
 
-import (
-	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
-)
+import "testing"
 
 func TestConfirmDialog_YesNoCancel(t *testing.T) {
 	d := NewConfirmDialog(Amber, "Delete?")
 	cases := []struct {
-		key  tea.KeyMsg
+		key  KeyMsg
 		want Msg
 	}{
-		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}, ConfirmedMsg{}},
-		{tea.KeyMsg{Type: tea.KeyEnter}, ConfirmedMsg{}},
-		{tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}}, CancelledMsg{}},
-		{tea.KeyMsg{Type: tea.KeyEsc}, CancelledMsg{}},
+		{KeyMsg{Type: KeyRune, Runes: []rune{'y'}}, ConfirmedMsg{}},
+		{KeyMsg{Type: KeyEnter}, ConfirmedMsg{}},
+		{KeyMsg{Type: KeyRune, Runes: []rune{'n'}}, CancelledMsg{}},
+		{KeyMsg{Type: KeyEsc}, CancelledMsg{}},
 	}
 	for _, c := range cases {
 		_, cmd := d.Update(c.key)

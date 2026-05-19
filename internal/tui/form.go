@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-)
+import "strings"
 
 type Field struct {
 	Name      string
@@ -33,7 +29,7 @@ func NewModalForm(palette Palette, title string, fields []Field) ModalForm {
 func (f ModalForm) Init() Cmd { return nil }
 
 func (f ModalForm) Update(msg Msg) (Model, Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(KeyMsg)
 	if !ok {
 		return f, nil
 	}

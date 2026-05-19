@@ -1,7 +1,5 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
-
 type Palette struct {
 	Title    Style
 	Header   Style
@@ -17,29 +15,29 @@ type Palette struct {
 }
 
 var Amber = Palette{
-	Title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("215")),
-	Header:   lipgloss.NewStyle().Foreground(lipgloss.Color("173")).Background(lipgloss.Color("235")),
-	Footer:   lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Background(lipgloss.Color("235")),
-	Selected: lipgloss.NewStyle().Foreground(lipgloss.Color("254")).Background(lipgloss.Color("236")).Bold(true),
-	Accent:   lipgloss.NewStyle().Foreground(lipgloss.Color("215")).Bold(true),
-	Dim:      lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-	Error:    lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true),
-	Check:    lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-	Border:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("173")).Padding(0, 1),
-	Group:    lipgloss.NewStyle().Foreground(lipgloss.Color("182")).Bold(true),
-	Item:     lipgloss.NewStyle().Foreground(lipgloss.Color("254")),
+	Title:    NewStyle().Bold(true).Foreground("215"),
+	Header:   NewStyle().Foreground("173").Background("235"),
+	Footer:   NewStyle().Foreground("240").Background("235"),
+	Selected: NewStyle().Foreground("254").Background("236").Bold(true),
+	Accent:   NewStyle().Foreground("215").Bold(true),
+	Dim:      NewStyle().Foreground("240"),
+	Error:    NewStyle().Foreground("1").Bold(true),
+	Check:    NewStyle().Foreground("2"),
+	Border:   NewStyle().Border(RoundedBorder()).BorderForeground("173").Padding(0, 1),
+	Group:    NewStyle().Foreground("182").Bold(true),
+	Item:     NewStyle().Foreground("254"),
 }
 
 var Cyan = Palette{
-	Title:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("6")).Padding(0, 1),
-	Header:   lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true),
-	Footer:   lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-	Selected: lipgloss.NewStyle().Background(lipgloss.Color("237")),
-	Accent:   lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true),
-	Dim:      lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-	Error:    lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true),
-	Check:    lipgloss.NewStyle().Foreground(lipgloss.Color("2")),
-	Border:   lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("6")).Padding(0, 1),
-	Group:    lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true).Underline(true),
-	Item:     lipgloss.NewStyle().Foreground(lipgloss.Color("15")),
+	Title:    NewStyle().Bold(true).Foreground("15").Background("6").Padding(0, 1),
+	Header:   NewStyle().Foreground("6").Bold(true),
+	Footer:   NewStyle().Foreground("8"),
+	Selected: NewStyle().Background("237"),
+	Accent:   NewStyle().Foreground("6").Bold(true),
+	Dim:      NewStyle().Foreground("8"),
+	Error:    NewStyle().Foreground("1").Bold(true),
+	Check:    NewStyle().Foreground("2"),
+	Border:   NewStyle().Border(RoundedBorder()).BorderForeground("6").Padding(0, 1),
+	Group:    NewStyle().Foreground("5").Bold(true).Underline(true),
+	Item:     NewStyle().Foreground("15"),
 }

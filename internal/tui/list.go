@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-)
+import "strings"
 
 type ListItem interface {
 	Title() string
@@ -58,30 +54,12 @@ func (l FilterableList) Filter() string   { return l.filter }
 func (l FilterableList) Init() Cmd { return nil }
 
 func (l FilterableList) Update(msg Msg) (Model, Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(KeyMsg)
 	if !ok {
 		return l, nil
 	}
 	if l.filterMode {
-		switch key.String() {
-		case "esc":
-			l.filterMode = false
-			l.filter = ""
-			l.refilter()
-		case "enter":
-			l.filterMode = false
-		case "backspace":
-			if len(l.filter) > 0 {
-				l.filter = l.filter[:len(l.filter)-1]
-				l.refilter()
-			}
-		default:
-			if len(key.Runes) == 1 {
-				l.filter += string(key.Runes)
-				l.refilter()
-			}
-		}
-		return l, nil
+		return l.updateFilterMode(key), nil
 	}
 	switch key.String() {
 	case "/":
@@ -101,6 +79,28 @@ func (l FilterableList) Update(msg Msg) (Model, Cmd) {
 	}
 	l.clampOffset()
 	return l, nil
+}
+
+func (l FilterableList) updateFilterMode(key KeyMsg) FilterableList {
+	switch key.String() {
+	case "esc":
+		l.filterMode = false
+		l.filter = ""
+		l.refilter()
+	case "enter":
+		l.filterMode = false
+	case "backspace":
+		if len(l.filter) > 0 {
+			l.filter = l.filter[:len(l.filter)-1]
+			l.refilter()
+		}
+	default:
+		if len(key.Runes) > 0 {
+			l.filter += string(key.Runes)
+			l.refilter()
+		}
+	}
+	return l
 }
 
 func (l FilterableList) View() string {

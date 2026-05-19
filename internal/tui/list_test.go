@@ -3,8 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type strItem string
@@ -12,23 +10,22 @@ type strItem string
 func (s strItem) Title() string       { return string(s) }
 func (s strItem) FilterValue() string { return string(s) }
 
-func key(s string) tea.KeyMsg {
-	if len(s) == 1 {
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
-	}
+func key(s string) KeyMsg {
 	switch s {
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return KeyMsg{Type: KeyEsc}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return KeyMsg{Type: KeyEnter}
 	case "backspace":
-		return tea.KeyMsg{Type: tea.KeyBackspace}
+		return KeyMsg{Type: KeyBackspace}
 	case "down":
-		return tea.KeyMsg{Type: tea.KeyDown}
+		return KeyMsg{Type: KeyDown}
 	case "up":
-		return tea.KeyMsg{Type: tea.KeyUp}
+		return KeyMsg{Type: KeyUp}
+	case "tab":
+		return KeyMsg{Type: KeyTab}
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+	return KeyMsg{Type: KeyRune, Runes: []rune(s)}
 }
 
 func TestFilterableList_CursorMovement(t *testing.T) {
@@ -56,7 +53,7 @@ func TestFilterableList_FilterMode(t *testing.T) {
 		t.Fatal("expected filter mode active after /")
 	}
 	for _, c := range "av" {
-		m, _ = l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{c}})
+		m, _ = l.Update(KeyMsg{Type: KeyRune, Runes: []rune{c}})
 		l = m.(FilterableList)
 	}
 	if l.Filter() != "av" {

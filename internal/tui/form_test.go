@@ -3,8 +3,6 @@ package tui
 import (
 	"errors"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestModalForm_TypingAndSubmit(t *testing.T) {
@@ -12,10 +10,10 @@ func TestModalForm_TypingAndSubmit(t *testing.T) {
 		{Name: "branch", Value: ""},
 	})
 	for _, c := range "feat/x" {
-		m, _ := f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{c}})
+		m, _ := f.Update(KeyMsg{Type: KeyRune, Runes: []rune{c}})
 		f = m.(ModalForm)
 	}
-	_, cmd := f.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := f.Update(KeyMsg{Type: KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected submit cmd")
 	}
@@ -38,7 +36,7 @@ func TestModalForm_ValidatorBlocksSubmit(t *testing.T) {
 			return nil
 		}},
 	})
-	_, cmd := f.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := f.Update(KeyMsg{Type: KeyEnter})
 	if cmd != nil {
 		t.Errorf("expected no cmd on validation failure, got %v", cmd())
 	}
@@ -46,7 +44,7 @@ func TestModalForm_ValidatorBlocksSubmit(t *testing.T) {
 
 func TestModalForm_EscCancels(t *testing.T) {
 	f := NewModalForm(Cyan, "", []Field{{Name: "n", Value: "x"}})
-	_, cmd := f.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := f.Update(KeyMsg{Type: KeyEsc})
 	if cmd == nil {
 		t.Fatal("expected cancel cmd")
 	}

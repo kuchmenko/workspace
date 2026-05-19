@@ -1,9 +1,5 @@
 package tui
 
-import (
-	tea "github.com/charmbracelet/bubbletea"
-)
-
 type ConfirmedMsg struct{}
 type CancelledMsg struct{}
 
@@ -19,7 +15,7 @@ func NewConfirmDialog(palette Palette, prompt string) ConfirmDialog {
 func (d ConfirmDialog) Init() Cmd { return nil }
 
 func (d ConfirmDialog) Update(msg Msg) (Model, Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(KeyMsg)
 	if !ok {
 		return d, nil
 	}
