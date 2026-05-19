@@ -1,18 +1,17 @@
 package agent
 
 import (
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 const jumpLabels = "asdfghjklqwertyuiopzxcvbnm"
 
-func (m *Model) updateFlash(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "ctrl+c":
-		return m, tea.Quit
+		return m, tui.Quit
 	case "esc":
 		m.exitFlash(false)
 	case "backspace":

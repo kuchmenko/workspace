@@ -2,11 +2,10 @@ package agent
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 const HeaderCap = 9
@@ -128,7 +127,7 @@ func packChips(chips []string, w, maxLines int) []string {
 		if cur != "" {
 			next = cur + "  " + c
 		}
-		if lipgloss.Width(next) > w {
+		if tui.Width(next) > w {
 			if cur != "" {
 				lines = append(lines, cur)
 				if len(lines) >= maxLines {

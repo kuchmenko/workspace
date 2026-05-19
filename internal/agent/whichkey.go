@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type whichKeyAction struct {
@@ -90,7 +89,7 @@ func (m *Model) favoriteToggleLabelGroup(group string) string {
 	return "favorite"
 }
 
-func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	item := m.currentItem()
 
@@ -284,7 +283,7 @@ func (m *Model) viewWhichKey() string {
 	rows = append(rows, m.renderListRows(listW, true)...)
 	rows = append(rows, footerStyle.Width(listW).Render(" press a key or esc"))
 
-	listPanel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	listPanel := tui.JoinVertical(tui.Left, rows...)
 
 	actions := m.whichKeyActions()
 	title := m.whichKeyTitle()
@@ -307,19 +306,19 @@ func (m *Model) viewWhichKey() string {
 	actionContent := strings.Join(actionLines, "\n")
 	actionPanel := whichKeyBorderStyle.Width(panelW).Render(actionContent)
 
-	listH := lipgloss.Height(listPanel)
-	panelH := lipgloss.Height(actionPanel)
+	listH := tui.Height(listPanel)
+	panelH := tui.Height(actionPanel)
 	topPad := (listH - panelH) / 2
 	if topPad < 0 {
 		topPad = 0
 	}
 	paddedPanel := strings.Repeat("\n", topPad) + actionPanel
 
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", paddedPanel)
+	combined := tui.JoinHorizontal(tui.Top, listPanel, "  ", paddedPanel)
 
-	return lipgloss.Place(
+	return tui.Place(
 		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
+		tui.Center, tui.Center,
 		combined,
 	)
 }

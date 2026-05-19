@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 
 	switch key {
@@ -41,7 +40,7 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
+func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	branch := strings.TrimSpace(m.wtBranch)
 	if branch == "" {
 		return m, nil
@@ -117,11 +116,11 @@ func (m *Model) viewNewWorktree() string {
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
 
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }
 
-func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updatePromptInput(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
@@ -132,7 +131,7 @@ func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pendingLaunch.Prompt = strings.TrimSpace(m.promptInput)
 		m.Launch = m.pendingLaunch
 		m.pendingLaunch = nil
-		return m, tea.Quit
+		return m, tui.Quit
 	case "backspace":
 		if len(m.promptInput) > 0 {
 			m.promptInput = m.promptInput[:len(m.promptInput)-1]
@@ -172,6 +171,6 @@ func (m *Model) viewPromptInput() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }

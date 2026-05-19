@@ -3,12 +3,12 @@ package agent
 import (
 	"fmt"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if m.pendingDelete {
 		m.pendingDelete = false
 		if msg.String() == "y" && m.deleteItem != nil {
@@ -50,7 +50,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "q":
-		return m, tea.Quit
+		return m, tui.Quit
 	case "j", "down":
 		if m.cursor+1 < len(m.items) {
 			m.cursor++
@@ -69,17 +69,17 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch item.kind {
 		case KindGroup:
 			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
+			return m, tui.Quit
 		case KindProject:
 			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
+			return m, tui.Quit
 		case KindWorktree:
 			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tea.Quit
+			return m, tui.Quit
 		case KindPortal:
 			if item.session != nil {
 				m.Launch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
-				return m, tea.Quit
+				return m, tui.Quit
 			}
 		}
 
@@ -128,7 +128,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "l", "right":
 		if item != nil && item.path != "" {
 			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 
 	case "f":

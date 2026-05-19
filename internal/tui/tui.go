@@ -17,7 +17,7 @@ type Model interface {
 
 type QuitMsg struct{}
 
-func Quit() Msg { return QuitMsg{} }
+var Quit Cmd = func() Msg { return QuitMsg{} }
 
 func Batch(cmds ...Cmd) Cmd {
 	var live []Cmd

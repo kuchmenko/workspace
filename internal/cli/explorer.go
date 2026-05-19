@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/agent"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -109,7 +109,7 @@ func runExplorerTUI() error {
 	}
 
 	m := agent.NewModel(workspaces, sessCache)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tui.NewProgram(m, tui.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return err

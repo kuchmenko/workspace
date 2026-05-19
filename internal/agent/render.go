@@ -2,9 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func (m *Model) renderListRows(listW int, dimAll bool) []string {
@@ -129,7 +128,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 
 	if badges != "" {
 		leftPart := fmt.Sprintf(" %s%s %s", indent, icon, name)
-		padding := w - lipgloss.Width(leftPart) - lipgloss.Width(badges) - 1
+		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
 		}
@@ -161,7 +160,7 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 
 	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
 
-	maxName := w - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
+	maxName := w - tui.Width(prefix) - tui.Width(status) - 2
 	if maxName > 0 && !inFlash {
 		name = truncateStr(name, maxName)
 	}
@@ -176,7 +175,7 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 			return m.renderSelected(line, wtStyle, w)
 		}
 		leftRendered := wtStyle.Render(left)
-		padding := w - lipgloss.Width(left) - lipgloss.Width(status) - 1
+		padding := w - tui.Width(left) - tui.Width(status) - 1
 		if padding < 1 {
 			padding = 1
 		}
@@ -231,7 +230,7 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-func (m *Model) renderSelected(content string, base lipgloss.Style, w int) string {
+func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
 
 	rest := selectedStyle.Width(w - 1).Render(content)
@@ -239,8 +238,8 @@ func (m *Model) renderSelected(content string, base lipgloss.Style, w int) strin
 }
 
 func (m *Model) padRight(left, right string, w int) string {
-	lw := lipgloss.Width(left)
-	rw := lipgloss.Width(right)
+	lw := tui.Width(left)
+	rw := tui.Width(right)
 	gap := w - lw - rw - 1
 	if gap < 1 {
 		gap = 1
@@ -295,11 +294,11 @@ func (m *Model) viewList() string {
 		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
 	}
 
-	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	panel := tui.JoinVertical(tui.Left, rows...)
 
-	return lipgloss.Place(
+	return tui.Place(
 		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
+		tui.Center, tui.Center,
 		panel,
 	)
 }

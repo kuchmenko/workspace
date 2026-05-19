@@ -2,13 +2,11 @@ package agent
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
-func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateChipAction(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if m.chipTarget == nil {
 		m.mode = viewList
 		return m, nil
@@ -21,10 +19,10 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "c", "enter":
 		m.Launch = &LaunchRequest{Cwd: target.Path}
-		return m, tea.Quit
+		return m, tui.Quit
 	case "s", "l":
 		m.Launch = &LaunchRequest{Cwd: target.Path, ShellOnly: true}
-		return m, tea.Quit
+		return m, tui.Quit
 	case "p":
 		m.pendingLaunch = &LaunchRequest{Cwd: target.Path}
 		m.promptInput = ""
@@ -78,6 +76,6 @@ func (m *Model) viewChipAction() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }

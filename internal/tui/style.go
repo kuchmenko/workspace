@@ -33,10 +33,34 @@ func (s Style) BorderForeground(c Color) Style {
 type Position float64
 
 const (
+	Top    Position = Position(lipgloss.Top)
 	Left   Position = Position(lipgloss.Left)
 	Center Position = Position(lipgloss.Center)
 	Right  Position = Position(lipgloss.Right)
+	Bottom Position = Position(lipgloss.Bottom)
 )
+
+type PlaceOption func(*placeConfig)
+
+type placeConfig struct {
+	whitespaceBg *Color
+}
+
+func WithWhitespaceBackground(c Color) PlaceOption {
+	return func(p *placeConfig) { p.whitespaceBg = &c }
+}
+
+func Place(width, height int, hPos, vPos Position, content string, opts ...PlaceOption) string {
+	cfg := placeConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	teaOpts := []lipgloss.WhitespaceOption{}
+	if cfg.whitespaceBg != nil {
+		teaOpts = append(teaOpts, lipgloss.WithWhitespaceBackground(lipgloss.Color(string(*cfg.whitespaceBg))))
+	}
+	return lipgloss.Place(width, height, lipgloss.Position(hPos), lipgloss.Position(vPos), content, teaOpts...)
+}
 
 func Width(s string) int  { return lipgloss.Width(s) }
 func Height(s string) int { return lipgloss.Height(s) }

@@ -1,8 +1,8 @@
 package agent
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type viewMode int
@@ -110,26 +110,26 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 	return m
 }
 
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tui.Cmd { return nil }
 
-func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 
 		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 
 		if msg.String() == "ctrl+s" {
 			item := m.currentItem()
 			if item != nil && item.path != "" {
 				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
-				return m, tea.Quit
+				return m, tui.Quit
 			}
 		}
 		if m.mode == viewPromptInput {

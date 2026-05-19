@@ -5,9 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func EditProjectMetadata(wsRoot, projID, group string, category config.Category) error {
@@ -56,7 +55,7 @@ func existingGroups(workspaces []WorkspaceData) []string {
 	return out
 }
 
-func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
@@ -101,7 +100,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) executeEditProject() (tea.Model, tea.Cmd) {
+func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 	proj := m.popupProj
 	if proj == nil {
 		m.mode = viewList
@@ -238,8 +237,8 @@ func (m *Model) viewEditProject() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }
 
 func groupHint(workspaces []WorkspaceData) string {
