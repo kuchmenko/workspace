@@ -8,17 +8,12 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Annotation keys recognized by the collector. Commands without at least
-// "capability" and "agent:when" are excluded from agent output.
 const (
 	KeyCapability  = "capability"
 	KeyAgentWhen   = "agent:when"
 	KeyAgentSafety = "agent:safety"
 )
 
-// capabilityMeta provides a human-readable description and a sort order
-// for each known capability group. Unknown groups are still collected but
-// land at the end in alphabetical order.
 var capabilityMeta = map[string]struct {
 	Description string
 	Order       int
@@ -33,9 +28,6 @@ var capabilityMeta = map[string]struct {
 	"agent":         {"Launch and manage Claude Code sessions", 8},
 }
 
-// Constraints are project-wide invariants that any agent operating on a
-// ws-managed workspace should respect. They are not tied to individual
-// commands, so we keep them as a static list.
 var constraints = []string{
 	"Never run git rebase, reset --hard, or push --force inside a project the daemon is reconciling.",
 	"Branches outside the wt/<machine>/* namespace are private and never pushed by the reconciler.",
@@ -44,11 +36,6 @@ var constraints = []string{
 	"Bare repo directories (*.bare/) must not be modified directly.",
 }
 
-// GenerateAgentCapabilityMap walks the Cobra command tree rooted at root
-// and returns a capability map built from command annotations.
-//
-// Only commands that carry both "capability" and "agent:when" annotations
-// are included. Hidden commands are excluded.
 func GenerateAgentCapabilityMap(root *cobra.Command) *AgentCapabilityMap {
 	groups := map[string]*CapabilityGroup{}
 
@@ -64,7 +51,7 @@ func GenerateAgentCapabilityMap(root *cobra.Command) *AgentCapabilityMap {
 
 		grp, ok := groups[cap]
 		if !ok {
-			desc := cap // fallback for unknown groups
+			desc := cap
 			if meta, known := capabilityMeta[cap]; known {
 				desc = meta.Description
 			}
@@ -89,7 +76,6 @@ func GenerateAgentCapabilityMap(root *cobra.Command) *AgentCapabilityMap {
 	}
 }
 
-// walkCommands visits every command in the tree depth-first.
 func walkCommands(cmd *cobra.Command, fn func(*cobra.Command)) {
 	fn(cmd)
 	for _, child := range cmd.Commands() {
@@ -97,8 +83,6 @@ func walkCommands(cmd *cobra.Command, fn func(*cobra.Command)) {
 	}
 }
 
-// fullCommandUse builds the full invocation string,
-// e.g. "ws worktree new <project> <topic>".
 func fullCommandUse(cmd *cobra.Command) string {
 	parts := []string{}
 	for c := cmd; c != nil; c = c.Parent() {
@@ -108,13 +92,11 @@ func fullCommandUse(cmd *cobra.Command) string {
 	result := ""
 	for i, p := range parts {
 		if i == len(parts)-1 {
-			// Leaf: keep the full Use including args.
 			if result != "" {
 				result += " "
 			}
 			result += p
 		} else {
-			// Intermediate: strip args, keep only the command name.
 			name := commandName(p)
 			if result != "" {
 				result += " "
@@ -125,7 +107,6 @@ func fullCommandUse(cmd *cobra.Command) string {
 	return result
 }
 
-// commandName extracts the command name from a Use string (strips args).
 func commandName(use string) string {
 	for i, c := range use {
 		if c == ' ' {
@@ -135,8 +116,6 @@ func commandName(use string) string {
 	return use
 }
 
-// collectFlags returns "--name" strings for every non-hidden,
-// non-inherited flag on cmd.
 func collectFlags(cmd *cobra.Command) []string {
 	var out []string
 	cmd.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
@@ -151,10 +130,6 @@ func collectFlags(cmd *cobra.Command) []string {
 	return out
 }
 
-// toSortedMap converts the accumulator into the final map, preserving
-// the order defined in capabilityMeta. JSON object key order is not
-// guaranteed, but the struct fields are ordered for deterministic output
-// in tests when marshaled with sorted keys.
 func toSortedMap(groups map[string]*CapabilityGroup) map[string]CapabilityGroup {
 	out := make(map[string]CapabilityGroup, len(groups))
 	for k, v := range groups {
@@ -163,7 +138,6 @@ func toSortedMap(groups map[string]*CapabilityGroup) map[string]CapabilityGroup 
 	return out
 }
 
-// SortedCapabilityKeys returns capability group names in display order.
 func SortedCapabilityKeys(m map[string]CapabilityGroup) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

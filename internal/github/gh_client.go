@@ -11,7 +11,6 @@ import (
 
 type ghClient struct{}
 
-// NewGHClient creates a GitHub API client using the gh CLI.
 func NewGHClient() Client {
 	return &ghClient{}
 }

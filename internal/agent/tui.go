@@ -1,123 +1,94 @@
 package agent
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-// View mode.
 type viewMode int
 
 const (
-	viewList        viewMode = iota // nested list — all navigation lives here
-	viewNewWorktree                 // worktree creation form
-	viewFlash                       // flash search with jump labels
-	viewPromptInput                 // optional prompt input before launching claude
-	viewWhichKey                    // which-key action panel (? or space)
-	viewEditProject                 // edit project group/category
-	viewChipAction                  // chip launch modal (c/p/s/esc)
+	viewList viewMode = iota
+	viewNewWorktree
+	viewFlash
+	viewPromptInput
+	viewWhichKey
+	viewEditProject
+	viewChipAction
 )
 
-// Nerd Font icons.
 const (
-	iconProject  = "" //  nf-oct-package
-	iconWorktree = "" //  nf-dev-git_branch
-	iconSession  = "" //  nf-md-message_text_outline
-	iconSearch   = "" //  nf-fa-search
+	iconProject  = ""
+	iconWorktree = ""
+	iconSession  = ""
+	iconSearch   = ""
 )
 
-// listItem is one row in the scrollable nested list. Header chips
-// (Favorites/Recent quick-nav) live outside m.items and are rendered
-// directly by viewList — they are not items the cursor can land on.
 type listItem struct {
 	kind       NodeKind
-	group      string    // group name (for KindGroup rows)
-	project    *Project  // for KindProject rows
-	worktree   *Worktree // for KindWorktree rows
-	session    *Session  // for KindPortal rows (sessions)
+	group      string
+	project    *Project
+	worktree   *Worktree
+	session    *Session
 	indent     int
-	path       string   // filesystem path for shell navigation
-	parentProj *Project // for worktree/session: which project they belong to
+	path       string
+	parentProj *Project
 }
 
-// LaunchRequest is set when the user selects an action that should
-// launch claude after the TUI exits. The CLI layer reads this from
-// the model and calls LaunchClaude.
 type LaunchRequest struct {
 	Cwd       string
 	ResumeID  string
-	ShellOnly bool   // true = exec $SHELL instead of claude
-	Prompt    string // optional initial prompt for claude (-p flag)
+	ShellOnly bool
+	Prompt    string
 }
 
-// Model is the bubbletea model for the agent TUI wizard.
 type Model struct {
 	workspaces []WorkspaceData
 	mode       viewMode
-	items      []listItem // flattened scrollable tree items (no header)
+	items      []listItem
 	cursor     int
-	expanded   map[string]bool // group/project name → expanded
-	scroll     int             // scroll offset for long lists
+	expanded   map[string]bool
+	scroll     int
 
-	// headerChips is the ordered list of project-or-group chips
-	// rendered in the pinned quick-nav above the tree. Recomputed in
-	// rebuildItems from favorited groups + favorite/recent projects.
 	headerChips []Chip
 
-	// chipAction modal state: when the user presses 1-9 to pick a
-	// chip, we open a small action modal asking what to do (claude /
-	// prompt / shell / etc.). chipTarget holds the picked chip until
-	// the modal resolves.
 	chipTarget *Chip
 
-	// Caches — loaded lazily, invalidated after mutations.
 	sessCache *SessionCache
 	wtCache   *WorktreeCache
 
-	// Status message — shown in footer until next keypress.
 	statusMsg string
 
-	// Delete confirmation state.
-	pendingDelete bool // true = waiting for y/n confirmation
+	pendingDelete bool
 	deleteItem    *listItem
 
-	// Active project for the worktree-creation form.
 	popupProj *Project
 
-	// Worktree creation form state.
-	wtBranch   string // user-typed branch name (no prefix injection)
-	wtNoLaunch bool   // true when "create only", false when "create + launch"
-	wtField    int    // 0=branch, 1=confirm
+	wtBranch   string
+	wtNoLaunch bool
+	wtField    int
 
-	// Edit-project form state.
 	editGroup    string
 	editCategory config.Category
-	editField    int // 0=group, 1=category, 2=save
+	editField    int
 	editErr      string
 
-	// Prompt input state (optional prompt before launch).
-	pendingLaunch *LaunchRequest // set before entering prompt input
+	pendingLaunch *LaunchRequest
 	promptInput   string
 
-	// Flash search state.
 	flashQuery    string
-	flashMatches  []int           // indices into m.items that match
-	flashLabels   []rune          // one label per match (a, b, c, ...)
-	flashGlobal   bool            // S = global search (all items, even collapsed)
-	savedExpanded map[string]bool // expansion state before global flash
+	flashMatches  []int
+	flashLabels   []rune
+	flashGlobal   bool
+	savedExpanded map[string]bool
 
-	// Which-key state.
-	whichKeyLevel int // 0 = root actions, 1 = worktree sub-menu
+	whichKeyLevel int
 
-	// Set when the user picks a launch action.
 	Launch *LaunchRequest
 
 	width, height int
 }
 
-// NewModel constructs the TUI model from loaded workspace data.
-// sessCache should be the cache returned by LoadWorkspaces (already
-// populated with session counts from the initial scan).
 func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 	if sessCache == nil {
 		sessCache = NewSessionCache()
@@ -129,7 +100,7 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 		sessCache:  sessCache,
 		wtCache:    NewWorktreeCache(),
 	}
-	// Auto-expand all groups initially.
+
 	for _, ws := range workspaces {
 		for _, g := range ws.Groups {
 			m.expanded[g] = true
@@ -139,26 +110,26 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 	return m
 }
 
-func (m *Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tui.Cmd { return nil }
 
-func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
-		// ctrl+c and ctrl+q always quit from anywhere.
+	case tui.KeyMsg:
+
 		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
-			return m, tea.Quit
+			return m, tui.Quit
 		}
-		// ctrl+s = open shell in selected item's directory from anywhere.
+
 		if msg.String() == "ctrl+s" {
 			item := m.currentItem()
 			if item != nil && item.path != "" {
 				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
-				return m, tea.Quit
+				return m, tui.Quit
 			}
 		}
 		if m.mode == viewPromptInput {
@@ -213,8 +184,6 @@ func (m *Model) currentItem() *listItem {
 	return nil
 }
 
-// workspaceRootFor returns the workspace root directory for a project.
-// Matches by Path (globally unique) rather than ID (per-workspace key).
 func (m *Model) workspaceRootFor(proj *Project) string {
 	for _, ws := range m.workspaces {
 		for _, p := range ws.Projects {
@@ -253,7 +222,6 @@ func (m *Model) jumpToProject(projID string) {
 }
 
 func (m *Model) ensureVisible() {
-	// Keep cursor pinned to the vertical center of the viewport.
 	maxVisible := m.listHeight()
 	m.scroll = m.cursor - maxVisible/2
 	if m.scroll < 0 {
@@ -268,11 +236,6 @@ func (m *Model) ensureVisible() {
 }
 
 func (m *Model) listHeight() int {
-	// 5 = breadcrumb (1) + 2 footer lines + borders (2). Add room for
-	// the pinned chip header when present: up to 2 chip lines plus a
-	// 1-line separator below them. headerProjects may be empty (idle
-	// workspace) — listHeight then matches the pre-rework value so a
-	// fresh install has the same vertical density.
 	chrome := 5
 	if len(m.headerChips) > 0 {
 		chrome += 3
@@ -284,9 +247,6 @@ func (m *Model) listHeight() int {
 	return h
 }
 
-// footerHints returns two lines of context-sensitive keyboard hints.
-// Line 1: actions available for the currently selected item type.
-// Line 2: universal navigation shortcuts.
 func (m *Model) footerHints() (actions, nav string) {
 	nav = "j/k:↕  tab:expand  s:find  S:all  ?:more"
 	item := m.currentItem()
@@ -312,7 +272,6 @@ func (m *Model) footerHints() (actions, nav string) {
 	return actions, nav
 }
 
-// breadcrumb derives contextual header from the current cursor position.
 func (m *Model) breadcrumb() string {
 	item := m.currentItem()
 	if item == nil {

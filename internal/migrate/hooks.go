@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// listActiveHooks returns hook filenames in dir that are NOT *.sample and
-// have at least one executable bit set. Returns nil, nil if dir is missing.
 func listActiveHooks(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -39,8 +37,6 @@ func listActiveHooks(dir string) ([]string, error) {
 	return out, nil
 }
 
-// copyHooks copies the named hook files from srcDir to dstDir, preserving
-// the executable bit. Returns the names that were successfully copied.
 func copyHooks(srcDir, dstDir string, names []string) ([]string, error) {
 	if len(names) == 0 {
 		return nil, nil

@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/agent"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 func newExplorerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "explorer",
-		Aliases: []string{"agent"}, // backwards-compat: ws agent still works
+		Aliases: []string{"agent"},
 		Short:   "TUI explorer for projects, worktrees, and Claude sessions",
 		Annotations: map[string]string{
 			"capability":   "explorer",
@@ -109,14 +109,12 @@ func runExplorerTUI() error {
 	}
 
 	m := agent.NewModel(workspaces, sessCache)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tui.NewProgram(m, tui.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
 		return err
 	}
 
-	// If the user selected a launch action, exec into claude now.
-	// bubbletea has already restored the terminal at this point.
 	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
 		stampLaunchActivity(final.Launch.Cwd)
 		if final.Launch.ShellOnly {
@@ -127,10 +125,6 @@ func runExplorerTUI() error {
 	return nil
 }
 
-// stampLaunchActivity runs StampLaunchFromPath synchronously and
-// writes any error to stderr without failing the launch. Activity
-// stamping is UX-only: an unwritable workspace.toml or down daemon
-// must not prevent the user from getting into their shell.
 func stampLaunchActivity(cwd string) {
 	if err := agent.StampLaunchFromPath(cwd); err != nil {
 		fmt.Fprintf(os.Stderr, "ws agent: stamp activity: %v\n", err)

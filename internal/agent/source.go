@@ -13,11 +13,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// LoadWorkspaces returns all registered workspaces with their projects.
-// Falls back to the workspace.toml under cwd if no daemon workspaces
-// are registered. The returned SessionCache is pre-populated with
-// session counts from the initial scan and should be passed to NewModel
-// so the TUI can serve subsequent accesses from memory.
 func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, *SessionCache, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
@@ -51,9 +46,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 		FavoriteGroups: map[string]bool{},
 	}
 
-	// Collect groups. A group is registered when at least one project
-	// references it OR when it has an explicit [groups.<name>] entry
-	// (the explicit entry is what carries the Favorite flag).
 	groupSet := map[string]bool{}
 	names := make([]string, 0, len(w.Projects))
 	for n, p := range w.Projects {
@@ -77,7 +69,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	}
 	sort.Strings(ws.Groups)
 
-	// Collect projects.
 	for _, name := range names {
 		p := w.Projects[name]
 		mainPath := filepath.Join(root, p.Path)
@@ -94,7 +85,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 			LastActiveMachine: lastMachine,
 		}
 
-		// Count worktrees.
 		barePath := layout.BarePath(mainPath)
 		if _, err := os.Stat(barePath); err == nil {
 			if wts, err := git.WorktreeList(barePath); err == nil {
@@ -108,7 +98,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 			}
 		}
 
-		// Count sessions (populates the cache for later TUI use).
 		proj.SessionCount = sessCache.Count(mainPath)
 
 		ws.Projects = append(ws.Projects, proj)
@@ -117,10 +106,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	return ws, diagnostics
 }
 
-// projectActivity returns the most recent (LastActiveAt, LastActiveMachine)
-// across the project's [[branches]] entries. Used to sort projects in the
-// Favorites and Recent sections of `ws agent`. Returns zero time when no
-// branch has ever been stamped — such projects never bubble up into Recent.
 func projectActivity(branches []config.BranchMeta) (time.Time, string) {
 	var best time.Time
 	var machine string
@@ -159,7 +144,6 @@ func workspaceRoots(fallback string) []string {
 	}
 
 	if len(out) == 0 && fallback != "" {
-		// Try exact cwd first, then walk up to find workspace root.
 		if _, err := os.Stat(filepath.Join(fallback, "workspace.toml")); err == nil {
 			out = append(out, fallback)
 		} else if root, err := config.FindRoot(); err == nil && !seen[root] {

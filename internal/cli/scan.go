@@ -22,7 +22,6 @@ func newScanCmd() *cobra.Command {
 			scanDirs := []string{"personal", "work", "playground", "researches", "tools"}
 			var found int
 
-			// Build a set of known paths
 			knownPaths := make(map[string]bool)
 			for _, proj := range ws.Projects {
 				knownPaths[proj.Path] = true
@@ -50,18 +49,8 @@ func newScanCmd() *cobra.Command {
 	}
 }
 
-// scanDir walks `absDir` two levels deep looking for git repositories
-// not registered in workspace.toml. The two-level depth handles the
-// <category>/<project> shape and the <category>/<group>/<project>
-// shape uniformly: at each entry, if it is itself a repo we report
-// it; otherwise we descend one more level and report inside.
-//
-// Entries beginning with "." or matching the worktree-layout siblings
-// (`*.bare`, `*-wt-*`) are silently skipped at every level — those
-// are bookkeeping siblings of already-registered projects, not
-// orphans.
 func scanDir(absDir, root, category string, knownPaths map[string]bool, found *int) error {
-	_ = category // reserved for future filtering
+	_ = category
 	entries, err := os.ReadDir(absDir)
 	if err != nil {
 		return err
@@ -80,9 +69,6 @@ func scanDir(absDir, root, category string, knownPaths map[string]bool, found *i
 	return nil
 }
 
-// scanGroupDir walks one level inside a non-repo entry (typical
-// <category>/<group>/ shape used for organization-grouped repos).
-// Errors reading the dir are non-fatal — scan is best-effort.
 func scanGroupDir(groupDir, root string, knownPaths map[string]bool, found *int) {
 	entries, err := os.ReadDir(groupDir)
 	if err != nil {
@@ -99,10 +85,6 @@ func scanGroupDir(groupDir, root string, knownPaths map[string]bool, found *int)
 	}
 }
 
-// shouldSkipScanEntry encapsulates the "this directory is not a
-// scan candidate" rules applied at every level. Skips dotfiles,
-// non-directories, and the bare+worktree bookkeeping siblings of
-// registered projects.
 func shouldSkipScanEntry(entry os.DirEntry) bool {
 	name := entry.Name()
 	if !entry.IsDir() || strings.HasPrefix(name, ".") {
@@ -111,9 +93,6 @@ func shouldSkipScanEntry(entry os.DirEntry) bool {
 	return strings.HasSuffix(name, ".bare") || strings.Contains(name, "-wt-")
 }
 
-// reportIfUnknownRepo prints one "found" line for `repoPath` if its
-// workspace-relative path is not already in `knownPaths`. Increments
-// `found` for the caller's tally.
 func reportIfUnknownRepo(repoPath, root string, knownPaths map[string]bool, found *int) {
 	relPath, _ := filepath.Rel(root, repoPath)
 	if knownPaths[relPath] {

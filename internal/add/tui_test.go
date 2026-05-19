@@ -5,16 +5,16 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 // driveModel feeds a sequence of tea.Msg through Update and returns
 // the final model + the list of tea.Cmd outputs. This is enough to
 // test state transitions without the full bubbletea runtime.
-func driveModel(m AddModel, msgs ...tea.Msg) (AddModel, []tea.Cmd) {
-	var cmds []tea.Cmd
+func driveModel(m AddModel, msgs ...tui.Msg) (AddModel, []tui.Cmd) {
+	var cmds []tui.Cmd
 	for _, msg := range msgs {
 		// Bypass debounce by clearing stateChangedAt — the
 		// production debounce is real-time-based, tests want
@@ -28,22 +28,22 @@ func driveModel(m AddModel, msgs ...tea.Msg) (AddModel, []tea.Cmd) {
 }
 
 // runCmd runs a tea.Cmd and returns the message it produces, or nil.
-func runCmd(c tea.Cmd) tea.Msg {
+func runCmd(c tui.Cmd) tui.Msg {
 	if c == nil {
 		return nil
 	}
 	return c()
 }
 
-func keyRunes(s string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+func keyRunes(s string) tui.KeyMsg {
+	return tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune(s)}
 }
 
-func keyEnter() tea.KeyMsg     { return tea.KeyMsg{Type: tea.KeyEnter} }
-func keyEsc() tea.KeyMsg       { return tea.KeyMsg{Type: tea.KeyEscape} }
-func keyDown() tea.KeyMsg      { return tea.KeyMsg{Type: tea.KeyDown} }
-func keyTab() tea.KeyMsg       { return tea.KeyMsg{Type: tea.KeyTab} }
-func keyBackspace() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyBackspace} }
+func keyEnter() tui.KeyMsg     { return tui.KeyMsg{Type: tui.KeyEnter} }
+func keyEsc() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyEscape} }
+func keyDown() tui.KeyMsg      { return tui.KeyMsg{Type: tui.KeyDown} }
+func keyTab() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyTab} }
+func keyBackspace() tui.KeyMsg { return tui.KeyMsg{Type: tui.KeyBackspace} }
 
 func newTestModel(t *testing.T, sources []Source) AddModel {
 	t.Helper()
@@ -477,7 +477,7 @@ func TestAddModel_CtrlC_AlwaysGoesToDone(t *testing.T) {
 		m := newTestModel(t, nil)
 		m.state = st
 		m.standalone = true
-		ctrlC := tea.KeyMsg{Type: tea.KeyCtrlC}
+		ctrlC := tui.KeyMsg{Type: tui.KeyCtrlC}
 		mm, cmd := m.Update(ctrlC)
 		m = mm.(AddModel)
 		if m.state != addStateDone {
@@ -536,7 +536,7 @@ func TestAddModel_FullHappyPath(t *testing.T) {
 
 	// 4. Hit 'y' on confirm → cloning, queue has one entry, cmd
 	//    starts the clone.
-	var cmds []tea.Cmd
+	var cmds []tui.Cmd
 	m, cmds = driveModel(m, keyRunes("y"))
 	if m.state != addStateCloning {
 		t.Fatalf("state after confirm: %d", m.state)

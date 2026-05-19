@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/add"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type ownersLoadedMsg struct{ owners []Owner }
@@ -14,14 +14,12 @@ type ownersErrMsg struct{ err error }
 type createDoneMsg struct{ result *Result }
 type createErrMsg struct{ err error }
 
-// fetchOwnersCmd queries gh for the current user + orgs in a goroutine.
-// Returns ownersLoadedMsg on success, ownersErrMsg on failure.
-func (m CreateModel) fetchOwnersCmd() tea.Cmd {
+func (m CreateModel) fetchOwnersCmd() tui.Cmd {
 	runner := m.opts.GHRunner
 	if runner == nil {
 		runner = realGHRunner{}
 	}
-	return func() tea.Msg {
+	return func() tui.Msg {
 		owners, err := ListOwners(runner)
 		if err != nil {
 			return ownersErrMsg{err: err}
@@ -30,10 +28,7 @@ func (m CreateModel) fetchOwnersCmd() tea.Cmd {
 	}
 }
 
-// createCmd kicks off the gh repo create + register + clone pipeline
-// off the bubbletea event loop. Returns createDoneMsg on success,
-// createErrMsg on any step's failure.
-func (m CreateModel) createCmd() tea.Cmd {
+func (m CreateModel) createCmd() tui.Cmd {
 	runner := m.opts.GHRunner
 	if runner == nil {
 		runner = realGHRunner{}
@@ -57,7 +52,7 @@ func (m CreateModel) createCmd() tea.Cmd {
 		projectName = name
 	}
 
-	return func() tea.Msg {
+	return func() tui.Msg {
 		if _, err := CreateRepo(runner, CreateRepoOptions{
 			Owner:       owner,
 			Name:        name,

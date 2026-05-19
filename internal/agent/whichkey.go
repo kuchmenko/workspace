@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type whichKeyAction struct {
@@ -21,7 +20,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	}
 
 	if m.whichKeyLevel == 1 {
-		// Worktree sub-menu.
 		return []whichKeyAction{
 			{"n", "new worktree"},
 			{"", ""},
@@ -75,8 +73,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	return nil
 }
 
-// favoriteToggleLabel describes the `f` action target: "favorite" if
-// the project is currently unfavorited, "unfavorite" if it already is.
 func (m *Model) favoriteToggleLabel(it *listItem) string {
 	if it != nil && it.project != nil && it.project.Favorite {
 		return "unfavorite"
@@ -84,9 +80,6 @@ func (m *Model) favoriteToggleLabel(it *listItem) string {
 	return "favorite"
 }
 
-// favoriteToggleLabelGroup is the group-row variant. Reads the
-// favorite flag from the in-memory WorkspaceData.FavoriteGroups set
-// for whichever workspace owns this group.
 func (m *Model) favoriteToggleLabelGroup(group string) string {
 	for _, ws := range m.workspaces {
 		if ws.FavoriteGroups[group] {
@@ -96,11 +89,10 @@ func (m *Model) favoriteToggleLabelGroup(group string) string {
 	return "favorite"
 }
 
-func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	item := m.currentItem()
 
-	// Handle worktree sub-level.
 	if m.whichKeyLevel == 1 {
 		switch key {
 		case "esc":
@@ -119,7 +111,6 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Root level — dispatch action.
 	switch key {
 	case "esc":
 		m.mode = viewList
@@ -149,9 +140,7 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewList
 		return m.updateList(msg)
 	case "f":
-		// Favorite toggle is per-row: project rows toggle the project,
-		// group rows toggle the group. Either way close the panel so
-		// the user sees the result immediately.
+
 		m.mode = viewList
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
@@ -167,10 +156,6 @@ func (m *Model) updateWhichKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// toggleFavoriteGroup flips the favorite flag on the named group in
-// the workspace that owns the current cursor row. The in-memory
-// WorkspaceData is updated so the chip header repaint picks up the
-// change without a TUI restart. Symmetric to toggleFavoriteFor.
 func (m *Model) toggleFavoriteGroup(group string) {
 	root := m.workspaceRootForGroup(group)
 	if root == "" {
@@ -213,9 +198,6 @@ func (m *Model) toggleFavoriteGroup(group string) {
 	m.ensureVisible()
 }
 
-// workspaceRootForGroup finds the workspace whose Groups slice
-// contains `name`. Returns "" when unmatched (e.g. group was just
-// removed in a parallel save).
 func (m *Model) workspaceRootForGroup(name string) string {
 	for _, ws := range m.workspaces {
 		for _, g := range ws.Groups {
@@ -227,11 +209,6 @@ func (m *Model) workspaceRootForGroup(name string) string {
 	return ""
 }
 
-// toggleFavoriteFor flips the favorite flag on `proj` and persists the
-// change. The in-memory pointer is mutated so the row repaint picks
-// up the new state without needing a TUI restart. The header section
-// is rebuilt: a freshly favorited project may need to leave Recent
-// and appear in Favorites, and vice versa.
 func (m *Model) toggleFavoriteFor(proj *Project) {
 	root := m.workspaceRootFor(proj)
 	if root == "" {
@@ -276,7 +253,7 @@ func (m *Model) whichKeyTitle() string {
 	case KindProject:
 		return item.project.Name
 	case KindWorktree:
-		return item.group // display name
+		return item.group
 	case KindPortal:
 		if item.session != nil {
 			t := item.session.Title
@@ -298,7 +275,6 @@ func (m *Model) viewWhichKey() string {
 		}
 	}
 
-	// Render the list (dimmed).
 	var rows []string
 	bc := m.breadcrumb()
 	pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
@@ -307,9 +283,8 @@ func (m *Model) viewWhichKey() string {
 	rows = append(rows, m.renderListRows(listW, true)...)
 	rows = append(rows, footerStyle.Width(listW).Render(" press a key or esc"))
 
-	listPanel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	listPanel := tui.JoinVertical(tui.Left, rows...)
 
-	// Render the action panel.
 	actions := m.whichKeyActions()
 	title := m.whichKeyTitle()
 
@@ -331,20 +306,19 @@ func (m *Model) viewWhichKey() string {
 	actionContent := strings.Join(actionLines, "\n")
 	actionPanel := whichKeyBorderStyle.Width(panelW).Render(actionContent)
 
-	// Position the action panel vertically aligned with the cursor.
-	listH := lipgloss.Height(listPanel)
-	panelH := lipgloss.Height(actionPanel)
+	listH := tui.Height(listPanel)
+	panelH := tui.Height(actionPanel)
 	topPad := (listH - panelH) / 2
 	if topPad < 0 {
 		topPad = 0
 	}
 	paddedPanel := strings.Repeat("\n", topPad) + actionPanel
 
-	combined := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, "  ", paddedPanel)
+	combined := tui.JoinHorizontal(tui.Top, listPanel, "  ", paddedPanel)
 
-	return lipgloss.Place(
+	return tui.Place(
 		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
+		tui.Center, tui.Center,
 		combined,
 	)
 }

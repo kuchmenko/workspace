@@ -2,16 +2,11 @@ package agent
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
-// updateChipAction handles the modal opened by 1-9 on a header chip.
-// The user picks the action: c = claude, p = claude+prompt, s = shell,
-// w = new worktree (project chips only), esc = cancel.
-func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateChipAction(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if m.chipTarget == nil {
 		m.mode = viewList
 		return m, nil
@@ -24,10 +19,10 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "c", "enter":
 		m.Launch = &LaunchRequest{Cwd: target.Path}
-		return m, tea.Quit
+		return m, tui.Quit
 	case "s", "l":
 		m.Launch = &LaunchRequest{Cwd: target.Path, ShellOnly: true}
-		return m, tea.Quit
+		return m, tui.Quit
 	case "p":
 		m.pendingLaunch = &LaunchRequest{Cwd: target.Path}
 		m.promptInput = ""
@@ -35,7 +30,7 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewPromptInput
 		return m, nil
 	case "w":
-		// Worktree creation is project-only — groups have no bare repo.
+
 		if target.Kind == KindProject && target.Project != nil {
 			m.popupProj = target.Project
 			m.wtBranch = ""
@@ -49,9 +44,6 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// viewChipAction renders the modal asking what to do with the picked
-// chip. Centered, narrow, with a compact action list. The chip
-// reference stays valid across redraws because chipTarget is a copy.
 func (m *Model) viewChipAction() string {
 	if m.chipTarget == nil {
 		return m.viewList()
@@ -84,6 +76,6 @@ func (m *Model) viewChipAction() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }

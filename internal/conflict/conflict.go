@@ -17,22 +17,20 @@ import (
 	"github.com/google/uuid"
 )
 
-// Kind enumerates the types of conflicts the reconciler can record.
 type Kind string
 
 const (
-	KindTOMLMerge       Kind = "toml-merge"       // workspace.toml rebase failed
-	KindTOMLPushFailed  Kind = "toml-push-failed" // toml push rejected and pull-rebase did not help
-	KindMainDivergence  Kind = "main-divergence"  // main worktree cannot fast-forward
-	KindNeedsMigration  Kind = "needs-migration"  // project on disk is plain checkout, not yet migrated
-	KindNeedsBootstrap  Kind = "needs-bootstrap"  // missing project couldn't be auto-cloned (default branch ambiguous)
-	KindPathBlocked     Kind = "path-blocked"     // non-repo files at project path; can't bootstrap
-	KindCloneFailed     Kind = "clone-failed"     // git clone of a missing project failed (network/auth/etc)
-	KindBranchDuplicate Kind = "branch-duplicate" // two [[branches]] entries share the same name in one project
-	KindBranchOrphan    Kind = "branch-orphan"    // [[branches]] entry's published branch was deleted on origin
+	KindTOMLMerge       Kind = "toml-merge"
+	KindTOMLPushFailed  Kind = "toml-push-failed"
+	KindMainDivergence  Kind = "main-divergence"
+	KindNeedsMigration  Kind = "needs-migration"
+	KindNeedsBootstrap  Kind = "needs-bootstrap"
+	KindPathBlocked     Kind = "path-blocked"
+	KindCloneFailed     Kind = "clone-failed"
+	KindBranchDuplicate Kind = "branch-duplicate"
+	KindBranchOrphan    Kind = "branch-orphan"
 )
 
-// Conflict is one row in the persisted store.
 type Conflict struct {
 	ID         string          `json:"id"`
 	Workspace  string          `json:"workspace"`
@@ -43,15 +41,10 @@ type Conflict struct {
 	Details    json.RawMessage `json:"details,omitempty"`
 }
 
-// Store is the on-disk JSON file. Concurrent writers within a single process
-// are serialized via the embedded mutex; cross-process safety relies on the
-// reconciler being the only writer.
 type Store struct {
 	path string
 }
 
-// Path returns the canonical conflicts.json location.
-// Honors $XDG_STATE_HOME, falls back to ~/.local/state/ws/conflicts.json.
 func Path() (string, error) {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ws", "conflicts.json"), nil
@@ -63,7 +56,6 @@ func Path() (string, error) {
 	return filepath.Join(home, ".local", "state", "ws", "conflicts.json"), nil
 }
 
-// Open returns a Store backed by the canonical path.
 func Open() (*Store, error) {
 	p, err := Path()
 	if err != nil {
@@ -72,7 +64,6 @@ func Open() (*Store, error) {
 	return &Store{path: p}, nil
 }
 
-// fileShape is the JSON envelope.
 type fileShape struct {
 	Conflicts []Conflict `json:"conflicts"`
 }
@@ -110,7 +101,6 @@ func (s *Store) save(f *fileShape) error {
 	return os.Rename(tmp, s.path)
 }
 
-// List returns all currently tracked conflicts.
 func (s *Store) List() ([]Conflict, error) {
 	f, err := s.load()
 	if err != nil {
@@ -119,16 +109,10 @@ func (s *Store) List() ([]Conflict, error) {
 	return f.Conflicts, nil
 }
 
-// matchKey identifies a conflict for deduplication purposes. Two records
-// with the same key represent the same underlying problem and should not
-// produce duplicate entries on every reconciler tick.
 func matchKey(c Conflict) string {
 	return string(c.Kind) + "|" + c.Workspace + "|" + c.Project + "|" + c.Branch
 }
 
-// Record inserts c if no equivalent conflict already exists, otherwise it
-// refreshes the existing record's DetectedAt and Details. Returns true when
-// a new conflict was inserted (so callers can decide whether to notify).
 func (s *Store) Record(c Conflict) (bool, error) {
 	c = ensureRecordDefaults(c)
 	f, err := s.load()
@@ -143,8 +127,6 @@ func (s *Store) Record(c Conflict) (bool, error) {
 	return true, s.save(f)
 }
 
-// ensureRecordDefaults fills in the auto-generated ID and the
-// "detected just now" timestamp when the caller didn't set them.
 func ensureRecordDefaults(c Conflict) Conflict {
 	if c.ID == "" {
 		c.ID = uuid.NewString()
@@ -155,8 +137,6 @@ func ensureRecordDefaults(c Conflict) Conflict {
 	return c
 }
 
-// findMatch returns the index of the first conflict in `xs` whose
-// match-key matches `c`, or -1 when none does.
 func findMatch(xs []Conflict, c Conflict) int {
 	target := matchKey(c)
 	for i := range xs {
@@ -167,9 +147,6 @@ func findMatch(xs []Conflict, c Conflict) int {
 	return -1
 }
 
-// refreshExisting bumps the existing record's DetectedAt and copies
-// the new Details (if any). Skips Details when the caller passed nil
-// so a refresh-without-details doesn't blank the recorded reason.
 func refreshExisting(existing *Conflict, fresh Conflict) {
 	existing.DetectedAt = fresh.DetectedAt
 	if fresh.Details != nil {
@@ -177,9 +154,6 @@ func refreshExisting(existing *Conflict, fresh Conflict) {
 	}
 }
 
-// Clear removes any conflict matching workspace+project+branch+kind. Used
-// when a tick proves the previously-recorded condition is now resolved
-// (e.g. branch became ff again).
 func (s *Store) Clear(workspace, project, branch string, kind Kind) error {
 	f, err := s.load()
 	if err != nil {
@@ -197,8 +171,6 @@ func (s *Store) Clear(workspace, project, branch string, kind Kind) error {
 	return s.save(f)
 }
 
-// Remove deletes a conflict by ID. Used by `ws sync resolve` after the user
-// confirms a fix.
 func (s *Store) Remove(id string) error {
 	f, err := s.load()
 	if err != nil {

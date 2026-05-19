@@ -3,12 +3,12 @@ package add
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) updateManual(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m AddModel) updateManual(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
 			val := strings.TrimSpace(m.manualInput.Value())
@@ -16,7 +16,7 @@ func (m AddModel) updateManual(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.manualErr = "URL is required"
 				return m, nil
 			}
-			// Build editFields from the bare URL.
+
 			name := parseRepoNameFromURL(val)
 			m.editFields = editFields{
 				Name:     name,
@@ -35,7 +35,7 @@ func (m AddModel) updateManual(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.manualInput, cmd = m.manualInput.Update(msg)
 	return m, cmd
 }

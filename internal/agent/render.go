@@ -2,9 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func (m *Model) renderListRows(listW int, dimAll bool) []string {
@@ -17,20 +16,17 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 		end = len(m.items)
 	}
 
-	// Track group boundaries for visual spacing.
 	prevGroup := ""
 	for i := m.scroll; i < end; i++ {
 		item := m.items[i]
 		selected := i == m.cursor
 
-		// Inject empty line between groups.
 		curGroup := m.itemGroupKey(item)
 		if prevGroup != "" && curGroup != prevGroup {
 			rows = append(rows, strings.Repeat(" ", listW))
 		}
 		prevGroup = curGroup
 
-		// In flash mode: check if this item is in the match set.
 		isMatch := false
 		flashLabel := rune(0)
 		if inFlash {
@@ -62,8 +58,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 	return rows
 }
 
-// itemGroupKey returns a key that identifies the visual group boundary
-// for inserting blank lines between groups.
 func (m *Model) itemGroupKey(item listItem) string {
 	switch item.kind {
 	case KindGroup:
@@ -111,15 +105,9 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
 
-	// Build left part: indent + icon + name. Icon is language-detected
-	// via marker files so a Go project shows the Go glyph, a Rust
-	// project shows the Rust glyph, etc.
 	icon := DetectIcon(p.Path)
 	left := fmt.Sprintf(" %s%s %s", indent, icon, name)
 
-	// Build right part: badges (right-aligned). Worktree count gets a
-	// lightning-bolt prefix so it reads as "branches in flight" at a
-	// glance; session count keeps the unprefixed `Ns` form.
 	var badgeParts []string
 	if p.WorktreeCount > 1 {
 		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
@@ -129,7 +117,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 	badges := strings.Join(badgeParts, " · ")
 
-	// Pad between left and right to fill width.
 	line := m.padRight(left, badges, w)
 
 	if dimAll || (inFlash && !isMatch) {
@@ -138,10 +125,10 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	if selected {
 		return m.renderSelected(line, itemStyle, w)
 	}
-	// Render with styled badges.
+
 	if badges != "" {
 		leftPart := fmt.Sprintf(" %s%s %s", indent, icon, name)
-		padding := w - lipgloss.Width(leftPart) - lipgloss.Width(badges) - 1
+		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
 		}
@@ -150,12 +137,9 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	return itemStyle.Width(w).Render(line)
 }
 
-// renderHeaderProject draws a project row inside the Favorites/Recent
-// shortcut section: `*` star for favorites, project icon, name, and a
-// right-aligned `2m linux` activity column. The row is fully selectable
 func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
 	indent := strings.Repeat("    ", item.indent)
-	name := item.group // worktreeDisplayName stored in group field
+	name := item.group
 	if name == "" {
 		name = "worktree"
 	}
@@ -163,7 +147,6 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
 
-	// Status indicators: * for dirty, ↑N for ahead.
 	var status string
 	if item.worktree != nil {
 		if item.worktree.Dirty {
@@ -176,8 +159,8 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 	}
 
 	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
-	// Truncate name to fit available width.
-	maxName := w - lipgloss.Width(prefix) - lipgloss.Width(status) - 2
+
+	maxName := w - tui.Width(prefix) - tui.Width(status) - 2
 	if maxName > 0 && !inFlash {
 		name = truncateStr(name, maxName)
 	}
@@ -192,7 +175,7 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 			return m.renderSelected(line, wtStyle, w)
 		}
 		leftRendered := wtStyle.Render(left)
-		padding := w - lipgloss.Width(left) - lipgloss.Width(status) - 1
+		padding := w - tui.Width(left) - tui.Width(status) - 1
 		if padding < 1 {
 			padding = 1
 		}
@@ -220,7 +203,6 @@ func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, 
 			flashInlineLabel(item.session.Title, m.flashQuery, flashLabel))
 	}
 
-	// Truncate to prevent multiline wrapping.
 	prefix := fmt.Sprintf(" %s%s ", indent, iconSession)
 	maxTitle := w - len([]rune(prefix)) - 1
 	if maxTitle > 0 {
@@ -237,7 +219,6 @@ func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, 
 	return sessionStyle.Width(w).Render(label)
 }
 
-// truncateStr truncates a string to maxLen runes, adding … if needed.
 func truncateStr(s string, maxLen int) string {
 	runes := []rune(s)
 	if len(runes) <= maxLen {
@@ -249,18 +230,16 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-// renderSelected renders a line with the amber ▌ selection bar.
-func (m *Model) renderSelected(content string, base lipgloss.Style, w int) string {
+func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
-	// Render content with selected style, leave room for the bar.
+
 	rest := selectedStyle.Width(w - 1).Render(content)
 	return bar + rest
 }
 
-// padRight fills space between left content and right badges.
 func (m *Model) padRight(left, right string, w int) string {
-	lw := lipgloss.Width(left)
-	rw := lipgloss.Width(right)
+	lw := tui.Width(left)
+	rw := tui.Width(right)
 	gap := w - lw - rw - 1
 	if gap < 1 {
 		gap = 1
@@ -279,16 +258,12 @@ func (m *Model) viewList() string {
 
 	var rows []string
 
-	// Pinned quick-nav chips: up to two lines of numbered 1-9 hotkeys
-	// above the breadcrumb. They never scroll — the chip row stays put
-	// while the tree below scrolls under them.
 	chipLines := renderHeaderChips(m.headerChips, listW-2, 2)
 	rows = append(rows, styleHeaderLines(chipLines)...)
 	if len(chipLines) > 0 {
 		rows = append(rows, strings.Repeat(" ", listW))
 	}
 
-	// Header — breadcrumb + position.
 	inFlash := m.mode == viewFlash
 	if inFlash {
 		prefix := iconSearch
@@ -304,10 +279,8 @@ func (m *Model) viewList() string {
 		rows = append(rows, headerStyle.Width(listW).Render(hdr))
 	}
 
-	// List items.
 	rows = append(rows, m.renderListRows(listW, false)...)
 
-	// Footer — status message or context-sensitive hints.
 	if m.statusMsg != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
 	} else if inFlash {
@@ -321,11 +294,11 @@ func (m *Model) viewList() string {
 		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
 	}
 
-	panel := lipgloss.JoinVertical(lipgloss.Left, rows...)
+	panel := tui.JoinVertical(tui.Left, rows...)
 
-	return lipgloss.Place(
+	return tui.Place(
 		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
+		tui.Center, tui.Center,
 		panel,
 	)
 }

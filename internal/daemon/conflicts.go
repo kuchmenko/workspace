@@ -8,11 +8,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/conflict"
 )
 
-// recordValidationIssues runs ws.Validate() and turns each ValidationIssue
-// into a conflict-store entry. Currently the only issue kind is duplicate
-// branch names within a project (KindBranchDuplicate), which arises when
-// two machines ws-worktree-add the same branch concurrently and union-merge
-// concatenates their [[branches]] writes into the same project.
 func (r *Reconciler) recordValidationIssues(ws *config.Workspace) {
 	for _, issue := range ws.Validate() {
 		switch issue.Kind {

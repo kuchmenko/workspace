@@ -14,7 +14,6 @@ type httpClient struct {
 	client *http.Client
 }
 
-// NewHTTPClient creates a GitHub API client using a bearer token.
 func NewHTTPClient(token string) Client {
 	return &httpClient{
 		token:  token,
@@ -72,9 +71,6 @@ func (c *httpClient) FetchRepos() ([]Repo, error) {
 	return repos, nil
 }
 
-// rawRepoToRepo converts the wire shape into the package's typed
-// Repo. Pulled out so the parsing-decision (what becomes what) lives
-// in one place rather than being embedded in the page loop.
 func rawRepoToRepo(r rawRepo) Repo {
 	pushed, _ := time.Parse(time.RFC3339, r.PushedAt)
 	return Repo{
@@ -89,17 +85,13 @@ func rawRepoToRepo(r rawRepo) Repo {
 	}
 }
 
-// FetchActivity polls /users/<u>/events for activity counts per repo.
-// Best-effort: any error along the way (network, decode, non-200)
-// returns whatever counts were collected up to that point with no
-// caller-visible error.
 func (c *httpClient) FetchActivity(username string) (map[string]int, error) {
 	url := fmt.Sprintf("https://api.github.com/users/%s/events?per_page=100", username)
 	counts := make(map[string]int)
 	_ = c.fetchPaged(url, func(body []byte) error {
 		var events []rawEvent
 		if err := json.Unmarshal(body, &events); err != nil {
-			return nil // skip malformed page; keep walking
+			return nil
 		}
 		tallyActivityEvents(counts, events)
 		return nil
@@ -107,9 +99,6 @@ func (c *httpClient) FetchActivity(username string) (map[string]int, error) {
 	return counts, nil
 }
 
-// activityEventTypes lists the GitHub event Type strings that count
-// as user-visible activity for the suggestion ranker. Any new type
-// goes here — the loop body doesn't change.
 var activityEventTypes = map[string]bool{
 	"PushEvent":              true,
 	"PullRequestEvent":       true,
@@ -119,8 +108,6 @@ var activityEventTypes = map[string]bool{
 	"CommitCommentEvent":     true,
 }
 
-// tallyActivityEvents bumps the per-repo activity counter for every
-// event whose Type is in activityEventTypes.
 func tallyActivityEvents(counts map[string]int, events []rawEvent) {
 	for _, e := range events {
 		if activityEventTypes[e.Type] {
@@ -129,10 +116,6 @@ func tallyActivityEvents(counts map[string]int, events []rawEvent) {
 	}
 }
 
-// fetchPaged drives a Link-paginated GitHub API endpoint. For each
-// successfully-fetched page, calls onPage with the response body;
-// the loop stops when GitHub stops emitting a `rel="next"` link or
-// when onPage returns an error.
 func (c *httpClient) fetchPaged(startURL string, onPage func(body []byte) error) error {
 	url := startURL
 	for url != "" {
@@ -148,9 +131,6 @@ func (c *httpClient) fetchPaged(startURL string, onPage func(body []byte) error)
 	return nil
 }
 
-// fetchOnce performs a single GET against url, returning the raw body
-// and the response Header (so callers can read pagination links).
-// Non-200 responses become errors carrying the URL + status + body.
 func (c *httpClient) fetchOnce(url string) ([]byte, http.Header, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -168,8 +148,6 @@ func (c *httpClient) fetchOnce(url string) ([]byte, http.Header, error) {
 	return body, resp.Header, nil
 }
 
-// nextPageURL parses the GitHub Link header and returns the "next" URL, or "" if none.
-// Format: <https://api.github.com/...?page=2>; rel="next", <...>; rel="last"
 func nextPageURL(link string) string {
 	if link == "" {
 		return ""
@@ -182,8 +160,6 @@ func nextPageURL(link string) string {
 	return ""
 }
 
-// extractRelNext checks whether a single Link header part is the
-// `rel="next"` segment and, if so, returns the URL between < and >.
 func extractRelNext(part string) (string, bool) {
 	if !strings.Contains(part, `rel="next"`) {
 		return "", false

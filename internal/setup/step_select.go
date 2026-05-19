@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	gh "github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type sortMode int
@@ -39,11 +38,11 @@ type repoItem struct {
 type selectModel struct {
 	all       []repoItem
 	orgs      []string
-	orgFilter int // 0 = all, 1+ = specific org
+	orgFilter int
 	sortBy    sortMode
 	cursor    int
 	offset    int
-	search    textinput.Model
+	search    tui.TextInput
 	width     int
 	height    int
 	username  string
@@ -55,9 +54,9 @@ func newSelectModel(repos []gh.Repo, username string, w, h int) selectModel {
 		items[i] = repoItem{repo: r}
 	}
 
-	ti := textinput.New()
-	ti.Placeholder = "type to search..."
-	ti.CharLimit = 60
+	ti := tui.NewTextInput()
+	ti.SetPlaceholder("type to search...")
+	ti.SetCharLimit(60)
 
 	orgs := gh.Orgs(repos)
 
@@ -89,7 +88,6 @@ func (m selectModel) filtered() []int {
 		indices = append(indices, i)
 	}
 
-	// Sort
 	sort.SliceStable(indices, func(a, b int) bool {
 		ra := m.all[indices[a]].repo
 		rb := m.all[indices[b]].repo
@@ -98,7 +96,7 @@ func (m selectModel) filtered() []int {
 			return ra.FullName < rb.FullName
 		case sortPushed:
 			return ra.PushedAt.After(rb.PushedAt)
-		default: // sortActivity
+		default:
 			if ra.Activity != rb.Activity {
 				return ra.Activity > rb.Activity
 			}
@@ -129,8 +127,8 @@ func (m selectModel) selectedCount() int {
 	return n
 }
 
-func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m selectModel) update(msg tui.Msg) (selectModel, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		filtered := m.filtered()
 		maxVisible := m.maxVisible()
 
@@ -167,7 +165,7 @@ func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
 			return m, nil
 
 		case "ctrl+a":
-			// Toggle all visible
+
 			allChecked := true
 			for _, idx := range filtered {
 				if !m.all[idx].checked {
@@ -188,8 +186,7 @@ func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
 		}
 	}
 
-	// Pass to text input
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	prevVal := m.search.Value()
 	m.search, cmd = m.search.Update(msg)
 	if m.search.Value() != prevVal {
@@ -200,7 +197,6 @@ func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
 }
 
 func (m selectModel) maxVisible() int {
-	// header(3) + search(1) + orgs(1) + blank(1) + help(2) + status(1) = 9
 	h := m.height - 9
 	if h < 5 {
 		h = 5
@@ -211,17 +207,14 @@ func (m selectModel) maxVisible() int {
 func (m selectModel) view() string {
 	var b strings.Builder
 
-	// Title
 	b.WriteString(titleStyle.Render(" ws setup "))
 	b.WriteString("  Select repos\n\n")
 
-	// Search
 	b.WriteString("  " + m.search.View() + "    ")
 	b.WriteString(dimStyle.Render("sort: ") + selectedStyle.Render(m.sortBy.String()))
 	b.WriteString(dimStyle.Render(" (ctrl+s)"))
 	b.WriteString("\n")
 
-	// Org tabs
 	b.WriteString("  ")
 	if m.orgFilter == 0 {
 		b.WriteString(activeTabStyle.Render("all"))
@@ -239,7 +232,6 @@ func (m selectModel) view() string {
 	b.WriteString(dimStyle.Render("  (tab)"))
 	b.WriteString("\n\n")
 
-	// List
 	filtered := m.filtered()
 	maxVisible := m.maxVisible()
 
@@ -285,7 +277,6 @@ func (m selectModel) view() string {
 			dimStyle.Render(pushed), activity)
 	}
 
-	// Scrollbar hint
 	if len(filtered) > maxVisible {
 		above := m.offset
 		below := len(filtered) - end
@@ -297,7 +288,6 @@ func (m selectModel) view() string {
 		}
 	}
 
-	// Footer
 	b.WriteString("\n")
 	selCount := m.selectedCount()
 	fmt.Fprintf(&b, "  Selected: %s / %d",

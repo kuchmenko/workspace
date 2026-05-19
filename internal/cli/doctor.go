@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Exit codes. Documented in the --help text so the acceptance criteria
-// is self-describing and scriptable.
 const (
 	exitDoctorOK         = 0
 	exitDoctorIssues     = 1
@@ -63,14 +61,6 @@ and leaves the action to the user.`,
 				SkipRemote: skipRemote,
 			}
 
-			// For text mode we stream per-scope blocks as each check
-			// batch completes. Without this, the user sits in front of
-			// a silent terminal while every project's remote-reach
-			// check burns its 10s timeout. --json must not stream
-			// (partial JSON is invalid); --fix mode also skips
-			// streaming because fix outcomes need to be shown inline
-			// with each finding, and we don't know Fixed/FixError
-			// until ApplyFixes runs after every check completes.
 			streaming := !asJSON && !fix
 			if streaming {
 				first := true
@@ -109,16 +99,6 @@ and leaves the action to the user.`,
 	return cmd
 }
 
-// exitCodeFor maps a (report, flags) pair to the documented exit code.
-// The scheme is:
-//
-//   - --fix ran AND at least one fix succeeded → 2 (state changed).
-//   - any warn/error present in the final report → 1.
-//   - otherwise → 0.
-//
-// Note that "fix succeeded but issues remain" still returns 2 — the user
-// asked for --fix, we applied what we could, and the shell exit code
-// should reflect that state mutation happened.
 func exitCodeFor(rep *doctor.Report, fixRequested bool, fixesApplied int) int {
 	if fixRequested && fixesApplied > 0 {
 		return exitDoctorFixApplied

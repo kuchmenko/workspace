@@ -58,9 +58,6 @@ func newSyncResolveCmd() *cobra.Command {
 	}
 }
 
-// runSyncResolve drives the per-conflict picker. Loads the store,
-// surfaces the empty-store message once, then hands off to
-// resolveLoop for the iterate-until-done dance.
 func runSyncResolve() error {
 	store, err := openConflictStore()
 	if err != nil {
@@ -77,13 +74,10 @@ func runSyncResolve() error {
 	return resolveLoop(store, conflicts)
 }
 
-// resolveLoop runs the print-pick-resolve cycle. Returns when the
-// user quits or when the store empties out (different end-message
-// for "started empty" vs "drained while resolving").
 func resolveLoop(store *conflict.Store, conflicts []conflict.Conflict) error {
 	for {
 		if !pickAndResolve(store, conflicts) {
-			return nil // user quit
+			return nil
 		}
 		next, err := store.List()
 		if err != nil {
@@ -97,10 +91,6 @@ func resolveLoop(store *conflict.Store, conflicts []conflict.Conflict) error {
 	}
 }
 
-// pickAndResolve prints the menu, reads the selection, dispatches
-// the resolver. Returns false when the user quits the picker; true
-// to keep the loop running (including on invalid input — the loop
-// re-prompts on the next iteration with a fresh List()).
 func pickAndResolve(store *conflict.Store, conflicts []conflict.Conflict) bool {
 	printConflictList(conflicts)
 	idx, quit := readConflictChoice(len(conflicts))
@@ -108,15 +98,12 @@ func pickAndResolve(store *conflict.Store, conflicts []conflict.Conflict) bool {
 		return false
 	}
 	if idx < 0 {
-		return true // invalid input
+		return true
 	}
 	applyConflictResolution(store, conflicts[idx])
 	return true
 }
 
-// printConflictList prints the numbered menu of unresolved conflicts.
-// Pure formatting; the format mirrors the original `ws sync resolve`
-// output ([N] kind — project/branch  (timestamp)).
 func printConflictList(conflicts []conflict.Conflict) {
 	fmt.Printf("\n%d unresolved conflict(s):\n", len(conflicts))
 	for i, c := range conflicts {
@@ -125,9 +112,6 @@ func printConflictList(conflicts []conflict.Conflict) {
 	fmt.Print("\nselect (number, q to quit): ")
 }
 
-// conflictListLabel renders one conflict's menu label: kind, project,
-// branch — falling back to "workspace.toml" when the conflict is not
-// project-scoped (TOML merge / push failures).
 func conflictListLabel(c conflict.Conflict) string {
 	if c.Project == "" {
 		return string(c.Kind) + " — workspace.toml"
@@ -139,11 +123,6 @@ func conflictListLabel(c conflict.Conflict) string {
 	return label
 }
 
-// readConflictChoice reads the user's selection. Returns:
-//
-//   - (-1, true)  on q / empty / EOF — user wants to quit
-//   - (-1, false) on invalid number — caller re-prompts
-//   - (idx, false) on valid 1-based index — converted to 0-based
 func readConflictChoice(max int) (idx int, quit bool) {
 	var input string
 	_, _ = fmt.Scanln(&input)
@@ -158,10 +137,6 @@ func readConflictChoice(max int) (idx int, quit bool) {
 	return n - 1, false
 }
 
-// applyConflictResolution dispatches one selected conflict and, on
-// successful resolution, removes it from the store. Errors from the
-// resolver and the store are logged to stderr but never propagated —
-// the caller continues the picker loop either way.
 func applyConflictResolution(store *conflict.Store, c conflict.Conflict) {
 	resolved, err := handleConflict(c)
 	if err != nil {

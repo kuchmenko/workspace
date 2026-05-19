@@ -38,12 +38,7 @@ func newWorktreeRmCmd() *cobra.Command {
 			if wtPath == "" {
 				return fmt.Errorf("no worktree on branch %s in project %s", branch, projectName)
 			}
-			// Refuse to remove the main worktree by branch — that would
-			// leave the project unusable. Default-branch checkouts and
-			// any other branch that happens to be at proj.path are
-			// off-limits to `ws worktree rm`; the user has to delete
-			// the project entirely (out of scope here) or check out a
-			// different branch into the main worktree first.
+
 			if wtPath == mainPath {
 				return fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", projectName, branch, mainPath)
 			}
