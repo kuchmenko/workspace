@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/bootstrap"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -107,7 +107,7 @@ func runBootstrap(args []string, dryRun bool) error {
 	}
 
 	model := newBootstrapModel(plan, toClone, resumeFrom)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tui.NewProgram(model, tui.WithAltScreen())
 	program = p
 	defer func() { program = nil }()
 	finalRaw, runErr := p.Run()

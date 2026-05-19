@@ -6,9 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	gh "github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type sortMode int
@@ -43,7 +42,7 @@ type selectModel struct {
 	sortBy    sortMode
 	cursor    int
 	offset    int
-	search    textinput.Model
+	search    tui.TextInput
 	width     int
 	height    int
 	username  string
@@ -55,9 +54,9 @@ func newSelectModel(repos []gh.Repo, username string, w, h int) selectModel {
 		items[i] = repoItem{repo: r}
 	}
 
-	ti := textinput.New()
-	ti.Placeholder = "type to search..."
-	ti.CharLimit = 60
+	ti := tui.NewTextInput()
+	ti.SetPlaceholder("type to search...")
+	ti.SetCharLimit(60)
 
 	orgs := gh.Orgs(repos)
 
@@ -128,8 +127,8 @@ func (m selectModel) selectedCount() int {
 	return n
 }
 
-func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m selectModel) update(msg tui.Msg) (selectModel, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		filtered := m.filtered()
 		maxVisible := m.maxVisible()
 
@@ -187,7 +186,7 @@ func (m selectModel) update(msg tea.Msg) (selectModel, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	prevVal := m.search.Value()
 	m.search, cmd = m.search.Update(msg)
 	if m.search.Value() != prevVal {

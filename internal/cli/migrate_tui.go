@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/migrate"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func runMigrateTUI(args []string) error {
@@ -60,7 +60,7 @@ func runMigrateTUI(args []string) error {
 	}
 
 	model := newMigrateModel(plan, machine, resumeFrom)
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tui.NewProgram(model, tui.WithAltScreen())
 	finalRaw, runErr := p.Run()
 	if runErr != nil {
 		return fmt.Errorf("TUI crashed: %w", runErr)

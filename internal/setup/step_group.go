@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	gh "github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type groupModel struct {
@@ -14,7 +13,7 @@ type groupModel struct {
 	cursor      int
 	repoCursor  int
 	editing     bool
-	editInput   textinput.Model
+	editInput   tui.TextInput
 	moving      bool
 	moveFrom    int
 	moveRepoIdx int
@@ -46,8 +45,8 @@ func newGroupModel(repos []gh.Repo, username string, w, h int) groupModel {
 		})
 	}
 
-	ti := textinput.New()
-	ti.CharLimit = 40
+	ti := tui.NewTextInput()
+	ti.SetCharLimit(40)
 
 	return groupModel{
 		groups:     groups,
@@ -123,7 +122,7 @@ func (m *groupModel) clampCursor() {
 	}
 }
 
-func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
+func (m groupModel) update(msg tui.Msg) (groupModel, tui.Cmd) {
 	if m.editing {
 		return m.updateEditing(msg)
 	}
@@ -131,7 +130,7 @@ func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
 		return m.updateMoving(msg)
 	}
 
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -181,8 +180,8 @@ func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m groupModel) updateEditing(msg tea.Msg) (groupModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m groupModel) updateEditing(msg tui.Msg) (groupModel, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
 			newName := strings.TrimSpace(m.editInput.Value())
@@ -197,13 +196,13 @@ func (m groupModel) updateEditing(msg tea.Msg) (groupModel, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.editInput, cmd = m.editInput.Update(msg)
 	return m, cmd
 }
 
-func (m groupModel) updateMoving(msg tea.Msg) (groupModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m groupModel) updateMoving(msg tui.Msg) (groupModel, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "escape":
 			m.moving = false

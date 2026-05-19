@@ -4,8 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 var ErrCancelled = errors.New("create canceled by user")
@@ -26,10 +25,10 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 		URLFor:      opts.URLFor,
 	})
 
-	prog := tea.NewProgram(
+	prog := tui.NewProgram(
 		model,
-		tea.WithAltScreen(),
-		tea.WithContext(ctx),
+		tui.WithAltScreen(),
+		tui.WithContext(ctx),
 	)
 	finalModel, err := prog.Run()
 	if err != nil {

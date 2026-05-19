@@ -4,10 +4,8 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type state int
@@ -62,11 +60,11 @@ type CreateModel struct {
 	catIdx       int
 
 	focus      int
-	nameInput  textinput.Model
-	descInput  textinput.Model
-	groupInput textinput.Model
+	nameInput  tui.TextInput
+	descInput  tui.TextInput
+	groupInput tui.TextInput
 
-	spinner spinner.Model
+	spinner tui.Spinner
 
 	width  int
 	height int
@@ -85,27 +83,27 @@ func NewCreateModel(opts CreateModelOptions) CreateModel {
 		vis = VisibilityPrivate
 	}
 
-	name := textinput.New()
-	name.Placeholder = "my-new-repo"
-	name.CharLimit = 100
-	name.Width = 40
+	name := tui.NewTextInput()
+	name.SetPlaceholder("my-new-repo")
+	name.SetCharLimit(100)
+	name.SetWidth(40)
 	name.SetValue(opts.Name)
 
-	desc := textinput.New()
-	desc.Placeholder = "(optional) one-line description"
-	desc.CharLimit = 200
-	desc.Width = 60
+	desc := tui.NewTextInput()
+	desc.SetPlaceholder("(optional) one-line description")
+	desc.SetCharLimit(200)
+	desc.SetWidth(60)
 	desc.SetValue(opts.Description)
 
-	group := textinput.New()
-	group.Placeholder = "(optional) project group/dir"
-	group.CharLimit = 80
-	group.Width = 40
+	group := tui.NewTextInput()
+	group.SetPlaceholder("(optional) project group/dir")
+	group.SetCharLimit(80)
+	group.SetWidth(40)
 	group.SetValue(opts.Group)
 
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = createAccent
+	sp := tui.NewSpinner()
+	sp.SetStyle(tui.DotSpinner)
+	sp.SetTextStyle(createAccent)
 
 	visibilities := []Visibility{VisibilityPrivate, VisibilityPublic}
 	visIdx := 0
@@ -141,19 +139,19 @@ func NewCreateModel(opts CreateModelOptions) CreateModel {
 	return m
 }
 
-func (m CreateModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.fetchOwnersCmd())
+func (m CreateModel) Init() tui.Cmd {
+	return tui.Batch(m.spinner.Tick, m.fetchOwnersCmd())
 }
 
-func (m CreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m CreateModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
 
-	case spinner.TickMsg:
-		var cmd tea.Cmd
+	case tui.SpinnerTickMsg:
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
@@ -189,19 +187,19 @@ func (m CreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.st = stateErrored
 		return m, nil
 
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m CreateModel) handleKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	switch m.st {
 	case stateLoadingOwners:
 		switch msg.String() {
 		case "ctrl+c", "esc":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 		return m, nil
 
@@ -209,7 +207,7 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "esc", "q":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		case "enter":
 
 			if len(m.owners) == 0 {
@@ -225,13 +223,13 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case stateDone:
 
-		return m, tea.Quit
+		return m, tui.Quit
 
 	case stateCreating:
 
 		if msg.String() == "ctrl+c" {
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 		return m, nil
 	}
@@ -239,15 +237,15 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.canceled = true
-		return m, tea.Quit
+		return m, tui.Quit
 	case "esc":
 
 		if m.focus == focusCreate {
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 		m.canceled = true
-		return m, tea.Quit
+		return m, tui.Quit
 	case "tab":
 		m.focus = (m.focus + 1) % focusCount
 		return m, m.refocus()
@@ -264,15 +262,15 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case focusCategory:
 		return m.handleToggleKey(msg, &m.catIdx, len(m.categories))
 	case focusName:
-		var cmd tea.Cmd
+		var cmd tui.Cmd
 		m.nameInput, cmd = m.nameInput.Update(msg)
 		return m, cmd
 	case focusDescription:
-		var cmd tea.Cmd
+		var cmd tui.Cmd
 		m.descInput, cmd = m.descInput.Update(msg)
 		return m, cmd
 	case focusGroup:
-		var cmd tea.Cmd
+		var cmd tui.Cmd
 		m.groupInput, cmd = m.groupInput.Update(msg)
 		return m, cmd
 	case focusCreate:
@@ -283,13 +281,13 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.st = stateCreating
-			return m, tea.Batch(m.spinner.Tick, m.createCmd())
+			return m, tui.Batch(m.spinner.Tick, m.createCmd())
 		}
 	}
 	return m, nil
 }
 
-func (m CreateModel) handleOwnerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m CreateModel) handleOwnerKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if len(m.owners) == 0 {
 		return m, nil
 	}
@@ -310,7 +308,7 @@ func (m CreateModel) handleOwnerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m CreateModel) handleToggleKey(msg tea.KeyMsg, idx *int, max int) (tea.Model, tea.Cmd) {
+func (m CreateModel) handleToggleKey(msg tui.KeyMsg, idx *int, max int) (tui.Model, tui.Cmd) {
 	switch msg.String() {
 	case "left", "h":
 		if *idx > 0 {
@@ -330,7 +328,7 @@ func (m CreateModel) handleToggleKey(msg tea.KeyMsg, idx *int, max int) (tea.Mod
 	return m, nil
 }
 
-func (m *CreateModel) refocus() tea.Cmd {
+func (m *CreateModel) refocus() tui.Cmd {
 	m.nameInput.Blur()
 	m.descInput.Blur()
 	m.groupInput.Blur()

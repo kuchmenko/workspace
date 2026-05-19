@@ -5,9 +5,9 @@ import (
 	"os"
 	"text/tabwriter"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/aliasmgr"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +33,7 @@ func newAliasCmd() *cobra.Command {
 
 func runAliasTUI(cmd *cobra.Command, args []string) error {
 	m := aliasmgr.New(ws, wsRoot)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tui.NewProgram(m, tui.WithAltScreen())
 	res, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("TUI crashed: %w", err)

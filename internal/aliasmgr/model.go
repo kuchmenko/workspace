@@ -4,11 +4,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type step int
@@ -48,9 +46,9 @@ type Model struct {
 	items         []item
 	cursor        int
 	offset        int
-	search        textinput.Model
+	search        tui.TextInput
 	editing       bool
-	editInput     textinput.Model
+	editInput     tui.TextInput
 	editTarget    int
 	result        Result
 	stepChangedAt time.Time
@@ -59,12 +57,12 @@ type Model struct {
 func New(ws *config.Workspace, root string) Model {
 	items := buildItems(ws)
 
-	search := textinput.New()
-	search.Placeholder = "type to search..."
-	search.CharLimit = 60
+	search := tui.NewTextInput()
+	search.SetPlaceholder("type to search...")
+	search.SetCharLimit(60)
 
-	edit := textinput.New()
-	edit.CharLimit = 32
+	edit := tui.NewTextInput()
+	edit.SetCharLimit(32)
 
 	return Model{
 		ws:        ws,
@@ -130,23 +128,23 @@ func buildItems(ws *config.Workspace) []item {
 	return items
 }
 
-func (m Model) Init() tea.Cmd {
+func (m Model) Init() tui.Cmd {
 	return m.search.Focus()
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 
@@ -202,19 +200,19 @@ func (m Model) buildAliasMap() map[string]string {
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+	titleStyle = tui.NewStyle().Bold(true).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	selectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	cursorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	checkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	uncheckStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	warnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	groupNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
-	rootNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	selectedStyle  = tui.NewStyle().Foreground(tui.Color("6"))
+	dimStyle       = tui.NewStyle().Foreground(tui.Color("8"))
+	cursorStyle    = tui.NewStyle().Foreground(tui.Color("6")).Bold(true)
+	checkStyle     = tui.NewStyle().Foreground(tui.Color("2"))
+	uncheckStyle   = tui.NewStyle().Foreground(tui.Color("8"))
+	warnStyle      = tui.NewStyle().Foreground(tui.Color("3"))
+	errStyle       = tui.NewStyle().Foreground(tui.Color("1"))
+	helpStyle      = tui.NewStyle().Foreground(tui.Color("8"))
+	groupNameStyle = tui.NewStyle().Foreground(tui.Color("4")).Bold(true)
+	rootNameStyle  = tui.NewStyle().Foreground(tui.Color("5")).Bold(true)
 )

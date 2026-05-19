@@ -29,6 +29,7 @@ func (t *TextInput) SetPlaceholder(p string) { t.ti.Placeholder = p }
 func (t *TextInput) SetPrompt(p string)      { t.ti.Prompt = p }
 func (t *TextInput) SetCharLimit(n int)      { t.ti.CharLimit = n }
 func (t *TextInput) SetWidth(w int)          { t.ti.Width = w }
+func (t *TextInput) CursorEnd()              { t.ti.CursorEnd() }
 
 type SpinnerStyle struct{ s spinner.Spinner }
 

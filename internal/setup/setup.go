@@ -3,10 +3,8 @@ package setup
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	gh "github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type step int
@@ -41,7 +39,7 @@ type Model struct {
 	step          step
 	width         int
 	height        int
-	spinner       spinner.Model
+	spinner       tui.Spinner
 	err           error
 	result        Result
 	username      string
@@ -53,9 +51,9 @@ type Model struct {
 }
 
 func NewModel() Model {
-	s := spinner.New()
-	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	s := tui.NewSpinner()
+	s.SetStyle(tui.DotSpinner)
+	s.SetTextStyle(tui.NewStyle().Foreground("6"))
 
 	return Model{
 		step:    stepLoading,
@@ -63,18 +61,18 @@ func NewModel() Model {
 	}
 }
 
-func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, fetchRepos)
+func (m Model) Init() tui.Cmd {
+	return tui.Batch(m.spinner.Tick, fetchRepos)
 }
 
-func fetchRepos() tea.Msg {
+func fetchRepos() tui.Msg {
 	repos, username, err := gh.FetchAll()
 	return fetchDoneMsg{repos: repos, username: username, err: err}
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.selectModel.width = msg.Width
@@ -85,7 +83,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.confirmModel.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 
 		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
@@ -93,7 +91,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 
@@ -111,28 +109,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateLoading(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case fetchDoneMsg:
 		if msg.err != nil {
 			m.result = Result{Err: msg.err}
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 		m.username = msg.username
 		m.selectModel = newSelectModel(msg.repos, msg.username, m.width, m.height)
 		m.step = stepSelect
 		m.stepChangedAt = time.Now()
 		return m, m.selectModel.search.Focus()
-	case spinner.TickMsg:
-		var cmd tea.Cmd
+	case tui.SpinnerTickMsg:
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	}
 	return m, nil
 }
 
-func (m Model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "enter" {
+func (m Model) updateSelect(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok && key.String() == "enter" {
 		selected := m.selectModel.selected()
 		if len(selected) == 0 {
 			return m, nil
@@ -142,18 +140,18 @@ func (m Model) updateSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stepChangedAt = time.Now()
 		return m, nil
 	}
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "escape" {
+	if key, ok := msg.(tui.KeyMsg); ok && key.String() == "escape" {
 		m.result = Result{Canceled: true}
-		return m, tea.Quit
+		return m, tui.Quit
 	}
 
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.selectModel, cmd = m.selectModel.update(msg)
 	return m, cmd
 }
 
-func (m Model) updateGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m Model) updateGroup(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
 			if !m.groupModel.editing {
@@ -174,13 +172,13 @@ func (m Model) updateGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.groupModel, cmd = m.groupModel.update(msg)
 	return m, cmd
 }
 
-func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
 			m.result = Result{
@@ -188,10 +186,10 @@ func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Groups:    m.confirmModel.groups,
 				Username:  m.username,
 			}
-			return m, tea.Quit
+			return m, tui.Quit
 		case "n", "N":
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		case "escape":
 			m.step = stepGroup
 			m.stepChangedAt = time.Now()
@@ -223,48 +221,48 @@ func (m Model) GetResult() Result {
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().
+	titleStyle = tui.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	subtitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	subtitleStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6"))
+	selectedStyle = tui.NewStyle().
+			Foreground(tui.Color("6"))
 
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	dimStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	cursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	cursorStyle = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1")).
+	errorStyle = tui.NewStyle().
+			Foreground(tui.Color("1")).
 			Bold(true)
 
-	activeTabStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+	activeTabStyle = tui.NewStyle().
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	inactiveTabStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("7")).
+	inactiveTabStyle = tui.NewStyle().
+				Foreground(tui.Color("7")).
 				Padding(0, 1)
 
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	helpStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	groupHeaderStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("6")).
+	groupHeaderStyle = tui.NewStyle().
+				Foreground(tui.Color("6")).
 				Bold(true)
 
-	checkStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("2"))
+	checkStyle = tui.NewStyle().
+			Foreground(tui.Color("2"))
 
-	uncheckStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	uncheckStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 )

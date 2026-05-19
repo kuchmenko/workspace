@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/alias"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type treeRow struct {
@@ -148,17 +148,17 @@ func (m Model) maxVisible() int {
 	return h
 }
 
-func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if m.editing {
 		return m.updateEditing(msg)
 	}
 
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		rows := m.buildTree()
 		switch key.String() {
 		case "esc":
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		case "enter":
 			m.step = stepConfirm
 			m.stepChangedAt = time.Now()
@@ -206,7 +206,7 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	prev := m.search.Value()
 	m.search, cmd = m.search.Update(msg)
 	if m.search.Value() != prev {
@@ -216,8 +216,8 @@ func (m Model) updateManage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateEditing(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m Model) updateEditing(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
 			name := strings.TrimSpace(m.editInput.Value())
@@ -232,7 +232,7 @@ func (m Model) updateEditing(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.editInput, cmd = m.editInput.Update(msg)
 	return m, cmd
 }

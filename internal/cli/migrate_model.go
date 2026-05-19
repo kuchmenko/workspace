@@ -4,11 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/migrate"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type migrateStep int
@@ -42,7 +40,7 @@ type migrateModel struct {
 	skipped   int
 	canceled  bool
 
-	spinner spinner.Model
+	spinner tui.Spinner
 	sidecar *migrate.Sidecar
 }
 
@@ -63,9 +61,9 @@ type migrateDoneMsg struct {
 type migrateAllDoneMsg struct{}
 
 func newMigrateModel(plan *migratePlan, machine string, resume map[string]migrate.DoneEntry) migrateModel {
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	sp := tui.NewSpinner()
+	sp.SetStyle(tui.DotSpinner)
+	sp.SetTextStyle(tui.NewStyle().Foreground("6"))
 
 	sc := migrate.New(wsRoot)
 	for k, v := range resume {
@@ -82,19 +80,19 @@ func newMigrateModel(plan *migratePlan, machine string, resume map[string]migrat
 	}
 }
 
-func (m migrateModel) Init() tea.Cmd {
+func (m migrateModel) Init() tui.Cmd {
 	return m.spinner.Tick
 }
 
-func (m migrateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m migrateModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 
@@ -106,15 +104,15 @@ func (m migrateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mStepMigrating:
 		return m.updateMigrating(msg)
 	case mStepDone:
-		if _, ok := msg.(tea.KeyMsg); ok {
-			return m, tea.Quit
+		if _, ok := msg.(tui.KeyMsg); ok {
+			return m, tui.Quit
 		}
 	}
 	return m, nil
 }
 
-func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m migrateModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
 
@@ -123,28 +121,28 @@ func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if len(m.queue) == 0 {
 				m.step = mStepDone
-				return m, tea.Quit
+				return m, tui.Quit
 			}
 
 			if err := migrate.Save(m.sidecar); err != nil {
 				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
-				return m, tea.Quit
+				return m, tui.Quit
 			}
 			conflict.Notify("ws: migrate started",
 				fmt.Sprintf("%s: %d projects", wsRoot, len(m.queue)))
 			return m.advance()
 		case "n", "N", "escape":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 	return m, nil
 }
 
-func (m migrateModel) advance() (tea.Model, tea.Cmd) {
+func (m migrateModel) advance() (tui.Model, tui.Cmd) {
 	if m.cursor >= len(m.queue) {
 		m.step = mStepDone
-		return m, tea.Quit
+		return m, tui.Quit
 	}
 	m.current = m.queue[m.cursor]
 	switch m.current.State {
@@ -152,7 +150,7 @@ func (m migrateModel) advance() (tea.Model, tea.Cmd) {
 
 		m.step = mStepMigrating
 		m.stepChangedAt = time.Now()
-		return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
+		return m, tui.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
 	case mstDirty, mstStash, mstDetached:
 		m.step = mStepDecision
 		m.stepChangedAt = time.Now()
@@ -164,8 +162,8 @@ func (m migrateModel) advance() (tea.Model, tea.Cmd) {
 	return m.advance()
 }
 
-func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+func (m migrateModel) updateDecision(msg tui.Msg) (tui.Model, tui.Cmd) {
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -182,7 +180,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			resolved = true
 		case "a", "A":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	case mstStash:
 		switch key.String() {
@@ -194,7 +192,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			resolved = true
 		case "a", "A":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	case mstDetached:
 		switch key.String() {
@@ -206,7 +204,7 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 			resolved = true
 		case "a", "A":
 			m.canceled = true
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 	if !resolved {
@@ -220,14 +218,14 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.step = mStepMigrating
 	m.stepChangedAt = time.Now()
-	return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
+	return m, tui.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
 }
 
-func (m migrateModel) startMigrate(index int) tea.Cmd {
+func (m migrateModel) startMigrate(index int) tui.Cmd {
 	item := m.queue[index]
 	dec := m.decisions[item.Name]
 	machine := m.machine
-	return func() tea.Msg {
+	return func() tui.Msg {
 		proj := item.Project
 		opts := migrate.Options{
 			WIP:             dec.WIP,
@@ -240,10 +238,10 @@ func (m migrateModel) startMigrate(index int) tea.Cmd {
 	}
 }
 
-func (m migrateModel) updateMigrating(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m migrateModel) updateMigrating(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		var cmd tea.Cmd
+	case tui.SpinnerTickMsg:
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	case migrateDoneMsg:
@@ -260,7 +258,7 @@ func (m migrateModel) updateMigrating(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.advance()
 	case migrateAllDoneMsg:
 		m.step = mStepDone
-		return m, tea.Quit
+		return m, tui.Quit
 	}
 	return m, nil
 }

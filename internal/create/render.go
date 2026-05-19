@@ -2,9 +2,8 @@ package create
 
 import (
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func (m CreateModel) View() string {
@@ -181,19 +180,19 @@ func (m CreateModel) viewDone() string {
 }
 
 var (
-	createTitle = lipgloss.NewStyle().
+	createTitle = tui.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
-	createDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	createLabel    = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true)
-	createCursor   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	createAccent   = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	createErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	createCheck    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	createChip     = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
-	createItemName = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	createBtn      = lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Background(lipgloss.Color("8"))
-	createBtnFocus = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Bold(true)
+	createDim      = tui.NewStyle().Foreground(tui.Color("8"))
+	createLabel    = tui.NewStyle().Foreground(tui.Color("7")).Bold(true)
+	createCursor   = tui.NewStyle().Foreground(tui.Color("6")).Bold(true)
+	createAccent   = tui.NewStyle().Foreground(tui.Color("6")).Bold(true)
+	createErr      = tui.NewStyle().Foreground(tui.Color("1")).Bold(true)
+	createCheck    = tui.NewStyle().Foreground(tui.Color("2")).Bold(true)
+	createChip     = tui.NewStyle().Foreground(tui.Color("4")).Bold(true)
+	createItemName = tui.NewStyle().Foreground(tui.Color("15"))
+	createBtn      = tui.NewStyle().Foreground(tui.Color("7")).Background(tui.Color("8"))
+	createBtnFocus = tui.NewStyle().Foreground(tui.Color("0")).Background(tui.Color("6")).Bold(true)
 )
