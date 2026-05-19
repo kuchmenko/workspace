@@ -5,16 +5,12 @@ import (
 	"sort"
 )
 
-// ValidationKind enumerates the structural problems Validate can detect.
 type ValidationKind string
 
 const (
 	ValidationDuplicateBranch ValidationKind = "duplicate-branch"
 )
 
-// ValidationIssue describes one Workspace structural defect found by
-// Validate. Callers (notably the reconciler) translate these into
-// conflict-store entries (KindBranchDuplicate).
 type ValidationIssue struct {
 	Kind    ValidationKind
 	Project string
@@ -22,11 +18,6 @@ type ValidationIssue struct {
 	Detail  string
 }
 
-// Validate inspects the in-memory Workspace for structural defects that
-// the TOML decoder will not catch on its own — currently: duplicate
-// branch names within a project's [[branches]] list, which arise when
-// two machines independently add the same branch and union-merge
-// concatenates their writes.
 func (w *Workspace) Validate() []ValidationIssue {
 	var issues []ValidationIssue
 	for projName, proj := range w.Projects {
@@ -41,9 +32,6 @@ func (w *Workspace) Validate() []ValidationIssue {
 	return issues
 }
 
-// duplicateBranchIssues reports duplicate-name [[branches]] entries
-// within one project. The first occurrence is tracked silently; every
-// subsequent occurrence yields a ValidationIssue.
 func duplicateBranchIssues(projName string, branches []BranchMeta) []ValidationIssue {
 	seen := make(map[string]int, len(branches))
 	var out []ValidationIssue

@@ -18,7 +18,6 @@ const (
 	stepConfirm
 )
 
-// kind of an item in the manage list.
 type itemKind int
 
 const (
@@ -28,13 +27,12 @@ const (
 )
 
 type item struct {
-	name    string // project or group key
+	name    string
 	kind    itemKind
-	alias   string // current alias name (empty if not aliased)
-	checked bool   // selected to have an alias
+	alias   string
+	checked bool
 }
 
-// Result is returned to the caller after the TUI exits.
 type Result struct {
 	Confirmed bool
 	Canceled  bool
@@ -53,7 +51,7 @@ type Model struct {
 	search        textinput.Model
 	editing       bool
 	editInput     textinput.Model
-	editTarget    int // index in items being edited
+	editTarget    int
 	result        Result
 	stepChangedAt time.Time
 }
@@ -78,14 +76,13 @@ func New(ws *config.Workspace, root string) Model {
 }
 
 func buildItems(ws *config.Workspace) []item {
-	// Reverse map alias→target so we can fill `alias` field per item.
 	aliasFor := make(map[string]string, len(ws.Aliases))
 	for n, t := range ws.Aliases {
 		aliasFor[t] = n
 	}
 
 	var items []item
-	// Synthetic workspace-root row, always present.
+
 	{
 		rootAlias := aliasFor[alias.RootTarget]
 		items = append(items, item{
@@ -115,14 +112,13 @@ func buildItems(ws *config.Workspace) []item {
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		// Root row pinned to the top.
 		if items[i].kind == kindRoot {
 			return true
 		}
 		if items[j].kind == kindRoot {
 			return false
 		}
-		// aliased first, then by name
+
 		if items[i].checked != items[j].checked {
 			return items[i].checked
 		}
@@ -173,11 +169,8 @@ func (m Model) View() string {
 	return ""
 }
 
-// GetResult returns the model's result after Quit.
 func (m Model) GetResult() Result { return m.result }
 
-// generationSeed returns the string used to derive an auto-generated alias.
-// For a synthetic root row we don't want to feed "." into Generate.
 func (it item) generationSeed() string {
 	if it.kind == kindRoot {
 		return "workspace"
@@ -185,12 +178,10 @@ func (it item) generationSeed() string {
 	return it.name
 }
 
-// buildAliasMap collects checked items, generating names for ones the user
-// did not edit explicitly.
 func (m Model) buildAliasMap() map[string]string {
 	out := make(map[string]string)
 	taken := make(map[string]struct{})
-	// Pass 1: explicit names
+
 	for _, it := range m.items {
 		if !it.checked || it.alias == "" {
 			continue
@@ -198,7 +189,7 @@ func (m Model) buildAliasMap() map[string]string {
 		taken[it.alias] = struct{}{}
 		out[it.alias] = it.name
 	}
-	// Pass 2: generated names
+
 	for _, it := range m.items {
 		if !it.checked || it.alias != "" {
 			continue
@@ -210,7 +201,6 @@ func (m Model) buildAliasMap() map[string]string {
 	return out
 }
 
-// Styles
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).
 			Foreground(lipgloss.Color("15")).

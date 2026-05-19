@@ -9,17 +9,12 @@ import (
 )
 
 func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Handle pending delete confirmation.
 	if m.pendingDelete {
 		m.pendingDelete = false
 		if msg.String() == "y" && m.deleteItem != nil {
 			it := m.deleteItem
 			m.deleteItem = nil
-			// Use the registry-aware variant so the [[branches]] entry
-			// is released alongside the worktree directory; otherwise
-			// this machine stays listed as owner with stale
-			// last_pushed_* and the reconciler keeps recreating
-			// branch-orphan after the on-disk worktree is gone.
+
 			projID := ""
 			if it.parentProj != nil {
 				projID = it.parentProj.ID
@@ -40,12 +35,9 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	m.statusMsg = "" // clear status on any key
+	m.statusMsg = ""
 	item := m.currentItem()
 
-	// Number hotkeys 1-9 open the chip-action modal for the
-	// corresponding chip. Handled before the navigation switch so the
-	// digits never collide with future bindings.
 	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 		idx := int(s[0] - '1')
 		if idx < len(m.headerChips) {
@@ -92,14 +84,14 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "p":
-		// Claude with prompt — available on group, project, worktree.
+
 		if item != nil && item.path != "" && (item.kind == KindGroup || item.kind == KindProject || item.kind == KindWorktree) {
 			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
 			m.promptInput = ""
 			m.mode = viewPromptInput
 			return m, nil
 		}
-		// Prompt resume for sessions.
+
 		if item != nil && item.kind == KindPortal && item.session != nil {
 			m.pendingLaunch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
 			m.promptInput = ""
@@ -108,7 +100,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "w":
-		// New worktree — only on projects.
+
 		if item != nil && item.kind == KindProject {
 			m.wtNoLaunch = true
 			m.wtBranch = ""
@@ -119,7 +111,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "e":
-		// Edit project metadata (group / category) — only on projects.
+
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.popupProj = item.project
 			m.editGroup = item.project.Group
@@ -140,11 +132,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "f":
-		// Toggle favorite on the cursor row. Works on projects and on
-		// groups; both kinds appear as chips in the pinned header.
-		// Persists the new flag to workspace.toml and refreshes the
-		// in-memory model so the new state is visible without a TUI
-		// restart.
+
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
 		}
@@ -175,7 +163,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "tab":
-		// Expand/collapse — groups and projects.
+
 		if item != nil {
 			switch item.kind {
 			case KindGroup:
@@ -200,7 +188,7 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
 				break
 			}
-			// Ask for confirmation.
+
 			name := worktreeDisplayName(*wt)
 			m.statusMsg = fmt.Sprintf("delete %s? y to confirm", name)
 			m.pendingDelete = true
@@ -214,13 +202,13 @@ func (m *Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.recomputeFlash()
 
 	case "S":
-		// Global search — expand everything, search all items.
+
 		m.flashGlobal = true
 		m.savedExpanded = make(map[string]bool)
 		for k, v := range m.expanded {
 			m.savedExpanded[k] = v
 		}
-		// Expand all groups and projects.
+
 		for _, ws := range m.workspaces {
 			for _, g := range ws.Groups {
 				m.expanded[g] = true

@@ -11,20 +11,19 @@ import (
 
 type groupModel struct {
 	groups      []GroupEntry
-	cursor      int // group index
-	repoCursor  int // repo index within group (-1 = group header)
+	cursor      int
+	repoCursor  int
 	editing     bool
 	editInput   textinput.Model
-	moving      bool // moving a repo
-	moveFrom    int  // source group index
-	moveRepoIdx int  // source repo index
+	moving      bool
+	moveFrom    int
+	moveRepoIdx int
 	width       int
 	height      int
 	username    string
 }
 
 func newGroupModel(repos []gh.Repo, username string, w, h int) groupModel {
-	// Auto-group by owner
 	groupMap := make(map[string][]gh.Repo)
 	var order []string
 
@@ -63,12 +62,11 @@ func newGroupModel(repos []gh.Repo, username string, w, h int) groupModel {
 func (m groupModel) totalItems() int {
 	n := 0
 	for _, g := range m.groups {
-		n += 1 + len(g.Repos) // header + repos
+		n += 1 + len(g.Repos)
 	}
 	return n
 }
 
-// flatIndex returns (groupIdx, repoIdx) where repoIdx=-1 means the group header.
 func (m groupModel) flatToGroupRepo(flat int) (int, int) {
 	pos := 0
 	for gi, g := range m.groups {
@@ -153,7 +151,7 @@ func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
 		}
 
 	case "r":
-		// Rename current group
+
 		if m.repoCursor == -1 && m.cursor < len(m.groups) {
 			m.editing = true
 			m.editInput.SetValue(m.groups[m.cursor].Name)
@@ -162,7 +160,7 @@ func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
 		}
 
 	case "m":
-		// Move current repo to another group
+
 		if m.repoCursor >= 0 {
 			m.moving = true
 			m.moveFrom = m.cursor
@@ -170,7 +168,7 @@ func (m groupModel) update(msg tea.Msg) (groupModel, tea.Cmd) {
 		}
 
 	case "n":
-		// New empty group
+
 		m.groups = append(m.groups, GroupEntry{Name: "new-group"})
 		m.cursor = len(m.groups) - 1
 		m.repoCursor = -1
@@ -220,7 +218,6 @@ func (m groupModel) updateMoving(msg tea.Msg) (groupModel, tea.Cmd) {
 			}
 		case "enter":
 			if m.cursor != m.moveFrom {
-				// Move repo
 				repo := m.groups[m.moveFrom].Repos[m.moveRepoIdx]
 				m.groups[m.moveFrom].Repos = append(
 					m.groups[m.moveFrom].Repos[:m.moveRepoIdx],
@@ -228,7 +225,6 @@ func (m groupModel) updateMoving(msg tea.Msg) (groupModel, tea.Cmd) {
 				)
 				m.groups[m.cursor].Repos = append(m.groups[m.cursor].Repos, repo)
 
-				// Remove empty groups
 				if len(m.groups[m.moveFrom].Repos) == 0 {
 					m.groups = append(m.groups[:m.moveFrom], m.groups[m.moveFrom+1:]...)
 					if m.cursor > m.moveFrom {

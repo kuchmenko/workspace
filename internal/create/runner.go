@@ -8,15 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// ErrCancelled is returned by Run when the user dismisses the TUI
-// without confirming. The cobra layer maps this to a soft exit (no
-// error printed, exit 0) since cancellation is a user action, not a
-// failure.
 var ErrCancelled = errors.New("create canceled by user")
 
-// runTUI launches the model as a tea.Program and returns the captured
-// Result when the user confirms. Cancellation (Esc, Ctrl+C) returns
-// (nil, ErrCancelled).
 func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	model := NewCreateModel(CreateModelOptions{
 		WsRoot:      opts.WsRoot,

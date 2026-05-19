@@ -55,7 +55,6 @@ func runBootstrap(args []string, dryRun bool) error {
 		return nil
 	}
 
-	// Sidecar pre-check: another bootstrap running? Stale crash to resume?
 	existing, err := bootstrap.Load(wsRoot)
 	if err != nil {
 		return fmt.Errorf("read sidecar: %w", err)
@@ -66,7 +65,7 @@ func runBootstrap(args []string, dryRun bool) error {
 			return fmt.Errorf("bootstrap already running (pid %d, started %s)",
 				existing.Meta.PID, existing.Meta.Started.Local().Format(time.RFC3339))
 		}
-		// Stale: ask the user what to do.
+
 		fmt.Printf("Found incomplete bootstrap from %s (pid %d, %d projects done).\n",
 			existing.Meta.Started.Local().Format(time.RFC3339),
 			existing.Meta.PID, len(existing.Done))
@@ -89,13 +88,11 @@ func runBootstrap(args []string, dryRun bool) error {
 		}
 	}
 
-	// Dry-run: render the plan summary and exit. Never touches the sidecar.
 	if dryRun {
 		printPlanText(plan)
 		return nil
 	}
 
-	// Filter out anything we already finished in a previous (resumed) run.
 	toClone := []bootstrap.PlanItem{}
 	for _, it := range plan.Bucket(bootstrap.StateMissing) {
 		if _, done := resumeFrom[it.Name]; done {
@@ -119,14 +116,11 @@ func runBootstrap(args []string, dryRun bool) error {
 	}
 	final := finalRaw.(bootstrapModel)
 
-	// Errors and notifications happen AFTER the TUI exits so the terminal is
-	// clean and full git stderr can be printed without breaking layout.
 	if final.canceled {
 		fmt.Println("Bootstrap canceled by user.")
 		return nil
 	}
 
-	// Per spec, all clone errors are surfaced in full here.
 	if len(final.errors) > 0 {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, errorBannerStyle.Render("Bootstrap finished with errors:"))
@@ -136,20 +130,16 @@ func runBootstrap(args []string, dryRun bool) error {
 		}
 	}
 
-	// Final commit step: re-read workspace.toml and persist default_branch
-	// values from the sidecar in one atomic write.
 	if final.sidecar != nil && len(final.sidecar.Done) > 0 {
 		if err := commitBootstrap(final.sidecar); err != nil {
 			return fmt.Errorf("commit bootstrap: %w", err)
 		}
-		// Best-effort sidecar cleanup. Failure here is non-fatal — the next
-		// run will treat it as stale.
+
 		if err := bootstrap.Delete(wsRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not remove sidecar: %v\n", err)
 		}
 	}
 
-	// Final summary + system notification.
 	cloned := len(final.successes)
 	failed := len(final.errors)
 	total := cloned + failed
@@ -168,10 +158,6 @@ func runBootstrap(args []string, dryRun bool) error {
 	return nil
 }
 
-// commitBootstrap re-reads workspace.toml from disk (in case the user
-// hand-edited it during a long bootstrap), applies default_branch values
-// captured in the sidecar, and saves once. Only fields not already populated
-// are touched, so we never overwrite the user's intent.
 func commitBootstrap(sc *bootstrap.Sidecar) error {
 	freshWS, err := config.Load(wsRoot)
 	if err != nil {
@@ -191,7 +177,7 @@ func commitBootstrap(sc *bootstrap.Sidecar) error {
 			freshWS.Projects[name] = proj
 		}
 	}
-	// Swap into the package-level ws so saveWorkspace() picks it up.
+
 	ws = freshWS
 	return saveWorkspace()
 }

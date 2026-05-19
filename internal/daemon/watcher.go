@@ -16,7 +16,7 @@ type Watcher struct {
 	fsw    *fsnotify.Watcher
 	logger *log.Logger
 	mu     sync.Mutex
-	// debounce: track recently seen events to avoid duplicates
+
 	seen map[string]time.Time
 }
 
@@ -29,7 +29,6 @@ func NewWatcher(logger *log.Logger) *Watcher {
 	return &Watcher{fsw: fsw, logger: logger, seen: make(map[string]time.Time)}
 }
 
-// Add watches a workspace root directory for new git repos.
 func (w *Watcher) Add(root string) {
 	if w.fsw == nil {
 		return
@@ -41,10 +40,6 @@ func (w *Watcher) Add(root string) {
 	}
 }
 
-// topLevelGroupDirs lists immediate children of `root` that are
-// candidates for the watcher: directories, non-dotfile, non-empty.
-// Errors reading the root return an empty slice — the caller treats
-// the watcher as best-effort.
 func topLevelGroupDirs(root string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -72,9 +67,6 @@ func (w *Watcher) Run(quit <-chan struct{}) {
 	}
 }
 
-// dispatchOne reads one event from the watcher and dispatches it.
-// Returns false to signal "stop the Run loop" (quit closed or one of
-// the fsnotify channels closed); true to keep going.
 func (w *Watcher) dispatchOne(quit <-chan struct{}) bool {
 	select {
 	case <-quit:
@@ -97,7 +89,6 @@ func (w *Watcher) dispatchOne(quit <-chan struct{}) bool {
 }
 
 func (w *Watcher) handleCreate(path string) {
-	// Debounce: ignore if we saw this path in the last second
 	w.mu.Lock()
 	if last, ok := w.seen[path]; ok && time.Since(last) < time.Second {
 		w.mu.Unlock()
@@ -106,13 +97,11 @@ func (w *Watcher) handleCreate(path string) {
 	w.seen[path] = time.Now()
 	w.mu.Unlock()
 
-	// Check if it's a directory
 	info, err := os.Stat(path)
 	if err != nil || !info.IsDir() {
 		return
 	}
 
-	// Give git init a moment to complete
 	time.Sleep(500 * time.Millisecond)
 
 	if !git.IsRepo(path) {

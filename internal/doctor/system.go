@@ -13,10 +13,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
-// systemChecks runs the four system-level checks once per invocation.
-// Order is display order — daemon first because it's the broadest context,
-// then sidecar → conflicts → config drills from "environment" to
-// "configuration".
 func (r *Runner) systemChecks() []Finding {
 	return []Finding{
 		checkDaemon(),
@@ -26,10 +22,6 @@ func (r *Runner) systemChecks() []Finding {
 	}
 }
 
-// checkDaemon reports whether the background daemon is alive. We do not
-// offer to start it automatically: starting a daemon is an explicit user
-// action (ws daemon start), and the user's reasons for keeping it off
-// (laptop battery, intentional manual sync) are outside doctor's scope.
 func checkDaemon() Finding {
 	pid, alive := daemon.IsRunning()
 	if alive {
@@ -49,13 +41,6 @@ func checkDaemon() Finding {
 	}
 }
 
-// checkStaleSidecars returns one Finding per known sidecar kind that has
-// a dead pid recorded on disk. A stale sidecar would normally block the
-// reconciler for this workspace until removed, so this is important to
-// surface even though the recovery path is trivial.
-//
-// If every kind is either absent or live, returns a single OK finding so
-// the user sees that the check actually ran.
 func checkStaleSidecars(wsRoot string) Finding {
 	stale := findStaleSidecars(wsRoot)
 	if len(stale) == 0 {
@@ -76,8 +61,6 @@ func checkStaleSidecars(wsRoot string) Finding {
 	}
 }
 
-// findStaleSidecars returns the sidecar kinds whose pid is no longer
-// alive in `wsRoot`. Skips kinds with no sidecar present and live ones.
 func findStaleSidecars(wsRoot string) []sidecar.Kind {
 	kinds := []sidecar.Kind{sidecar.KindBootstrap, sidecar.KindMigrate}
 	var stale []sidecar.Kind
@@ -93,8 +76,6 @@ func findStaleSidecars(wsRoot string) []sidecar.Kind {
 	return stale
 }
 
-// sidecarKindNames maps a sidecar.Kind slice to a string slice for
-// the message-formatting path.
 func sidecarKindNames(kinds []sidecar.Kind) []string {
 	out := make([]string, 0, len(kinds))
 	for _, k := range kinds {
@@ -103,9 +84,6 @@ func sidecarKindNames(kinds []sidecar.Kind) []string {
 	return out
 }
 
-// deleteSidecars removes every sidecar in `kinds` from `wsRoot`.
-// Used as the Fix function for the stale-sidecar Finding; collapses
-// the multi-kind cleanup into one user action.
 func deleteSidecars(wsRoot string, kinds []sidecar.Kind) error {
 	for _, k := range kinds {
 		if err := sidecar.Delete(wsRoot, k); err != nil {
@@ -115,10 +93,6 @@ func deleteSidecars(wsRoot string, kinds []sidecar.Kind) error {
 	return nil
 }
 
-// checkConflicts surfaces any entries in ~/.local/state/ws/conflicts.json
-// that belong to this workspace. Doctor never auto-resolves — the
-// FixHint points at `ws sync resolve`, which is the single entry point
-// for conflict resolution.
 func checkConflicts(wsRoot string) Finding {
 	mine, err := loadProjectConflicts(wsRoot)
 	if err != nil {
@@ -153,10 +127,6 @@ func checkConflicts(wsRoot string) Finding {
 	}
 }
 
-// loadProjectConflicts opens the conflict store and returns the
-// conflicts whose Workspace path resolves to wsRoot. Errors from the
-// store are wrapped with a user-readable prefix so the caller can
-// drop them straight into Finding.Message.
 func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
 	store, err := conflict.Open()
 	if err != nil {
@@ -177,9 +147,6 @@ func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
 	return mine, nil
 }
 
-// oldestConflict picks the lowest-DetectedAt entry from a non-empty
-// slice. Used by checkConflicts to surface the most-aged conflict in
-// the doctor message; the full list lives in `ws sync resolve`.
 func oldestConflict(conflicts []conflict.Conflict) conflict.Conflict {
 	oldest := conflicts[0]
 	for _, c := range conflicts[1:] {
@@ -197,8 +164,6 @@ func projectOrGlobal(c conflict.Conflict) string {
 	return "workspace"
 }
 
-// humanizeAge renders a duration in the same style as status.go's
-// humanizeTime but focused on "how long has this been broken" framing.
 func humanizeAge(d time.Duration) string {
 	switch {
 	case d < time.Minute:
@@ -212,15 +177,6 @@ func humanizeAge(d time.Duration) string {
 	}
 }
 
-// checkConfig validates the currently loaded workspace.toml: every active
-// project must have a non-empty Remote and Path, its Status / Category
-// must be a known enum value, and the daemon duration strings (if set)
-// must parse. The goal is to catch hand-edited typos; the TOML parser
-// already rejects structural errors.
-//
-// Duration validation mirrors status.go's parseDuration — "30d" suffix
-// plus anything time.ParseDuration accepts — rather than re-deriving the
-// grammar, which would drift.
 func checkConfig(ws *config.Workspace) Finding {
 	if ws == nil {
 		return Finding{
@@ -248,10 +204,6 @@ func checkConfig(ws *config.Workspace) Finding {
 	}
 }
 
-// collectConfigIssues runs every per-field validator in the workspace
-// and concatenates their issue messages, sorted-by-project for
-// deterministic output. Drives both the OK / Error split in
-// checkConfig and unit tests that assert specific issue strings.
 func collectConfigIssues(ws *config.Workspace) []string {
 	var issues []string
 	for _, name := range sortedProjectNames(ws.Projects) {
@@ -261,8 +213,6 @@ func collectConfigIssues(ws *config.Workspace) []string {
 	return issues
 }
 
-// sortedProjectNames returns the project names of `projects` in
-// lexical order. Used for stable check ordering in the report.
 func sortedProjectNames(projects map[string]config.Project) []string {
 	out := make([]string, 0, len(projects))
 	for n := range projects {
@@ -272,8 +222,6 @@ func sortedProjectNames(projects map[string]config.Project) []string {
 	return out
 }
 
-// validateProject returns one issue string per per-field problem in
-// the given project. Empty slice when the project record is well-formed.
 func validateProject(name string, p config.Project) []string {
 	var issues []string
 	if strings.TrimSpace(p.Remote) == "" {
@@ -304,15 +252,12 @@ func validateProjectStatus(name string, s config.Status) string {
 func validateProjectCategory(name string, c config.Category) string {
 	switch c {
 	case config.CategoryPersonal, config.CategoryWork, "":
-		// "" is tolerated — category is optional.
+
 		return ""
 	}
 	return fmt.Sprintf("%s: unknown category %q", name, c)
 }
 
-// validateDaemonDurations checks that any non-empty daemon duration
-// strings parse as accepted Go durations (with the optional "Nd"
-// extension). Returns one issue per malformed entry.
 func validateDaemonDurations(d config.Daemon) []string {
 	var issues []string
 	for _, pair := range []struct{ name, val string }{
@@ -329,9 +274,6 @@ func validateDaemonDurations(d config.Daemon) []string {
 	return issues
 }
 
-// validDuration mirrors status.go's parseDuration — accepts a trailing
-// "d" suffix for day-granularity values (e.g. "30d") plus anything the
-// stdlib time.ParseDuration accepts ("5m", "1h30m").
 func validDuration(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {

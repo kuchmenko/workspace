@@ -14,20 +14,10 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// projectChecks runs every per-project check for one active project.
-// Order mirrors the natural "does it exist → does its git state look
-// right → does its branch config look right" progression.
-//
-// Checks that don't make sense for the current layout (e.g. fetch-refspec
-// on a plain checkout) short-circuit inside layoutOnlyInspectable so the
-// report doesn't pile up "not applicable" findings.
 func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
 	barePath, layoutFinding := r.checkLayout(name, proj)
 	findings := []Finding{layoutFinding}
 
-	// If the bare repo isn't present we cannot inspect any git state. Skip
-	// the rest — running them would raise a flood of secondary errors that
-	// are just symptoms of the layout problem.
 	if barePath == "" {
 		return findings
 	}
@@ -47,19 +37,10 @@ func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
 	return findings
 }
 
-// checkLayout uses the bootstrap package's state machine to classify the
-// project. Returns the absolute bare path when the project is present
-// (so downstream checks can reuse it), or "" otherwise.
 func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding) {
 	mainPath := filepath.Join(r.WsRoot, proj.Path)
 	barePath := layout.BarePath(mainPath)
 
-	// Mirror bootstrap.classify without calling it directly — classify is
-	// unexported in the bootstrap package, and duplicating the four-line
-	// decision here avoids exposing the helper for one caller. We
-	// intentionally don't replicate the "self" detection: workspaces
-	// can't register themselves as projects in practice, and even if
-	// they could, the bare-present branch below handles it correctly.
 	bareExists := pathExists(barePath)
 	mainExists := pathExists(mainPath)
 
@@ -98,19 +79,6 @@ func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding)
 	}
 }
 
-// checkFetchRefspec verifies remote.origin.fetch is configured in the
-// bare. This is the #14/PR#16 bug: without the refspec, `git fetch` in a
-// bare only updates FETCH_HEAD, so @{u} cannot resolve and AheadBehind
-// silently returns (0, 0, false) for every branch. Auto-fix reuses the
-// helper from internal/git.
-//
-// The follow-up fetch that actually populates refs/remotes/origin/*
-// lives in checkBranchUpstream — that's where the tracking ref is
-// needed to make HasUpstream return true, and moving the fetch there
-// means it runs in both "fix-refspec-too" and "only-upstream-broken"
-// passes (otherwise bares that had their refspec fixed in an earlier
-// tick keep failing branch-upstream forever until someone runs a
-// manual fetch).
 func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 	if git.HasFetchRefspec(barePath) {
 		return Finding{
@@ -132,16 +100,6 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 	}
 }
 
-// checkRemoteURL compares the bare's origin URL against workspace.toml's
-// declared remote. They should match exactly — `ws add` / migrate write
-// them both in lockstep, and any drift means someone edited one but not
-// the other.
-//
-// We do not attempt normalisation (SSH vs HTTPS, trailing .git) on
-// purpose: a mismatch here is almost always a typo in workspace.toml,
-// and silently treating "git@github.com:a/b" ≡ "https://github.com/a/b"
-// would hide the fact that the two refer to different transports (and
-// therefore different credentials / access paths).
 func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath string) Finding {
 	actual, err := git.RemoteURL(barePath)
 	if err != nil {
@@ -174,10 +132,6 @@ func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath strin
 	}
 }
 
-// checkRemoteReach runs `git ls-remote --exit-code origin HEAD` with a
-// short timeout. A failure here can be network-level (offline, DNS) or
-// auth-level (bad SSH key, token expired), but in either case the user
-// must fix it — doctor has no business trying to renegotiate credentials.
 func (r *Runner) checkRemoteReach(name, barePath string) Finding {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -208,16 +162,6 @@ func (r *Runner) checkRemoteReach(name, barePath string) Finding {
 	}
 }
 
-// checkDefaultBranch surfaces projects whose workspace.toml entry is
-// missing default_branch. That field is the anchor for ff-pulls, `ws
-// worktree new` base resolution, and bootstrap; leaving it empty forces
-// every consumer to guess.
-//
-// The fix is mostly mechanical: `refs/remotes/origin/HEAD` usually
-// points at the right branch after a recent fetch. If it doesn't
-// resolve, we fall back to "main" / "master" probe — same order git's
-// own ls-remote uses. If nothing resolves, we emit the warning without
-// an auto-fix so the user picks manually.
 func (r *Runner) checkDefaultBranch(name string, proj config.Project, barePath string) Finding {
 	if strings.TrimSpace(proj.DefaultBranch) != "" {
 		return Finding{
@@ -240,7 +184,7 @@ func (r *Runner) checkDefaultBranch(name string, proj config.Project, barePath s
 			FixHint:  "edit workspace.toml manually",
 		}
 	}
-	// SymbolicRef returns "origin/main"; strip the "origin/" prefix.
+
 	if i := strings.Index(detected, "/"); i >= 0 {
 		detected = detected[i+1:]
 	}
@@ -261,8 +205,6 @@ func (r *Runner) checkDefaultBranch(name string, proj config.Project, barePath s
 	}
 }
 
-// probeFallbackBranch checks the usual suspects when refs/remotes/origin/HEAD
-// isn't configured (which is the common case for bares cloned before PR#16).
 func probeFallbackBranch(barePath string) string {
 	for _, b := range []string{"main", "master"} {
 		if git.HasBranch(barePath, b) {
@@ -272,27 +214,9 @@ func probeFallbackBranch(barePath string) string {
 	return ""
 }
 
-// checkBranchUpstream ensures the default branch has branch.<X>.remote
-// and branch.<X>.merge configured AND that refs/remotes/origin/<X>
-// actually exists. Config alone isn't enough — git's @{upstream}
-// resolution needs the tracking ref, so HasUpstream keeps reporting
-// "missing" even after a config write if the ref is empty.
-//
-// Auto-fix therefore does both: SetBranchUpstream (idempotent) then
-// a best-effort Fetch to populate the tracking ref. Gated on
-// Runner.SkipRemote so offline users still get the config write
-// without a network call. A fetch failure does not invalidate the
-// fix — subsequent runs can retry — so the error is swallowed; the
-// next `ws doctor` will flag it again via remote-reach.
-//
-// There is one pre-condition we cannot repair: if HasBranch returns
-// false, the local default branch simply does not exist in this
-// bare, and there is nothing upstream-configuration-wise to set.
-// In that case we warn without an auto-fix.
 func (r *Runner) checkBranchUpstream(name string, proj config.Project, barePath string) Finding {
 	branch := strings.TrimSpace(proj.DefaultBranch)
 	if branch == "" {
-		// Already covered by the default-branch check; don't double-report.
 		return Finding{
 			Scope:    name,
 			Check:    "branch-upstream",
@@ -331,22 +255,13 @@ func (r *Runner) checkBranchUpstream(name string, proj config.Project, barePath 
 			if skipRemote {
 				return nil
 			}
-			// Populate refs/remotes/origin/<branch> so @{upstream}
-			// resolution works. Best-effort — config is the primary
-			// mutation and remains valid even if the fetch fails.
+
 			_ = git.Fetch(barePath)
 			return nil
 		},
 	}
 }
 
-// checkIndexLock walks every worktree under this project and reports any
-// that carry a stale .git/index.lock. Removing the lock is risky (could
-// corrupt an ongoing git operation), so there is no auto-fix — doctor
-// just surfaces them so the user can investigate.
-//
-// Returns a slice so a multi-worktree project with multiple locks emits
-// one finding per worktree rather than concatenating messages.
 func (r *Runner) checkIndexLock(name, barePath string) []Finding {
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
@@ -379,9 +294,6 @@ func (r *Runner) checkIndexLock(name, barePath string) []Finding {
 	return out
 }
 
-// lockedWorktrees returns the absolute paths of non-bare worktrees
-// whose index.lock is present. Hides the bare-skip + path collection
-// loop from checkIndexLock.
 func lockedWorktrees(wts []git.Worktree) []string {
 	var out []string
 	for _, wt := range wts {

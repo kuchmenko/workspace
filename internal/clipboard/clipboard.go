@@ -33,24 +33,14 @@ import (
 	"strings"
 )
 
-// ErrUnavailable is returned when no supported clipboard tool is
-// present on this platform. Callers treat this as "feature not
-// available here" rather than failure.
 var ErrUnavailable = errors.New("no clipboard tool available")
 
-// Reader is the exported interface so tests (and the future `ws add`
-// gather code) can inject a fake. The default implementation lives at
-// DefaultReader below.
 type Reader interface {
 	Read(ctx context.Context) (string, error)
 }
 
-// DefaultReader is the production Reader. Use it as the zero-config
-// choice; tests substitute their own implementation.
 var DefaultReader Reader = systemReader{}
 
-// systemReader is the concrete dispatcher. It is stateless — each
-// Read call probes the environment fresh.
 type systemReader struct{}
 
 func (systemReader) Read(ctx context.Context) (string, error) {
@@ -61,11 +51,6 @@ func (systemReader) Read(ctx context.Context) (string, error) {
 	return runTool(ctx, tool, args...)
 }
 
-// detect returns the command + args of the clipboard tool for the
-// current platform, or ErrUnavailable if nothing is usable.
-//
-// The detector is pure (no side effects beyond env/filesystem stat),
-// so it's safe to call repeatedly and cheap to test.
 func detect() (string, []string, error) {
 	switch runtime.GOOS {
 	case "linux":
@@ -76,10 +61,6 @@ func detect() (string, []string, error) {
 	return "", nil, ErrUnavailable
 }
 
-// detectLinuxClipboard prefers Wayland (wl-paste) when WAYLAND_DISPLAY
-// is set, falls back to X11 (xclip) when DISPLAY is set. Returns
-// ErrUnavailable when neither display server is active or its tool
-// is missing from PATH.
 func detectLinuxClipboard() (string, []string, error) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		if p, err := exec.LookPath("wl-paste"); err == nil {
@@ -94,9 +75,6 @@ func detectLinuxClipboard() (string, []string, error) {
 	return "", nil, ErrUnavailable
 }
 
-// detectDarwinClipboard returns the pbpaste binary path. macOS
-// always ships it but on minimal images (CI runners) the lookup
-// can fail; ErrUnavailable preserves that.
 func detectDarwinClipboard() (string, []string, error) {
 	if p, err := exec.LookPath("pbpaste"); err == nil {
 		return p, nil, nil
@@ -104,13 +82,10 @@ func detectDarwinClipboard() (string, []string, error) {
 	return "", nil, ErrUnavailable
 }
 
-// runTool executes cmd with args and returns trimmed stdout. ctx
-// controls cancellation (either an explicit cancel or a deadline).
 func runTool(ctx context.Context, cmd string, args ...string) (string, error) {
 	c := exec.CommandContext(ctx, cmd, args...)
 	out, err := c.Output()
 	if err != nil {
-		// Distinguish "ctx canceled / deadline" from "tool failed".
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -120,9 +95,6 @@ func runTool(ctx context.Context, cmd string, args ...string) (string, error) {
 		}
 		return "", fmt.Errorf("%s: %w", cmd, err)
 	}
-	// Most tools include a trailing newline by default; wl-paste
-	// --no-newline suppresses it, pbpaste emits no newline. xclip does
-	// include one. Trim universally so callers see a clean value.
+
 	return strings.TrimRight(string(out), "\n"), nil
 }
-

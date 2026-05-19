@@ -57,18 +57,12 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 				return runMigrateCheck(args)
 			}
 
-			// Decide: TUI vs non-interactive.
-			//
-			//   - Any explicit flag (--all/--wip/--no-tui) → non-interactive
-			//   - stdout is not a TTY (pipe, CI) → non-interactive
-			//   - otherwise → TUI
 			interactive := !noTUI && !all && !wip && term.IsTerminal(int(os.Stdout.Fd()))
 
 			if interactive {
 				return runMigrateTUI(args)
 			}
 
-			// Non-interactive: existing flow with --all / single-project / --wip semantics.
 			if !all && len(args) != 1 {
 				return errors.New("specify a project name or use --all")
 			}
@@ -117,9 +111,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 					fmt.Printf("  skip   %s: status=%s\n", name, proj.Status)
 					continue
 				}
-				// Pre-check state. For --all we want missing projects to be a
-				// soft skip (the registry travels between machines, so it's
-				// normal for some projects to not exist locally yet).
+
 				if all {
 					switch migrate.Check(wsRoot, name, proj).State {
 					case "missing":
@@ -146,7 +138,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 					anyFailed = true
 					continue
 				}
-				ws.Projects[name] = proj // proj.DefaultBranch was filled in
+				ws.Projects[name] = proj
 				anyMigrated = true
 				migratedCount++
 				fmt.Printf("  done   %s → %s (%d branches preserved", name, res.BarePath, res.BranchesPushed)
@@ -233,8 +225,6 @@ func runMigrateCheck(args []string) error {
 	return nil
 }
 
-// ensureMachineName loads the machine config, prompting once if absent.
-// Returns the sanitized machine name to use for branch namespacing.
 func ensureMachineName() (string, error) {
 	mc, err := config.LoadMachineConfig()
 	if err != nil {

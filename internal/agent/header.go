@@ -9,18 +9,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// HeaderCap is the maximum number of chips that share the pinned
-// quick-nav header. Nine because chips are numbered 1-9 for direct
-// keyboard launch — adding more would need shift+digit and isn't
-// worth the cognitive cost.
 const HeaderCap = 9
 
-// buildHeaderChips returns the ordered list of chips rendered in the
-// pinned quick-nav. Favorites come first (groups and projects merged,
-// sorted by activity desc with name asc tiebreak; groups carry zero
-// activity so they sort last among favs), then non-favorite
-// recently-touched projects. Capped at HeaderCap so chips fit in the
-// 1-9 hotkey range.
 func buildHeaderChips(workspaces []WorkspaceData) []Chip {
 	var favs, recent []Chip
 	for i := range workspaces {
@@ -74,9 +64,6 @@ func sortChipsByActivity(cs []Chip) {
 	})
 }
 
-// humanizeAge returns a short human-readable age for the activity
-// column, e.g. "2m", "3h", "yday", "5d", "3w", "2mo", "1y". Returns
-// the empty string when t is zero (no activity recorded).
 func humanizeAge(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -106,15 +93,6 @@ func humanizeAgeAt(t, now time.Time) string {
 	}
 }
 
-// renderHeaderChips formats `chips` as numbered hotkey chips packed
-// into at most `maxLines` lines of width `w`. Each chip is rendered
-// as `1.name 2m` (project) or `1.@group` (group, with `@` prefix to
-// disambiguate at a glance). A leading `*` marks favorites. Chips
-// that wouldn't fit in `maxLines` are dropped — HeaderCap=9 keeps
-// the count small enough that this is rare.
-//
-// Returns nil on an empty input so callers omit the header rows
-// entirely; an idle workspace doesn't burn vertical space on chrome.
 func renderHeaderChips(chips []Chip, w, maxLines int) []string {
 	if len(chips) == 0 || w <= 0 || maxLines <= 0 {
 		return nil
@@ -126,10 +104,6 @@ func renderHeaderChips(chips []Chip, w, maxLines int) []string {
 	return packChips(tokens, w, maxLines)
 }
 
-// formatChip builds the chip token: `*N.name age` for projects and
-// `*N.@group` for groups. The age column is omitted when LastActiveAt
-// is zero (favorited but never stamped) so chips stay compact on a
-// fresh install.
 func formatChip(num int, c Chip) string {
 	star := ""
 	if c.Favorite {
@@ -146,10 +120,6 @@ func formatChip(num int, c Chip) string {
 	return fmt.Sprintf("%s%d.%s %s", star, num, body, age)
 }
 
-// packChips greedily fills lines with chips separated by two spaces,
-// breaking to a new line whenever appending the next chip would push
-// the running width past w. Stops once maxLines is reached, dropping
-// the remaining chips silently.
 func packChips(chips []string, w, maxLines int) []string {
 	var lines []string
 	cur := ""
@@ -176,12 +146,6 @@ func packChips(chips []string, w, maxLines int) []string {
 	return lines
 }
 
-// styleHeaderLines applies the chip palette to packed header lines:
-// favorites get a brighter star, the leading `N.` digit is dimmed so
-// the name reads first, and the trailing age column is dim. Operates
-// on the raw `1.name 2m`-style strings produced by packChips by
-// re-tokenizing on the chip boundary (two spaces). Keep style logic
-// confined here so header.go owns the look end-to-end.
 func styleHeaderLines(lines []string) []string {
 	out := make([]string, len(lines))
 	for i, line := range lines {
@@ -198,9 +162,6 @@ func styleChipLine(line string) string {
 	return strings.Join(chips, "  ")
 }
 
-// styleChip splits one chip into (star?)(N.)(name)( age?) and paints
-// each piece. The age separator is a single space; if absent the chip
-// ends after the name.
 func styleChip(c string) string {
 	hasStar := strings.HasPrefix(c, "*")
 	if hasStar {
@@ -227,8 +188,6 @@ func styleChip(c string) string {
 	return b.String()
 }
 
-// formatInt avoids pulling in fmt for the hot path; the values are
-// always small non-negative ints (max ~24-30 in practice).
 func formatInt(n int) string {
 	if n == 0 {
 		return "0"

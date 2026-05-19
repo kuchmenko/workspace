@@ -10,16 +10,11 @@ import (
 	"github.com/kuchmenko/workspace/internal/alias"
 )
 
-// treeRow is one rendered line of the tree: a reference to an item plus
-// the indent/branch prefix to print before it. The cursor and offset
-// operate over the slice of treeRows produced by buildTree.
 type treeRow struct {
 	itemIdx int
-	prefix  string // branch art (e.g. "├── " / "│   └── ")
+	prefix  string
 }
 
-// itemIndex builds a map keyed by (kind,name) so we can find the slice
-// position of a given project/group/root item quickly.
 func (m Model) itemIndex() map[string]int {
 	out := make(map[string]int, len(m.items))
 	for i, it := range m.items {
@@ -32,22 +27,10 @@ func itemKey(k itemKind, name string) string {
 	return fmt.Sprintf("%d/%s", k, name)
 }
 
-// buildTree returns the ordered list of tree rows to render, applying the
-// current search filter. The structure is:
-//
-//	(workspace root)
-//	├── group-a
-//	│   ├── project-1
-//	│   └── project-2
-//	├── group-b
-//	│   └── project-3
-//	├── ungrouped-project-1
-//	└── ungrouped-project-2
 func (m Model) buildTree() []treeRow {
 	idx := m.itemIndex()
 	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
 
-	// Group projects by their group name; collect ungrouped separately.
 	grouped := make(map[string][]string)
 	var ungrouped []string
 	for name, p := range m.ws.Projects {
@@ -64,7 +47,6 @@ func (m Model) buildTree() []treeRow {
 	}
 	sort.Strings(ungrouped)
 
-	// Group names ordered alphabetically.
 	groupNames := make([]string, 0, len(m.ws.Groups))
 	for g := range m.ws.Groups {
 		groupNames = append(groupNames, g)
@@ -84,7 +66,6 @@ func (m Model) buildTree() []treeRow {
 		rows = append(rows, treeRow{itemIdx: rootIdx, prefix: ""})
 	}
 
-	// Filter groups: keep group if its name matches OR any project under it matches.
 	type visibleGroup struct {
 		name     string
 		projects []string
@@ -99,7 +80,6 @@ func (m Model) buildTree() []treeRow {
 			}
 		}
 		if groupMatches || len(keep) > 0 {
-			// If group itself matches but no project filter, show all of its projects.
 			if groupMatches && q != "" && len(keep) == 0 {
 				keep = append([]string{}, grouped[g]...)
 			}
@@ -117,7 +97,6 @@ func (m Model) buildTree() []treeRow {
 		}
 	}
 
-	// Render tree under root.
 	totalTop := len(visGroups) + len(visUngrouped)
 	pos := 0
 	for _, vg := range visGroups {
@@ -129,7 +108,7 @@ func (m Model) buildTree() []treeRow {
 		if gi, ok := idx[itemKey(kindGroup, vg.name)]; ok {
 			rows = append(rows, treeRow{itemIdx: gi, prefix: branch})
 		}
-		// Children
+
 		childIndent := "│   "
 		if isLastTop {
 			childIndent = "    "
@@ -258,7 +237,6 @@ func (m Model) updateEditing(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// takenNames returns the set of alias names already in use, excluding `skip`.
 func (m Model) takenNames(skip int) map[string]struct{} {
 	taken := make(map[string]struct{})
 	for i, it := range m.items {
@@ -305,7 +283,6 @@ func (m Model) viewManage() string {
 			check = checkStyle.Render("●")
 		}
 
-		// Resolve raw alias text + how to style it.
 		var aliasRaw, aliasStyled string
 		switch {
 		case m.editing && idx == m.editTarget:
@@ -314,7 +291,7 @@ func (m Model) viewManage() string {
 			aliasRaw = it.alias
 			aliasStyled = padRight(selectedStyle.Render(aliasRaw), aliasW, len(aliasRaw))
 		case it.checked:
-			// Preview the auto-generated name so the user sees what will be saved.
+
 			aliasRaw = alias.Generate(it.generationSeed(), m.takenNames(idx))
 			aliasStyled = padRight(dimStyle.Render(aliasRaw), aliasW, len(aliasRaw))
 		default:
@@ -360,10 +337,6 @@ func (m Model) viewManage() string {
 	return b.String()
 }
 
-// padRight pads a possibly-styled string with trailing spaces so that its
-// visible width equals `width`. `visibleLen` is the length of the underlying
-// raw text (without ANSI escapes). If the raw text is already wider than
-// `width`, the styled string is returned unchanged.
 func padRight(styled string, width, visibleLen int) string {
 	if visibleLen >= width {
 		return styled

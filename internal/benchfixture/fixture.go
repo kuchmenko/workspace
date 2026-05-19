@@ -21,44 +21,27 @@ import (
 	"testing"
 )
 
-// Options configures a synthetic workspace.
 type Options struct {
-	// Projects is the number of [projects.N] entries to register.
 	Projects int
 
-	// BranchesPerProject is how many [[projects.N.branches]] entries
-	// each project gets. Default 1.
 	BranchesPerProject int
 
-	// Cloned, when true, runs a real `git clone --bare` per project so
-	// the bare+worktree layout is present on disk. Set true for benches
-	// that exercise reconciler.reconcileProjects; false for scan-only
-	// benches that just need workspace.toml + flat directories.
 	Cloned bool
 
-	// AsGitRepo, when true, runs `git init` in the workspace root and
-	// does an initial commit of workspace.toml. Required for benches
-	// that exercise reconciler.syncTOML; otherwise Phase 1 no-ops.
 	AsGitRepo bool
 }
 
-// Workspace is the result of Build.
 type Workspace struct {
 	Root        string
 	ProjectList []Project
 }
 
-// Project describes one synthetic project for the bench.
 type Project struct {
 	Name   string
-	Path   string // relative to Workspace.Root, e.g. "personal/proj-0"
-	Remote string // file:// URL of fake remote
+	Path   string
+	Remote string
 }
 
-// Build constructs a synthetic workspace with the given options. It uses
-// `tb.TempDir()` so cleanup is automatic. All git invocations use a
-// hermetic env (no global config, no GPG, fixed identity) inherited from
-// the test fixture pattern in internal/testutil.
 func Build(tb testing.TB, opts Options) *Workspace {
 	tb.Helper()
 	opts = withDefaults(opts)
@@ -74,9 +57,6 @@ func Build(tb testing.TB, opts Options) *Workspace {
 	return ws
 }
 
-// withDefaults applies non-destructive defaults to a zero-valued
-// Options. Centralized so callers can pass `Options{}` and get a
-// sensible 10-project fixture.
 func withDefaults(opts Options) Options {
 	if opts.Projects <= 0 {
 		opts.Projects = 10
@@ -87,8 +67,6 @@ func withDefaults(opts Options) Options {
 	return opts
 }
 
-// prepareRoots creates the workspace tempdir and the `.remotes/` cache
-// dir for fake remotes. Returns (root, remotesDir).
 func prepareRoots(tb testing.TB) (string, string) {
 	tb.Helper()
 	root := tb.TempDir()
@@ -102,10 +80,6 @@ func prepareRoots(tb testing.TB) (string, string) {
 	return root, remotes
 }
 
-// composeProjects creates fake remotes, optionally clones each into the
-// bare+worktree layout, appends to `ws.ProjectList`, and returns the
-// rendered workspace.toml body. Single-pass so caller does only one
-// write.
 func composeProjects(tb testing.TB, ws *Workspace, opts Options, root, remotes string) string {
 	tb.Helper()
 	var sb strings.Builder
@@ -131,8 +105,6 @@ func composeProjects(tb testing.TB, ws *Workspace, opts Options, root, remotes s
 	return sb.String()
 }
 
-// writeProjectTOMLEntry appends one [projects.<name>] block plus its
-// [[projects.<name>.branches]] list to sb. Pure formatting — no IO.
 func writeProjectTOMLEntry(sb *strings.Builder, name, path, remote string, branches int) {
 	fmt.Fprintf(sb, "[projects.%s]\n", name)
 	fmt.Fprintf(sb, "remote = %q\n", "file://"+remote)
@@ -148,8 +120,6 @@ func writeProjectTOMLEntry(sb *strings.Builder, name, path, remote string, branc
 	}
 }
 
-// writeWorkspaceTOML drops the rendered TOML body at the canonical
-// location. Failure is fatal — fixture builds are deterministic.
 func writeWorkspaceTOML(tb testing.TB, root, body string) {
 	tb.Helper()
 	tomlPath := filepath.Join(root, "workspace.toml")
@@ -158,9 +128,6 @@ func writeWorkspaceTOML(tb testing.TB, root, body string) {
 	}
 }
 
-// initWorkspaceGit turns the workspace root into a git repo with
-// workspace.toml committed. Required only by benches that exercise
-// reconciler.syncTOML (Phase 1).
 func initWorkspaceGit(tb testing.TB, root string) {
 	tb.Helper()
 	runGit(tb, root, "init", "-q", "-b", "main")
@@ -168,14 +135,11 @@ func initWorkspaceGit(tb testing.TB, root string) {
 	runGit(tb, root, "commit", "-q", "-m", "init benchfixture workspace")
 }
 
-// buildFakeRemote creates a bare git repo with a single commit on `main`.
-// Returns the absolute path; caller wraps with file:// for the URL form.
 func buildFakeRemote(tb testing.TB, parent, name string) string {
 	tb.Helper()
 	bare := filepath.Join(parent, name+".git")
 	runGit(tb, parent, "init", "-q", "--bare", "-b", "main", name+".git")
 
-	// Seed via a working clone — bare repos can't accept commits directly.
 	work := filepath.Join(parent, name+".work")
 	runGit(tb, parent, "clone", "-q", bare, name+".work")
 	if err := os.WriteFile(filepath.Join(work, "README.md"),
@@ -190,23 +154,18 @@ func buildFakeRemote(tb testing.TB, parent, name string) string {
 	return bare
 }
 
-// cloneIntoLayout reproduces the bare+worktree layout inline (without
-// pulling in internal/clone, which would create a circular dependency
-// when reconciler benches eventually live here too). Layout matches what
-// `ws migrate` produces post-conversion.
 func cloneIntoLayout(tb testing.TB, root, projectPath, remoteBare string) {
 	tb.Helper()
 	mainPath := filepath.Join(root, projectPath)
 	barePath := mainPath + ".bare"
 
 	runGit(tb, root, "clone", "-q", "--bare", remoteBare, barePath)
-	// fetch refspec is missing on `clone --bare` (matches CloneIntoLayout).
+
 	runGit(tb, barePath, "config", "remote.origin.fetch",
 		"+refs/heads/*:refs/remotes/origin/*")
 	runGit(tb, barePath, "worktree", "add", "-q", mainPath, "main")
 }
 
-// runGit executes a git command with hermetic env. Failures are tb.Fatal.
 func runGit(tb testing.TB, dir string, args ...string) {
 	tb.Helper()
 	full := append([]string{"-C", dir}, args...)

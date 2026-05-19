@@ -48,7 +48,6 @@ func (m Model) viewConfirm() string {
 		return b.String()
 	}
 
-	// Build a temporary workspace view so we can resolve via the alias package.
 	tmp := &config.Workspace{
 		Projects: m.ws.Projects,
 		Groups:   m.ws.Groups,
@@ -56,7 +55,6 @@ func (m Model) viewConfirm() string {
 	}
 	resolved := alias.ResolveAll(tmp, m.root)
 
-	// Sort by name for stable display.
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
 
 	for _, r := range resolved {

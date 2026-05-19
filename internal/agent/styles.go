@@ -2,90 +2,76 @@ package agent
 
 import "github.com/charmbracelet/lipgloss"
 
-// Warm amber "command post" palette.
 var (
-	// Header / footer bars.
 	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")). // amber dim — breadcrumb
+			Foreground(lipgloss.Color("173")).
 			Background(lipgloss.Color("235"))
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240")).
 			Background(lipgloss.Color("235"))
 
-	// Selection: amber accent bar.
 	accentBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")) // warm amber ▌
+			Foreground(lipgloss.Color("215"))
 
 	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")). // bright text
-			Background(lipgloss.Color("236")). // subtle dark bg
+			Foreground(lipgloss.Color("254")).
+			Background(lipgloss.Color("236")).
 			Bold(true)
 
-	// Type colors.
 	groupStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("182")). // soft mauve
+			Foreground(lipgloss.Color("182")).
 			Bold(true)
 
 	itemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")) // white — primary items
+			Foreground(lipgloss.Color("254"))
 
 	wtStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("108")) // muted sage — git/branch
+		Foreground(lipgloss.Color("108"))
 
 	sessionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("110")) // cool steel — history
+			Foreground(lipgloss.Color("110"))
 
 	badgeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // subtle
+			Foreground(lipgloss.Color("240"))
 
 	wtStatusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")) // warm amber dim — dirty/ahead indicators
+			Foreground(lipgloss.Color("173"))
 
 	statusMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")). // amber
+			Foreground(lipgloss.Color("215")).
 			Bold(true)
 
 	dimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
 
-	// favoriteStarStyle paints the leading `*` indicator placed
-	// before favorited projects in the header section.
 	favoriteStarStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")) // amber, slightly brighter than section
+				Foreground(lipgloss.Color("215"))
 
-	// activityAgeStyle is the right-aligned " 2m linux" column on
-	// header-section rows.
 	activityAgeStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("240"))
 
-	// chipNumberStyle paints the leading "1." part of a header chip.
-	// Dimmer than the project name so the eye reads the name first;
-	// the digit is still picked up at a glance for hotkey use.
 	chipNumberStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245"))
 
-	// chipNameStyle paints the project name inside a header chip.
 	chipNameStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("254")).
 			Bold(true)
 
-	// Flash search.
 	flashSearchStyle = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color("215")). // amber
+				Foreground(lipgloss.Color("215")).
 				Background(lipgloss.Color("235"))
 
 	flashLabelStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("235")). // dark on amber
+			Foreground(lipgloss.Color("235")).
 			Background(lipgloss.Color("215"))
 
 	flashMatchStyle = lipgloss.NewStyle().
 			Underline(true).
-			Foreground(lipgloss.Color("215")) // amber underlined match
+			Foreground(lipgloss.Color("215"))
 
-	// Popup forms.
 	popupBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("173")).
@@ -93,7 +79,7 @@ var (
 
 	popupTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("215")) // amber
+			Foreground(lipgloss.Color("215"))
 
 	popupSelectedStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -106,7 +92,6 @@ var (
 	popupDimStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("240"))
 
-	// Which-key panel.
 	whichKeyBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("173")).
@@ -117,9 +102,9 @@ var (
 				Bold(true)
 
 	whichKeyKeyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")). // amber key
+				Foreground(lipgloss.Color("215")).
 				Bold(true)
 
 	whichKeyDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")) // secondary text
+				Foreground(lipgloss.Color("245"))
 )

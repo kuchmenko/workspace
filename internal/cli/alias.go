@@ -179,7 +179,6 @@ func newAliasInstallCmd() *cobra.Command {
 			"agent:when": "Install alias auto-loading into ~/.zshrc (idempotent, safe to re-run)",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Make sure state file exists before installing the source line.
 			if err := alias.WriteStateFile(ws, wsRoot); err != nil {
 				return err
 			}

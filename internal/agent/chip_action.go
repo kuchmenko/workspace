@@ -8,9 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// updateChipAction handles the modal opened by 1-9 on a header chip.
-// The user picks the action: c = claude, p = claude+prompt, s = shell,
-// w = new worktree (project chips only), esc = cancel.
 func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.chipTarget == nil {
 		m.mode = viewList
@@ -35,7 +32,7 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = viewPromptInput
 		return m, nil
 	case "w":
-		// Worktree creation is project-only — groups have no bare repo.
+
 		if target.Kind == KindProject && target.Project != nil {
 			m.popupProj = target.Project
 			m.wtBranch = ""
@@ -49,9 +46,6 @@ func (m *Model) updateChipAction(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// viewChipAction renders the modal asking what to do with the picked
-// chip. Centered, narrow, with a compact action list. The chip
-// reference stays valid across redraws because chipTarget is a copy.
 func (m *Model) viewChipAction() string {
 	if m.chipTarget == nil {
 		return m.viewList()

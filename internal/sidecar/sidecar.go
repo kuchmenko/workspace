@@ -41,8 +41,6 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Kind identifies which command owns the sidecar. Used as a subdirectory
-// under the state dir so different sidecars don't collide on filename.
 type Kind string
 
 const (
@@ -52,9 +50,6 @@ const (
 	KindCreate    Kind = "create"
 )
 
-// Meta is the common header every sidecar file carries. It records who
-// created the sidecar and when, plus the workspace it belongs to so we can
-// find it again from the wsRoot alone.
 type Meta struct {
 	PID           int       `toml:"pid"`
 	Started       time.Time `toml:"started"`
@@ -62,17 +57,11 @@ type Meta struct {
 	Kind          Kind      `toml:"kind"`
 }
 
-// Sidecar is the on-disk envelope. Done holds command-specific per-project
-// entries as raw bytes; callers (un)marshal their own value type via the
-// Get/Set helpers below.
 type Sidecar struct {
 	Meta Meta                       `toml:"meta"`
 	Done map[string]json.RawMessage `toml:"done"`
 }
 
-// New constructs a fresh sidecar bound to wsRoot, marked as owned by the
-// current process. The caller is expected to Save() it before starting
-// work — the lock isn't real until the file exists on disk.
 func New(wsRoot string, kind Kind) *Sidecar {
 	abs, _ := filepath.Abs(wsRoot)
 	return &Sidecar{
@@ -86,8 +75,6 @@ func New(wsRoot string, kind Kind) *Sidecar {
 	}
 }
 
-// Set marshals v as JSON and stores it under the project name. Each command
-// defines its own DoneEntry-type and round-trips it through Set/Get.
 func (s *Sidecar) Set(name string, v interface{}) error {
 	if s.Done == nil {
 		s.Done = make(map[string]json.RawMessage)
@@ -100,7 +87,6 @@ func (s *Sidecar) Set(name string, v interface{}) error {
 	return nil
 }
 
-// Get unmarshals the entry for name into v. Returns false if no such entry.
 func (s *Sidecar) Get(name string, v interface{}) (bool, error) {
 	raw, ok := s.Done[name]
 	if !ok {
@@ -112,14 +98,11 @@ func (s *Sidecar) Get(name string, v interface{}) (bool, error) {
 	return true, nil
 }
 
-// Has reports whether name has a recorded entry.
 func (s *Sidecar) Has(name string) bool {
 	_, ok := s.Done[name]
 	return ok
 }
 
-// stateDir returns the directory containing all sidecar files for kind.
-// Honors $XDG_STATE_HOME, falls back to ~/.local/state/ws/<kind>.
 func stateDir(kind Kind) (string, error) {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ws", string(kind)), nil
@@ -131,8 +114,6 @@ func stateDir(kind Kind) (string, error) {
 	return filepath.Join(home, ".local", "state", "ws", string(kind)), nil
 }
 
-// hashWorkspace produces a stable, filesystem-safe identifier for a
-// workspace root. Two distinct absolute paths can never collide on filename.
 func hashWorkspace(wsRoot string) string {
 	abs, err := filepath.Abs(wsRoot)
 	if err != nil {
@@ -142,8 +123,6 @@ func hashWorkspace(wsRoot string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// Path returns the absolute filesystem location of the sidecar for
-// (wsRoot, kind). Does not check whether the file exists.
 func Path(wsRoot string, kind Kind) (string, error) {
 	dir, err := stateDir(kind)
 	if err != nil {
@@ -152,9 +131,6 @@ func Path(wsRoot string, kind Kind) (string, error) {
 	return filepath.Join(dir, hashWorkspace(wsRoot)+".toml"), nil
 }
 
-// Load reads the sidecar for (wsRoot, kind). Returns (nil, nil) if no
-// sidecar exists — the common case, since most ticks have no command in
-// progress.
 func Load(wsRoot string, kind Kind) (*Sidecar, error) {
 	p, err := Path(wsRoot, kind)
 	if err != nil {
@@ -180,9 +156,6 @@ func Load(wsRoot string, kind Kind) (*Sidecar, error) {
 	return &sc, nil
 }
 
-// Save writes the sidecar atomically (tmp file + rename). Filename is
-// derived from sc.Meta.WorkspaceRoot + sc.Meta.Kind, so the caller doesn't
-// pass them again.
 func Save(sc *Sidecar) error {
 	if err := validateSidecarForSave(sc); err != nil {
 		return err
@@ -200,9 +173,6 @@ func Save(sc *Sidecar) error {
 	return atomicWriteSidecar(sc, p)
 }
 
-// validateSidecarForSave enforces the non-nil + non-empty required
-// fields before any IO happens. Each branch returns a distinct error
-// so callers can tell what they forgot to set.
 func validateSidecarForSave(sc *Sidecar) error {
 	if sc == nil {
 		return errors.New("save nil sidecar")
@@ -216,16 +186,13 @@ func validateSidecarForSave(sc *Sidecar) error {
 	return nil
 }
 
-// atomicWriteSidecar encodes `sc` into a sibling tmp file and renames
-// it to `dest`. The tmp file is deleted on every failure path so a
-// crashed write never leaves a half-written file behind.
 func atomicWriteSidecar(sc *Sidecar, dest string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+string(sc.Meta.Kind)+"-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create tmp: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // best-effort cleanup if rename never happens
+	defer os.Remove(tmpName)
 	if err := toml.NewEncoder(tmp).Encode(sc); err != nil {
 		tmp.Close()
 		return fmt.Errorf("encode sidecar: %w", err)
@@ -239,7 +206,6 @@ func atomicWriteSidecar(sc *Sidecar, dest string) error {
 	return nil
 }
 
-// Delete removes the sidecar for (wsRoot, kind). No-op if it doesn't exist.
 func Delete(wsRoot string, kind Kind) error {
 	p, err := Path(wsRoot, kind)
 	if err != nil {
@@ -251,15 +217,6 @@ func Delete(wsRoot string, kind Kind) error {
 	return nil
 }
 
-// IsAlive reports whether the pid recorded in sc is still running. Sends
-// signal 0 (no-op) and inspects the result:
-//
-//   - nil error              → process exists, alive
-//   - ESRCH                  → no such process, definitely dead
-//   - os.ErrProcessDone      → already reaped
-//   - any other (e.g. EPERM) → conservatively say alive (the pid is in use
-//     by something, even if not by our crashed run, and we'd rather pause
-//     the daemon for a tick than race)
 func IsAlive(sc *Sidecar) bool {
 	if sc == nil || sc.Meta.PID <= 0 {
 		return false
@@ -271,14 +228,6 @@ func IsAlive(sc *Sidecar) bool {
 	return interpretSignalError(proc.Signal(syscall.Signal(0)))
 }
 
-// interpretSignalError maps a signal-0 result to "process alive":
-//
-//   - nil err            → process exists.
-//   - os.ErrProcessDone  → already reaped.
-//   - ESRCH              → no such process.
-//   - anything else (EPERM, EINVAL, …) → conservatively assume alive
-//     (the pid is in use by something even if not by our crashed
-//     run; pausing the daemon for a tick is safer than racing).
 func interpretSignalError(err error) bool {
 	if err == nil {
 		return true
@@ -293,9 +242,6 @@ func interpretSignalError(err error) bool {
 	return true
 }
 
-// AnyActive checks every known sidecar kind for wsRoot and reports the
-// first one whose pid is alive. Used by the daemon's tick pre-check.
-// Returns nil if no sidecars block this workspace.
 func AnyActive(wsRoot string) *Sidecar {
 	for _, k := range []Kind{KindBootstrap, KindMigrate, KindAdd, KindCreate} {
 		sc, err := Load(wsRoot, k)

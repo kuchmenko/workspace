@@ -10,9 +10,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-// state tracks where the TUI is in its lifecycle. The transitions are
-// linear modulo retry: loadingOwners → form ⇄ errored → creating →
-// done. Esc from any state returns to errored=canceled or quits.
 type state int
 
 const (
@@ -23,9 +20,6 @@ const (
 	stateErrored
 )
 
-// focus identifies the active form field. Tab cycles forward,
-// Shift-Tab backward. The integer order also drives keyboard handling
-// inside Update — keep it stable.
 const (
 	focusOwner = iota
 	focusName
@@ -37,17 +31,12 @@ const (
 	focusCount
 )
 
-// CreateModelOptions is the constructor input for tests + production.
-// Tests inject GHRunner (fake) and Save (capture); production wiring
-// passes a realGHRunner and config.Save closure.
 type CreateModelOptions struct {
 	WsRoot    string
 	Workspace *config.Workspace
 	Save      func(*config.Workspace) error
 	GHRunner  ghRunner
 
-	// Defaults sourced from cobra flags. Empty values are unbound
-	// fields the user fills in via the form.
 	Owner       string
 	Name        string
 	Visibility  Visibility
@@ -58,9 +47,6 @@ type CreateModelOptions struct {
 	URLFor      func(owner, name string) string
 }
 
-// CreateModel is the bubbletea Model for ws create. Single-screen
-// form: top — title; middle — owner list + form fields; bottom —
-// help/error/spinner. Update is a state-machine over `state`.
 type CreateModel struct {
 	opts CreateModelOptions
 
@@ -85,15 +71,10 @@ type CreateModel struct {
 	width  int
 	height int
 
-	// Outputs collected by Run after Program exits.
 	result   *Result
 	canceled bool
 }
 
-// NewCreateModel constructs the model with sane defaults wired from
-// CreateModelOptions. Field defaults: visibility=private, category=
-// personal, group=owner login (filled when owners load if Group is
-// empty and category becomes work).
 func NewCreateModel(opts CreateModelOptions) CreateModel {
 	cat := opts.Category
 	if cat == "" {
@@ -155,12 +136,11 @@ func NewCreateModel(opts CreateModelOptions) CreateModel {
 		visIdx:       visIdx,
 		categories:   categories,
 		catIdx:       catIdx,
-		focus:        focusName, // owner selection handled separately when list arrives
+		focus:        focusName,
 	}
 	return m
 }
 
-// Init kicks off the async owner fetch + spinner tick.
 func (m CreateModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.fetchOwnersCmd())
 }
@@ -179,7 +159,7 @@ func (m CreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ownersLoadedMsg:
 		m.owners = msg.owners
-		// Pre-select owner from flag if matched.
+
 		if m.opts.Owner != "" {
 			for i, o := range m.owners {
 				if o.Login == m.opts.Owner {
@@ -189,9 +169,7 @@ func (m CreateModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.st = stateForm
-		// Default focus on Name unless owner was provided via flag —
-		// in which case the user is still likely to want to type a
-		// name first.
+
 		m.focus = focusName
 		m.nameInput.Focus()
 		return m, nil
@@ -233,8 +211,7 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.canceled = true
 			return m, tea.Quit
 		case "enter":
-			// Retry: if owners failed to load, try again; otherwise
-			// drop back to form so the user can edit fields.
+
 			if len(m.owners) == 0 {
 				m.err = nil
 				m.st = stateLoadingOwners
@@ -247,11 +224,11 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case stateDone:
-		// Any key dismisses the success screen.
+
 		return m, tea.Quit
 
 	case stateCreating:
-		// Disallow input mid-creation; only Ctrl+C escapes.
+
 		if msg.String() == "ctrl+c" {
 			m.canceled = true
 			return m, tea.Quit
@@ -259,13 +236,12 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// stateForm — main path.
 	switch msg.String() {
 	case "ctrl+c":
 		m.canceled = true
 		return m, tea.Quit
 	case "esc":
-		// Esc on Create button cancels; otherwise blurs current input.
+
 		if m.focus == focusCreate {
 			m.canceled = true
 			return m, tea.Quit
@@ -280,7 +256,6 @@ func (m CreateModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.refocus()
 	}
 
-	// Field-specific handling.
 	switch m.focus {
 	case focusOwner:
 		return m.handleOwnerKey(msg)
@@ -355,8 +330,6 @@ func (m CreateModel) handleToggleKey(msg tea.KeyMsg, idx *int, max int) (tea.Mod
 	return m, nil
 }
 
-// refocus drives textinput Focus/Blur based on the current m.focus.
-// Returns a tea.Cmd because Focus emits a blink cmd.
 func (m *CreateModel) refocus() tea.Cmd {
 	m.nameInput.Blur()
 	m.descInput.Blur()
@@ -372,9 +345,6 @@ func (m *CreateModel) refocus() tea.Cmd {
 	return nil
 }
 
-// validateForm runs client-side checks before launching the gh call.
-// Cheap to fail here — the alternative is a 1-2s gh round-trip and a
-// stderr-driven error.
 func (m CreateModel) validateForm() error {
 	if len(m.owners) == 0 {
 		return errors.New("no owners available; check `gh auth status`")
@@ -389,8 +359,6 @@ func (m CreateModel) validateForm() error {
 	return nil
 }
 
-// currentOwner returns the login of the highlighted owner. Empty
-// string is valid only when called before owners load.
 func (m CreateModel) currentOwner() string {
 	if m.ownerCursor < 0 || m.ownerCursor >= len(m.owners) {
 		return ""

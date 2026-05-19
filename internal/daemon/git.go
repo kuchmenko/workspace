@@ -11,8 +11,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 )
 
-// findGitRoot walks up from dir looking for the nearest git repo. Returns
-// "" if no repo is found before reaching the filesystem root.
 func findGitRoot(dir string) string {
 	for {
 		if git.IsRepo(dir) {
@@ -45,8 +43,6 @@ func runIn(dir, name string, args ...string) error {
 	return nil
 }
 
-// ensureUnionMerge appends `<rel> merge=union` to .gitattributes in the
-// repo root if it isn't already configured. Idempotent.
 func ensureUnionMerge(repoRoot, tomlAbs string) error {
 	rel, err := filepath.Rel(repoRoot, tomlAbs)
 	if err != nil {

@@ -30,18 +30,15 @@ func newSetupCmd() *cobra.Command {
 			final := result.(setup.Model)
 			r := final.GetResult()
 
-			// Error from GitHub API or other failure
 			if r.Err != nil {
 				return fmt.Errorf("setup failed: %w", r.Err)
 			}
 
-			// User explicitly canceled (ctrl+c, esc, n)
 			if r.Canceled {
 				fmt.Println("Setup canceled by user.")
 				return nil
 			}
 
-			// Confirmed — write workspace.toml
 			if !r.Confirmed {
 				fmt.Println("Setup exited without confirmation.")
 				return nil

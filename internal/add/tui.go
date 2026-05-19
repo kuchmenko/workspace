@@ -12,90 +12,47 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-// AddModel is the bubbletea model for the `ws add` interactive flow.
-//
-// Lifecycle:
-//
-//	gathering → browse | browseEmpty
-//	browse / browseEmpty → manual (i) | edit (⏎) | quit (esc)
-//	manual → edit (valid URL) | browse (esc)
-//	edit → confirm (⏎) | browse (esc)
-//	confirm → cloning (y) | browse (esc)
-//	cloning → branchPrompt (clone.ErrNeedsBootstrap) | done
-//	branchPrompt → cloning
-//	done → quit
-//
-// Embedding: AddModel never calls tea.Quit. When it reaches done, it
-// emits AddDoneMsg and waits for a key. Standalone callers (`ws add`)
-// wrap AddModel and convert AddDoneMsg into tea.Quit; embedded
-// callers (the future agent integration) keep running their own
-// Update loop.
 type AddModel struct {
 	state          addState
 	stateChangedAt time.Time
 
-	// Inputs from the caller.
 	wsRoot   string
 	ws       *config.Workspace
 	saveFn   func(*config.Workspace) error
 	sources  []Source
 	gatherTO time.Duration
 
-	// Standalone flag: when true, AddModel calls tea.Quit on done.
-	// When embedded inside ws agent, the parent owns the quit decision.
 	standalone bool
 
-	// Optional pre-supplied URLs from the CLI that bypass the gather +
-	// browse phases. Headless callers don't construct AddModel at all,
-	// but a TUI run with positional URLs (rare — this design treats
-	// "URLs given" as a headless signal) could use this.
 	preURLs []string
 
-	// Window sizing.
 	width, height int
 
-	// State for each step. Most fields belong to one state; see the
-	// comment headers below for which.
-
-	// gathering.
 	spinner spinner.Model
 
-	// sourceOutcomes accumulates per-source results as each one
-	// completes. Used by viewBrowse to render the "disk:N github:M"
-	// chip line and by Update to decide when all sources are done.
 	sourceOutcomes []SourceOutcome
 	sourcesDone    int
 
-	// browse.
-	cursor         int // index into filteredView()
+	cursor         int
 	allSuggestions []Suggestion
 	filterMode     bool
 	filterInput    textinput.Model
 
-	// selectedURLs holds RemoteURLs of suggestions the user marked
-	// for bulk add via space-toggle in browse. Stable across filter
-	// changes — toggling a row off-screen still works as long as the
-	// URL stays in allSuggestions.
 	selectedURLs map[string]bool
 
-	// manual.
 	manualInput textinput.Model
 	manualErr   string
 
-	// edit (also reused by confirm).
 	editFields editFields
-	editFocus  int // 0=Name 1=Category 2=Group
+	editFocus  int
 	editErr    string
 
-	// cloning.
-	queue        []editFields      // resolved selections waiting to clone
-	currentIdx   int               // index into queue
-	branchAnswer chan branchAnswer // unblocks worker goroutines
+	queue        []editFields
+	currentIdx   int
+	branchAnswer chan branchAnswer
 
-	// branchPrompt.
 	branchPrompt branchprompt.Model
 
-	// done.
 	added   []config.Project
 	skipped []SkipReason
 	errors  []error
@@ -121,8 +78,8 @@ type editFields struct {
 	URL      string
 	Category config.Category
 	Group    string
-	Path     string // computed from Category/Group/Name
-	FromDisk string // non-empty → migrate path, not clone
+	Path     string
+	FromDisk string
 }
 
 type branchAnswer struct {
@@ -130,11 +87,6 @@ type branchAnswer struct {
 	err    error
 }
 
-// NewAddModel constructs an AddModel ready to be run via tea.NewProgram.
-//
-// The caller supplies the workspace, the save function, and the gather
-// sources. NewAddModel does NOT call Gather itself — that happens in
-// Init() so the bubbletea runtime can render the gathering view first.
 func NewAddModel(opts AddModelOptions) AddModel {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -165,8 +117,6 @@ func NewAddModel(opts AddModelOptions) AddModel {
 	}
 }
 
-// AddModelOptions is the constructor input. Carved out as a struct so
-// the constructor signature doesn't grow with each new knob.
 type AddModelOptions struct {
 	WsRoot        string
 	Workspace     *config.Workspace
@@ -174,26 +124,12 @@ type AddModelOptions struct {
 	Sources       []Source
 	GatherTimeout time.Duration
 
-	// Standalone is true when AddModel runs as the root program (i.e.
-	// `ws add` without an embedding parent). Done state then issues
-	// tea.Quit. Embedded callers pass false; they handle AddDoneMsg
-	// themselves to decide quit vs return-to-list.
 	Standalone bool
 
-	// PreURLs are URLs supplied by the caller — currently unused by the
-	// TUI proper (CLI passes headless when URLs are given), kept as a
-	// hook for callers that want to launch the TUI with a starter list.
 	PreURLs []string
 }
 
 func (m AddModel) Init() tea.Cmd {
-	// Streaming gather: each source runs as its own tea.Cmd so its
-	// result lands on the bubbletea event loop the moment the source
-	// returns. Disk + clipboard typically finish within a few hundred
-	// ms; GitHub can take seconds on cold cache. The TUI transitions
-	// from "gathering" to "browse" as soon as the FIRST source has
-	// any data — repos from later sources fold in dynamically without
-	// the user staring at a spinner.
 	cmds := []tea.Cmd{m.spinner.Tick}
 	for _, src := range m.sources {
 		cmds = append(cmds, m.startSource(src))
@@ -201,11 +137,6 @@ func (m AddModel) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// startSource produces a tea.Cmd that runs one source's
-// FetchSuggestions in a goroutine and emits a sourceDoneMsg with the
-// outcome. The per-source ctx deadline is applied here so a single
-// slow provider never holds up the others — Gather's own timeout
-// logic stays available but is unused by the streaming path.
 func (m AddModel) startSource(src Source) tea.Cmd {
 	timeout := m.gatherTO
 	if timeout <= 0 {
@@ -232,13 +163,11 @@ func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
-		// Phantom-input debounce mirrors the bootstrap pattern.
+
 		if !m.stateChangedAt.IsZero() && time.Since(m.stateChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
-			// Cancel everything. In standalone, quit; embedded
-			// callers see an empty AddDoneMsg.
 			done := m.toDone()
 			if m.standalone {
 				return done, tea.Sequence(emit(AddDoneMsg{}), tea.Quit)
@@ -246,10 +175,7 @@ func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return done, emit(AddDoneMsg{})
 		}
 	case sourceDoneMsg:
-		// Source completion can land in any state — fold the new
-		// results into allSuggestions even if the user has already
-		// moved on to manual / edit / confirm. We just don't change
-		// the visible state from those screens.
+
 		return m.handleSourceDone(msg)
 	}
 

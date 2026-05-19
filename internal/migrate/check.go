@@ -9,11 +9,9 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// CheckResult reports the migration-related state of one project without
-// making any changes.
 type CheckResult struct {
 	Project    string
-	State      string // "migrated" | "needs-migration" | "missing" | "not-a-repo"
+	State      string
 	MainPath   string
 	BarePath   string
 	HasStash   bool
@@ -23,8 +21,6 @@ type CheckResult struct {
 	HooksFound int
 }
 
-// Check inspects a project on disk and reports its layout state without
-// touching anything. Useful for `ws migrate --check`.
 func Check(wsRoot string, name string, proj config.Project) CheckResult {
 	mainPath := filepath.Join(wsRoot, proj.Path)
 	barePath := layout.BarePath(mainPath)

@@ -7,11 +7,6 @@ import (
 	"syscall"
 )
 
-// LaunchClaude replaces the current process with `claude` in the given
-// working directory. The TUI exits cleanly before this is called —
-// bubbletea restores the terminal, then we exec.
-//
-// If resumeID is non-empty, passes --resume <id> to claude.
 func LaunchClaude(cwd, resumeID, prompt string) error {
 	bin, err := exec.LookPath("claude")
 	if err != nil {
@@ -33,9 +28,6 @@ func LaunchClaude(cwd, resumeID, prompt string) error {
 	return syscall.Exec(bin, args, os.Environ())
 }
 
-// LaunchShell replaces the current process with the user's $SHELL in
-// the given working directory. Used when the user just wants to cd
-// into a project/worktree without launching claude.
 func LaunchShell(cwd string) error {
 	shell := os.Getenv("SHELL")
 	if shell == "" {

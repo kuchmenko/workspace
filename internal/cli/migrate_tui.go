@@ -14,12 +14,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/migrate"
 )
 
-// runMigrateTUI is the entry point used by `ws migrate` (no flags) and
-// `ws migrate <name>`. It scans the workspace, builds a plan, and runs the
-// per-project flow inside a bubbletea program.
-//
-// args is either empty (all active projects) or a single project name. The
-// CLI dispatcher already validated the count.
 func runMigrateTUI(args []string) error {
 	machine, err := ensureMachineName()
 	if err != nil {
@@ -32,7 +26,6 @@ func runMigrateTUI(args []string) error {
 		return nil
 	}
 
-	// Sidecar pre-check: another migrate running? Stale crash to resume?
 	existing, err := migrate.Load(wsRoot)
 	if err != nil {
 		return fmt.Errorf("read migrate sidecar: %w", err)
@@ -43,7 +36,7 @@ func runMigrateTUI(args []string) error {
 			return fmt.Errorf("migrate already running (pid %d, started %s)",
 				existing.Meta.PID, existing.Meta.Started.Local().Format(time.RFC3339))
 		}
-		// Stale: ask the user what to do.
+
 		fmt.Printf("Found incomplete migrate from %s (pid %d, %d projects done).\n",
 			existing.Meta.Started.Local().Format(time.RFC3339),
 			existing.Meta.PID, len(existing.Done))
@@ -79,8 +72,6 @@ func runMigrateTUI(args []string) error {
 		return nil
 	}
 
-	// Post-TUI: print full per-project errors. Long git stderr would break
-	// the TUI box, so we surface it here.
 	if len(final.errors) > 0 {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, errorBannerStyle.Render("Migrate finished with errors:"))
@@ -90,7 +81,6 @@ func runMigrateTUI(args []string) error {
 		}
 	}
 
-	// Final commit step: persist default_branch values from the sidecar.
 	if final.sidecar != nil && len(final.sidecar.Done) > 0 {
 		if err := commitMigrate(final.sidecar); err != nil {
 			return fmt.Errorf("commit migrate: %w", err)
@@ -117,9 +107,6 @@ func runMigrateTUI(args []string) error {
 	return nil
 }
 
-// buildMigratePlan walks ws.Projects, classifies each into a migrateState,
-// and returns the ordered plan. Filtering by `only` (when non-empty)
-// restricts the scan to one project name — used by `ws migrate <name>`.
 func buildMigratePlan(only []string) *migratePlan {
 	wantOnly := map[string]bool{}
 	for _, n := range only {
@@ -146,7 +133,7 @@ func buildMigratePlan(only []string) *migratePlan {
 			item.State = mstMissing
 		case "not-a-repo":
 			item.State = mstNotRepo
-		default: // "needs-migration"
+		default:
 			switch {
 			case check.HasStash:
 				item.State = mstStash
@@ -164,9 +151,6 @@ func buildMigratePlan(only []string) *migratePlan {
 	return plan
 }
 
-// commitMigrate re-reads workspace.toml from disk and applies default_branch
-// values captured in the sidecar in one atomic write. Symmetric with
-// commitBootstrap.
 func commitMigrate(sc *migrate.Sidecar) error {
 	freshWS, err := config.Load(wsRoot)
 	if err != nil {
@@ -197,9 +181,9 @@ const (
 	mstDirty
 	mstStash
 	mstDetached
-	mstAlready // already migrated, skip
-	mstMissing // not on disk, skip
-	mstNotRepo // garbage, skip
+	mstAlready
+	mstMissing
+	mstNotRepo
 )
 
 func (s migrateState) label() string {

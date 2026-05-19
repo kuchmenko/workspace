@@ -66,10 +66,6 @@ func LastCommitTime(repoPath string) (time.Time, error) {
 	return time.Parse(time.RFC3339, strings.TrimSpace(string(out)))
 }
 
-// LastCommitAuthorTime returns the author date of HEAD. Unlike LastCommitTime
-// (committer date), this is preserved across `git commit --amend --no-edit`,
-// which makes it the right anchor for cooldowns that must bound the maximum
-// time a coalesced commit can sit unpushed while activity keeps refreshing it.
 func LastCommitAuthorTime(repoPath string) (time.Time, error) {
 	cmd := exec.Command("git", "-C", repoPath, "log", "-1", "--format=%aI")
 	out, err := cmd.Output()
@@ -124,8 +120,6 @@ func Push(repoPath string) error {
 	return nil
 }
 
-// PushBranch pushes a single named branch to origin, setting upstream if
-// it does not already track a remote branch.
 func PushBranch(repoPath, branch string) error {
 	cmd := exec.Command("git", "-C", repoPath, "push", "--set-upstream", "origin", branch)
 	out, err := cmd.CombinedOutput()
@@ -135,8 +129,6 @@ func PushBranch(repoPath, branch string) error {
 	return nil
 }
 
-// Fetch runs `git fetch --all --prune --tags` against repoPath. Used by the
-// reconciler to refresh remote refs without touching any working tree.
 func Fetch(repoPath string) error {
 	cmd := exec.Command("git", "-C", repoPath, "fetch", "--all", "--prune", "--tags")
 	out, err := cmd.CombinedOutput()
@@ -146,9 +138,6 @@ func Fetch(repoPath string) error {
 	return nil
 }
 
-// RevParse resolves a ref to its full SHA. Returns "" on failure rather than
-// erroring — callers typically want to treat "ref does not exist" as a normal
-// state, not an exceptional one.
 func RevParse(repoPath, ref string) string {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", ref)
 	out, err := cmd.Output()
@@ -158,8 +147,6 @@ func RevParse(repoPath, ref string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// AheadBehind returns how many commits `branch` is ahead of and behind its
-// upstream. Returns (0, 0, false) if the branch has no upstream configured.
 func AheadBehind(repoPath, branch string) (ahead, behind int, hasUpstream bool) {
 	upstream := branch + "@{u}"
 	if RevParse(repoPath, upstream) == "" {
@@ -179,24 +166,15 @@ func AheadBehind(repoPath, branch string) (ahead, behind int, hasUpstream bool) 
 	return ahead, behind, true
 }
 
-// IsDirty reports whether repoPath has uncommitted changes (tracked or
-// untracked, excluding ignored). Reconciler uses this to skip ff-pull when
-// the user is mid-edit.
 func IsDirty(repoPath string) bool {
 	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
-		// On error, err on the side of "looks dirty" so we don't accidentally
-		// pull-and-overwrite a working tree we couldn't inspect.
 		return true
 	}
 	return strings.TrimSpace(string(out)) != ""
 }
 
-// HasIndexLock reports whether .git/index.lock is present, indicating
-// another git process is currently mid-write. Reconciler skips operations
-// on the worktree when this is true to avoid colliding with an editor or
-// interactive shell command.
 func HasIndexLock(repoPath string) bool {
 	gitDir := RevParse(repoPath, "--git-dir")
 	if gitDir == "" {
@@ -209,26 +187,11 @@ func HasIndexLock(repoPath string) bool {
 	return err == nil
 }
 
-// HasUpstream reports whether the named branch has an upstream tracking
-// branch configured.
 func HasUpstream(repoPath, branch string) bool {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", branch+"@{upstream}")
 	return cmd.Run() == nil
 }
 
-// SetBranchUpstream wires up branch.<branch>.remote and
-// branch.<branch>.merge in the repo's config so plain `git push` and
-// `git pull` work without arguments. Used by both clone (after worktree
-// add) and migrate (after bare clone). We write the config keys directly
-// instead of `git branch --set-upstream-to=origin/<branch>` so the call
-// works in the narrow window after CloneBare + SetFetchRefspec but before
-// the first Fetch — that window has no refs/remotes/origin/<branch> yet
-// for --set-upstream-to to point at, whereas the raw config write is
-// accepted unconditionally and becomes valid as soon as the next fetch
-// populates the tracking ref.
-//
-// repoPath can be either the bare or any of its worktrees — branch config
-// is shared across them through the bare's config file.
 func SetBranchUpstream(repoPath, branch, remote string) error {
 	if branch == "" || remote == "" {
 		return fmt.Errorf("SetBranchUpstream: empty branch or remote")
@@ -248,16 +211,10 @@ func setConfig(repoPath, key, value string) error {
 	return nil
 }
 
-// HasStash reports whether `git stash list` has any entries. ws migrate
-// uses this as a pre-flight check — stash is bound to the working .git and
-// would be lost when we replace it with a worktree, unless we first
-// convert each stash entry to a side branch via `git stash branch`.
 func HasStash(repoPath string) bool {
 	return StashCount(repoPath) > 0
 }
 
-// StashCount returns the number of entries in `git stash list`. Used by
-// migrate to walk N stashes and convert each into a side branch.
 func StashCount(repoPath string) int {
 	cmd := exec.Command("git", "-C", repoPath, "stash", "list")
 	out, err := cmd.Output()
@@ -271,8 +228,6 @@ func StashCount(repoPath string) int {
 	return strings.Count(s, "\n") + 1
 }
 
-// SymbolicRef resolves a symbolic ref like refs/remotes/origin/HEAD to its
-// target (e.g. "main"). Returns "" if the ref does not exist or is not symbolic.
 func SymbolicRef(repoPath, ref string) string {
 	cmd := exec.Command("git", "-C", repoPath, "symbolic-ref", "--short", ref)
 	out, err := cmd.Output()
@@ -282,8 +237,6 @@ func SymbolicRef(repoPath, ref string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// ParseRepoName extracts repo name from a git remote URL.
-// e.g. "git@github.com:user/repo.git" → "repo"
 func ParseRepoName(remote string) string {
 	remote = strings.TrimSuffix(remote, ".git")
 	if idx := strings.LastIndex(remote, "/"); idx >= 0 {
@@ -294,4 +247,3 @@ func ParseRepoName(remote string) string {
 	}
 	return remote
 }
-

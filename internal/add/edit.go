@@ -16,11 +16,11 @@ func (m AddModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "tab", "down":
-		m.editFocus = (m.editFocus + 1) % 4 // 0=Name 1=URL 2=Category 3=Group
+		m.editFocus = (m.editFocus + 1) % 4
 	case "shift+tab", "up":
 		m.editFocus = (m.editFocus + 3) % 4
 	case "enter":
-		// Validate & advance to confirm.
+
 		if err := m.validateEdit(); err != nil {
 			m.editErr = err.Error()
 			return m, nil
@@ -32,9 +32,9 @@ func (m AddModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transitionTo(addStateBrowse)
 		return m, nil
 	default:
-		// Plain typing edits the focused field.
+
 		s := key.String()
-		// Filter to printable rune-ish keys.
+
 		if key.Type == tea.KeyRunes {
 			runes := key.Runes
 			m.applyEditRunes(runes)
@@ -56,8 +56,7 @@ func (m *AddModel) applyEditRunes(runes []rune) {
 	case 1:
 		m.editFields.URL += r
 	case 2:
-		// Category: cycle on space, otherwise ignore alphabetic input
-		// — only personal|work allowed.
+
 		if r == " " {
 			if m.editFields.Category == config.CategoryPersonal {
 				m.editFields.Category = config.CategoryWork
@@ -168,11 +167,6 @@ func (m AddModel) viewConfirm() string {
 	return b.String()
 }
 
-// updateBulkConfirm handles the multi-add confirmation screen reached
-// from browse when the user pressed `enter` with one or more URLs
-// marked. Confirming queues every marked suggestion via
-// editFromSuggestion (default category/group inferred from owner) and
-// transitions to the existing cloning loop unchanged.
 func (m AddModel) updateBulkConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -197,11 +191,6 @@ func (m AddModel) updateBulkConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// buildBulkQueue resolves the marked URLs to editFields, preserving
-// the order they appear in allSuggestions (alphabetised by group →
-// name). Skips URLs that no longer exist in allSuggestions and URLs
-// already registered in workspace.toml so a stale selection cannot
-// accidentally re-clone an existing project.
 func (m AddModel) buildBulkQueue() []editFields {
 	if len(m.selectedURLs) == 0 {
 		return nil

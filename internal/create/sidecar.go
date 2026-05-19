@@ -7,27 +7,14 @@ import (
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
-// sidecarPayload describes the in-flight create operation. Stored
-// inside the shared sidecar envelope so a second `ws create` running
-// concurrently can tell the user what the first one is doing.
 type sidecarPayload struct {
 	Mode  Mode   `json:"mode"`
 	Owner string `json:"owner,omitempty"`
 	Name  string `json:"name,omitempty"`
 }
 
-// sidecarPayloadKey is the well-known entry name. The shared Done map
-// is keyed by "project name"; ws create operates as a single session,
-// so we use a fixed pseudo-entry.
 const sidecarPayloadKey = "__session__"
 
-// acquireSidecar persists the create sidecar for this Run. Refuses if
-// another `ws create` is already live; silently clears stale records
-// (dead pid) before acquiring. Mirrors the policy of `ws add` — we
-// don't prompt for resume because there's no per-step recoverable
-// state: a failed run either left no GitHub repo (gh create not yet
-// called) or left a registered+cloned repo (which a re-run will
-// detect via ErrAlreadyRegistered/ErrAlreadyCloned).
 func acquireSidecar(wsRoot string, mode Mode, owner, name string) (*sidecar.Sidecar, error) {
 	existing, err := sidecar.Load(wsRoot, sidecar.KindCreate)
 	if err != nil {
@@ -59,7 +46,6 @@ func acquireSidecar(wsRoot string, mode Mode, owner, name string) (*sidecar.Side
 	return sc, nil
 }
 
-// releaseSidecar removes the file. Best-effort.
 func releaseSidecar(wsRoot string) {
 	_ = sidecar.Delete(wsRoot, sidecar.KindCreate)
 }

@@ -10,13 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newFavoriteCmd builds the `ws favorite` command tree. Mirrors the
-// `ws alias` shape (add/rm/list) so the two project-pinning surfaces
-// — aliases for cd, favorites for `ws agent` — read consistently.
-//
-// Favorites are stored as `[projects.<name>].favorite = true` in
-// workspace.toml, which means they sync across machines via the
-// reconciler. The TUI hotkey `f` is the interactive equivalent.
 func newFavoriteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "favorite",
@@ -69,10 +62,6 @@ func newFavoriteRmCmd() *cobra.Command {
 	}
 }
 
-// setFavorite dispatches by `@`-prefix: `@group` toggles a group
-// favorite, anything else toggles a project favorite. Keeps the CLI
-// surface symmetric with the TUI hotkey, which uses the cursor's
-// row type to decide.
 func setFavorite(arg string, fav bool) error {
 	if len(arg) > 1 && arg[0] == '@' {
 		return setGroupFavoriteCLI(arg[1:], fav)
@@ -82,8 +71,6 @@ func setFavorite(arg string, fav bool) error {
 
 func setGroupFavoriteCLI(name string, fav bool) error {
 	if _, ok := ws.Groups[name]; !ok {
-		// Auto-register the group so the favorite flag has somewhere
-		// to live. Empty Group{} is fine — the user can fill it later.
 		if ws.Groups == nil {
 			ws.Groups = map[string]config.Group{}
 		}
@@ -152,11 +139,6 @@ func newFavoriteListCmd() *cobra.Command {
 	}
 }
 
-// setProjectFavorite updates the favorite flag on `name` and persists
-// the workspace. Returns an error if the project is unknown or the
-// save fails. No-op (with a printed notice) when the flag is already
-// at the requested value — keeps the command idempotent for shell
-// scripts that don't want to track current state.
 func setProjectFavorite(name string, fav bool) error {
 	p, ok := ws.Projects[name]
 	if !ok {

@@ -74,7 +74,6 @@ func newDaemonStopCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := daemon.Dial()
 			if err != nil {
-				// Try to check PID file
 				if pid, running := daemon.IsRunning(); running {
 					proc, _ := os.FindProcess(pid)
 					proc.Signal(os.Interrupt)
@@ -102,8 +101,6 @@ func newDaemonRestartCmd() *cobra.Command {
 			"agent:when": "Restart the daemon (stop + start)",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Best-effort stop. If the daemon is unreachable we still
-			// proceed to Start; the user explicitly asked for restart.
 			if client, err := daemon.Dial(); err == nil {
 				_ = client.Stop()
 				client.Close()
@@ -232,7 +229,6 @@ WantedBy=default.target
 			}
 			fmt.Printf("  Installed: %s\n", unitPath)
 
-			// Enable and start
 			exec.Command("systemctl", "--user", "daemon-reload").Run()
 			if err := exec.Command("systemctl", "--user", "enable", "--now", "ws-daemon").Run(); err != nil {
 				fmt.Println("  Unit installed. Enable manually: systemctl --user enable --now ws-daemon")

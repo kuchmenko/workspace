@@ -27,7 +27,6 @@ type StatusData struct {
 }
 
 func listenSocket(socketPath string) (net.Listener, error) {
-	// Clean stale socket
 	if _, err := os.Stat(socketPath); err == nil {
 		os.Remove(socketPath)
 	}
@@ -37,7 +36,6 @@ func listenSocket(socketPath string) (net.Listener, error) {
 		return nil, fmt.Errorf("listen %s: %w", socketPath, err)
 	}
 
-	// Restrict permissions
 	os.Chmod(socketPath, 0o600)
 	return ln, nil
 }

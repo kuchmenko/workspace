@@ -21,13 +21,10 @@ func NewRootCmd() *cobra.Command {
 		Use:   "ws",
 		Short: "Workspace manager — track, sync, and manage development projects",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip loading for commands that don't need it
-			// Commands that don't need workspace.toml
 			if cmd.Name() == "help" || cmd.Name() == "completion" || cmd.Name() == "docs" {
 				return nil
 			}
-			// Agent TUI loads workspace data lazily from daemon.toml,
-			// not from the working directory's workspace.toml.
+
 			if cmd.Name() == "agent" || cmd.Name() == "ws" {
 				return nil
 			}
@@ -38,7 +35,6 @@ func NewRootCmd() *cobra.Command {
 				return nil
 			}
 
-			// Setup bootstraps its own workspace — use cwd, create if needed
 			if cmd.Name() == "setup" {
 				var err error
 				if wsRoot == "" {
@@ -64,7 +60,7 @@ func NewRootCmd() *cobra.Command {
 			}
 			return nil
 		},
-		// Bare `ws` in a TTY launches the explorer TUI. In pipe/CI → help.
+
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd()) {
 				return runExplorerTUI()
@@ -109,13 +105,11 @@ func saveWorkspace() error {
 	if err := config.Save(wsRoot, ws); err != nil {
 		return fmt.Errorf("saving workspace.toml: %w", err)
 	}
-	// Regenerate alias state file so shells stay in sync. Best-effort.
+
 	if err := alias.WriteStateFile(ws, wsRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not update alias state file: %v\n", err)
 	}
-	// Best-effort daemon notification. If the daemon is down or busy
-	// the next reconciler tick still picks up the workspace.toml diff
-	// from disk; the IPC kick just shortens the wait.
+
 	if client, err := daemon.Dial(); err == nil {
 		_ = client.Notify(wsRoot, "config_changed")
 		client.Close()

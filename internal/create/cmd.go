@@ -14,8 +14,6 @@ type ownersErrMsg struct{ err error }
 type createDoneMsg struct{ result *Result }
 type createErrMsg struct{ err error }
 
-// fetchOwnersCmd queries gh for the current user + orgs in a goroutine.
-// Returns ownersLoadedMsg on success, ownersErrMsg on failure.
 func (m CreateModel) fetchOwnersCmd() tea.Cmd {
 	runner := m.opts.GHRunner
 	if runner == nil {
@@ -30,9 +28,6 @@ func (m CreateModel) fetchOwnersCmd() tea.Cmd {
 	}
 }
 
-// createCmd kicks off the gh repo create + register + clone pipeline
-// off the bubbletea event loop. Returns createDoneMsg on success,
-// createErrMsg on any step's failure.
 func (m CreateModel) createCmd() tea.Cmd {
 	runner := m.opts.GHRunner
 	if runner == nil {

@@ -25,7 +25,6 @@ type Daemon struct {
 	watcher     *Watcher
 }
 
-// Run starts the daemon in the foreground (blocking).
 func Run() error {
 	cfg, err := LoadConfig()
 	if err != nil {
@@ -66,9 +65,6 @@ func Run() error {
 	return nil
 }
 
-// openDaemonLog opens the append-only daemon log file and returns
-// it alongside a logger writing to it. Caller is responsible for
-// closing the file (typical: defer).
 func openDaemonLog() (*os.File, *log.Logger, error) {
 	logPath, err := LogPath()
 	if err != nil {
@@ -81,9 +77,6 @@ func openDaemonLog() (*os.File, *log.Logger, error) {
 	return logFile, log.New(logFile, "", log.LstdFlags), nil
 }
 
-// openDaemonSocket resolves the IPC socket path and binds a
-// listener on it. Returns both so the caller can record the path
-// in startup logs.
 func openDaemonSocket() (string, net.Listener, error) {
 	socketPath, err := SocketPath()
 	if err != nil {
@@ -96,17 +89,12 @@ func openDaemonSocket() (string, net.Listener, error) {
 	return socketPath, ln, nil
 }
 
-// startReconcilers spins up one reconciler per registered workspace.
-// Each goroutine is owned by the Daemon's startWorkspace helper.
 func (d *Daemon) startReconcilers(cfg *DaemonConfig) {
 	for _, ws := range cfg.Workspaces {
 		d.startWorkspace(ws)
 	}
 }
 
-// startWatcher launches the filesystem watcher goroutine.
-// Watching is best-effort: it amplifies the reconciler ticks but
-// the daemon stays correct without it.
 func (d *Daemon) startWatcher(cfg *DaemonConfig) {
 	d.watcher = NewWatcher(d.logger)
 	for _, ws := range cfg.Workspaces {
@@ -119,8 +107,6 @@ func (d *Daemon) startWatcher(cfg *DaemonConfig) {
 	}()
 }
 
-// installSignalHandler subscribes a goroutine to SIGINT / SIGTERM
-// that triggers the orderly Shutdown path on receipt.
 func (d *Daemon) installSignalHandler() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -130,18 +116,11 @@ func (d *Daemon) installSignalHandler() {
 	}()
 }
 
-// startAcceptLoop takes the listener and serves IPC connections in
-// a goroutine until d.quit is closed. Accept errors during normal
-// shutdown are swallowed (signaled via select on d.quit).
 func (d *Daemon) startAcceptLoop() {
 	d.wg.Add(1)
 	go d.runAcceptLoop()
 }
 
-// runAcceptLoop is the goroutine body. Pulled out so the for/select
-// nesting doesn't push startAcceptLoop's cognitive complexity over
-// the threshold; the loop itself is straightforward but `for` plus
-// `select` plus `if err` plus `case <-d.quit` add up fast.
 func (d *Daemon) runAcceptLoop() {
 	defer d.wg.Done()
 	for {
@@ -157,10 +136,6 @@ func (d *Daemon) runAcceptLoop() {
 	}
 }
 
-// shouldStopAccept reports whether the Accept loop should terminate.
-// True when d.quit has been closed; false during normal operation.
-// Non-blocking: a transient error path checks quit-state without
-// blocking on the channel.
 func (d *Daemon) shouldStopAccept() bool {
 	select {
 	case <-d.quit:
@@ -196,14 +171,11 @@ func (d *Daemon) handleNotify(workspace, event string) {
 	switch event {
 	case "config_changed":
 		if r, ok := d.reconcilers[workspace]; ok {
-			// Run async so the IPC handler returns immediately.
 			go r.Tick()
 		}
 	}
 }
 
-// parseInterval parses a duration string like "5m" or "1h30m". Falls back
-// to 5 minutes on parse error.
 func parseInterval(s string) time.Duration {
 	d, err := time.ParseDuration(s)
 	if err != nil || d < time.Minute {
@@ -236,7 +208,6 @@ func (d *Daemon) cleanupPID() {
 	os.Remove(socketPath)
 }
 
-// IsRunning checks if a daemon process is alive.
 func IsRunning() (int, bool) {
 	path, err := PidPath()
 	if err != nil {
@@ -254,19 +225,17 @@ func IsRunning() (int, bool) {
 	if err != nil {
 		return pid, false
 	}
-	// Signal 0 checks if process exists
+
 	err = proc.Signal(syscall.Signal(0))
 	return pid, err == nil
 }
 
-// StartBackground starts the daemon as a background process.
 func StartBackground() (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return 0, err
 	}
 
-	// Resolve symlinks to get actual binary
 	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
 		return 0, err
@@ -286,7 +255,6 @@ func StartBackground() (int, error) {
 		return 0, fmt.Errorf("starting daemon: %w", err)
 	}
 
-	// Detach
 	proc.Release()
 
 	fmt.Printf("  Daemon started (pid %d)\n", proc.Pid)

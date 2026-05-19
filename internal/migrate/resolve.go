@@ -8,10 +8,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 )
 
-// commitReachableFromAnyBranch reports whether commit `sha` is an ancestor
-// of any local branch in repoPath. Used by detached-HEAD recovery to decide
-// whether the current commit needs to be preserved on a side branch before
-// we walk away from it.
 func commitReachableFromAnyBranch(repoPath, sha string) (bool, error) {
 	if sha == "" {
 		return false, nil
@@ -28,20 +24,17 @@ func commitReachableFromAnyBranch(repoPath, sha string) (bool, error) {
 	return false, nil
 }
 
-// resolveDefaultBranch returns the project's default branch, prompting the
-// user (via opts.PromptDefaultBranch) only when it cannot be inferred.
 func resolveDefaultBranch(name string, proj *config.Project, mainPath string, opts Options) (string, error) {
 	if proj.DefaultBranch != "" {
 		return proj.DefaultBranch, nil
 	}
 	if br := git.SymbolicRef(mainPath, "refs/remotes/origin/HEAD"); br != "" {
-		// strip "origin/"
 		if i := strings.Index(br, "/"); i >= 0 {
 			br = br[i+1:]
 		}
 		return br, nil
 	}
-	// Try common candidates that actually exist locally.
+
 	var candidates []string
 	for _, c := range []string{"main", "master", "trunk"} {
 		if git.HasBranch(mainPath, c) {

@@ -4,15 +4,6 @@ import (
 	"strings"
 )
 
-// Generate produces a short alias name from a project or group name.
-//
-// Rules:
-//  1. Two parts separated by - or _, each ≤4 chars → join (mm-eh → mmeh).
-//  2. Multi-part separated by - or _ → first letter of each (claude-code → cc,
-//     my-cool-project → mcp).
-//  3. Single word → consonants, max 5 chars (limitless → lmtls).
-//
-// On collision with existing names in `taken`, a numeric suffix is appended.
 func Generate(name string, taken map[string]struct{}) string {
 	base := generateBase(name)
 	if base == "" {
@@ -42,9 +33,6 @@ func generateBase(name string) string {
 	return consonantSqueeze(name)
 }
 
-// multiPartName applies Rule 1 + Rule 2: two short parts (each ≤4
-// chars) join verbatim ("co-op" → "coop"); anything else collapses to
-// the per-part first-letter acronym ("api-gateway" → "ag").
 func multiPartName(parts []string) string {
 	if len(parts) == 2 && len(parts[0]) <= 4 && len(parts[1]) <= 4 {
 		return parts[0] + parts[1]
@@ -59,9 +47,6 @@ func multiPartName(parts []string) string {
 	return b.String()
 }
 
-// consonantSqueeze applies Rule 3 to a single-word name: keep the
-// first character (even if vowel) and append up to four more
-// consonants, capping output at five chars total.
 func consonantSqueeze(name string) string {
 	var b strings.Builder
 	b.WriteByte(name[0])
@@ -74,9 +59,6 @@ func consonantSqueeze(name string) string {
 	return b.String()
 }
 
-// splitParts splits `s` on '-' or '_' separators, dropping empty
-// fragments. Equivalent to strings.FieldsFunc with a hand-rolled
-// predicate that only treats '-' and '_' as separators.
 func splitParts(s string) []string {
 	return strings.FieldsFunc(s, isSeparator)
 }

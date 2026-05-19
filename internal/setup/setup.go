@@ -18,7 +18,6 @@ const (
 	stepConfirm
 )
 
-// Result holds the final output of the setup wizard.
 type Result struct {
 	Confirmed bool
 	Canceled  bool
@@ -32,7 +31,6 @@ type GroupEntry struct {
 	Repos []gh.Repo
 }
 
-// fetchDoneMsg is sent when GitHub data is fetched.
 type fetchDoneMsg struct {
 	repos    []gh.Repo
 	username string
@@ -47,7 +45,7 @@ type Model struct {
 	err           error
 	result        Result
 	username      string
-	stepChangedAt time.Time // debounce key events on step transitions
+	stepChangedAt time.Time
 
 	selectModel  selectModel
 	groupModel   groupModel
@@ -88,7 +86,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Ignore key events within 100ms of a step transition to prevent phantom inputs
+
 		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
@@ -169,7 +167,7 @@ func (m Model) updateGroup(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.groupModel.editing = false
 				return m, nil
 			}
-			// Go back to select
+
 			m.step = stepSelect
 			m.stepChangedAt = time.Now()
 			return m, m.selectModel.search.Focus()
@@ -220,12 +218,10 @@ func (m Model) View() string {
 	return ""
 }
 
-// GetResult returns the final result after the program exits.
 func (m Model) GetResult() Result {
 	return m.result
 }
 
-// Styles
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).

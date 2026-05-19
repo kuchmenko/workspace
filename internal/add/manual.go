@@ -16,7 +16,7 @@ func (m AddModel) updateManual(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.manualErr = "URL is required"
 				return m, nil
 			}
-			// Build editFields from the bare URL.
+
 			name := parseRepoNameFromURL(val)
 			m.editFields = editFields{
 				Name:     name,

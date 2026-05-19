@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// ClientID for the ws GitHub OAuth App.
-// This is NOT a secret — it identifies the app, not the user.
-// Register at: https://github.com/settings/applications/new
 const ClientID = "Iv23liLjbULITnvRegRh"
 
 const (
@@ -38,23 +35,18 @@ type tokenResponse struct {
 	Error       string `json:"error"`
 }
 
-// DeviceFlow runs the GitHub OAuth Device Authorization flow.
-// It prints a user code, opens the browser, and polls for authorization.
 func DeviceFlow() (Token, error) {
-	// Step 1: Request device code
 	dc, err := requestDeviceCode()
 	if err != nil {
 		return Token{}, err
 	}
 
-	// Step 2: Show code and open browser
 	fmt.Printf("\n  Open this URL in your browser:\n")
 	fmt.Printf("  %s\n\n", dc.VerificationURI)
 	fmt.Printf("  Enter code: %s\n\n", dc.UserCode)
 
 	openBrowser(dc.VerificationURI)
 
-	// Step 3: Poll for token
 	fmt.Printf("  Waiting for authorization...")
 	token, err := pollForToken(dc)
 	if err != nil {
@@ -106,7 +98,7 @@ func pollForToken(dc deviceCodeResponse) (Token, error) {
 		time.Sleep(interval)
 		tr, ok := requestToken(dc)
 		if !ok {
-			continue // network or decode error — retry next tick
+			continue
 		}
 		token, retry, retryDelay, err := interpretTokenResponse(tr)
 		if !retry {
@@ -117,9 +109,6 @@ func pollForToken(dc deviceCodeResponse) (Token, error) {
 	return Token{}, fmt.Errorf("timed out waiting for authorization")
 }
 
-// requestToken posts the device-code grant exchange and decodes the
-// response. Returns ok=false on network or decode failure (the caller
-// retries); ok=true with the parsed body otherwise.
 func requestToken(dc deviceCodeResponse) (tokenResponse, bool) {
 	data := url.Values{
 		"client_id":   {ClientID},
@@ -145,14 +134,6 @@ func requestToken(dc deviceCodeResponse) (tokenResponse, bool) {
 	return tr, true
 }
 
-// interpretTokenResponse maps a tokenResponse into the loop driver's
-// next action. Returns:
-//
-//   - retry=false: the caller exits with (token, err). On success
-//     err is nil; on terminal failure err is the caller-facing
-//     reason ("expired_token", "access_denied", …).
-//   - retry=true: the caller continues polling, optionally adding
-//     `retryDelay` to the interval (for "slow_down" responses).
 func interpretTokenResponse(tr tokenResponse) (token Token, retry bool, retryDelay time.Duration, err error) {
 	switch tr.Error {
 	case "":

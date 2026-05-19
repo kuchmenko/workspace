@@ -14,9 +14,9 @@ import (
 type migrateStep int
 
 const (
-	mStepPlan      migrateStep = iota
-	mStepDecision              // per-project decision (dirty/stash/detached)
-	mStepMigrating             // running migrate.MigrateProject
+	mStepPlan migrateStep = iota
+	mStepDecision
+	mStepMigrating
 	mStepDone
 )
 
@@ -31,11 +31,10 @@ type migrateModel struct {
 
 	machine string
 	plan    *migratePlan
-	queue   []migratePlanItem // projects pending action, in order
-	cursor  int               // index into queue
-	current migratePlanItem   // active project
+	queue   []migratePlanItem
+	cursor  int
+	current migratePlanItem
 
-	// Decisions accumulated per project before the migration runs.
 	decisions map[string]migrateDecision
 
 	successes []string
@@ -47,8 +46,6 @@ type migrateModel struct {
 	sidecar *migrate.Sidecar
 }
 
-// migrateDecision captures the user's per-project answer to a state-specific
-// prompt. Empty fields default to "abort" semantics.
 type migrateDecision struct {
 	WIP             bool
 	StashBranch     bool
@@ -120,8 +117,7 @@ func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
-			// Build queue: ready + dirty + stash + detached, in that order.
-			// already/missing/not-a-repo are skipped silently.
+
 			for _, s := range []migrateState{mstReady, mstDirty, mstStash, mstDetached} {
 				m.queue = append(m.queue, m.plan.Bucket(s)...)
 			}
@@ -129,7 +125,7 @@ func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = mStepDone
 				return m, tea.Quit
 			}
-			// Persist sidecar with our pid before any migrate runs.
+
 			if err := migrate.Save(m.sidecar); err != nil {
 				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
 				return m, tea.Quit
@@ -145,9 +141,6 @@ func (m migrateModel) updatePlan(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// advance moves from one queue item to the next. If the next item needs a
-// per-project decision, switch to mStepDecision; otherwise kick off
-// migration directly.
 func (m migrateModel) advance() (tea.Model, tea.Cmd) {
 	if m.cursor >= len(m.queue) {
 		m.step = mStepDone
@@ -156,7 +149,7 @@ func (m migrateModel) advance() (tea.Model, tea.Cmd) {
 	m.current = m.queue[m.cursor]
 	switch m.current.State {
 	case mstReady:
-		// No decision needed. Migrate immediately.
+
 		m.step = mStepMigrating
 		m.stepChangedAt = time.Now()
 		return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
@@ -165,7 +158,7 @@ func (m migrateModel) advance() (tea.Model, tea.Cmd) {
 		m.stepChangedAt = time.Now()
 		return m, nil
 	}
-	// Unknown — skip.
+
 	m.skipped++
 	m.cursor++
 	return m.advance()
@@ -230,8 +223,6 @@ func (m migrateModel) updateDecision(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.spinner.Tick, m.startMigrate(m.cursor))
 }
 
-// startMigrate runs MigrateProject in a goroutine and returns a tea.Cmd that
-// emits migrateDoneMsg on completion.
 func (m migrateModel) startMigrate(index int) tea.Cmd {
 	item := m.queue[index]
 	dec := m.decisions[item.Name]

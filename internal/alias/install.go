@@ -11,13 +11,10 @@ import (
 )
 
 const (
-	// markerStart and markerEnd delimit the ws-managed block in the user's rc file.
 	markerStart = "# >>> ws aliases >>>"
 	markerEnd   = "# <<< ws aliases <<<"
 )
 
-// StateFilePath returns the path to the generated zsh aliases file.
-// Honors $XDG_STATE_HOME, falls back to ~/.local/state/ws/aliases.zsh.
 func StateFilePath() (string, error) {
 	if env := os.Getenv("XDG_STATE_HOME"); env != "" {
 		return filepath.Join(env, "ws", "aliases.zsh"), nil
@@ -29,14 +26,6 @@ func StateFilePath() (string, error) {
 	return filepath.Join(home, ".local", "state", "ws", "aliases.zsh"), nil
 }
 
-// WriteStateFile regenerates the alias state file from the workspace.
-// Safe to call on every workspace save.
-//
-// We never delete the state file when the workspace has zero aliases —
-// the state file is a single global resource shared across every workspace
-// root, and removing it on save would let an unrelated empty workspace
-// blow away aliases owned by another one. Empty workspaces just write an
-// empty (header-only) file, which is a no-op for the shell.
 func WriteStateFile(ws *config.Workspace, root string) error {
 	path, err := StateFilePath()
 	if err != nil {
@@ -58,9 +47,6 @@ func WriteStateFile(ws *config.Workspace, root string) error {
 	return nil
 }
 
-// InstallZshrc inserts a sourcing block into ~/.zshrc that loads the state file.
-// Idempotent: re-running is a no-op once the block is present.
-// Returns true if the rc file was modified.
 func InstallZshrc() (bool, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {

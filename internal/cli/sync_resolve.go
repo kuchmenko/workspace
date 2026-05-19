@@ -12,16 +12,10 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// openConflictStore is a tiny shim around conflict.Open so the cli package
-// doesn't need to import the package in two files.
 func openConflictStore() (*conflict.Store, error) {
 	return conflict.Open()
 }
 
-// handleConflict drives the prompt for one conflict. Returns (resolved, err)
-// where resolved=true means the caller should clear the conflict from the
-// store. The reconciler may also clear it on the next tick automatically;
-// either path is fine.
 func handleConflict(c conflict.Conflict) (bool, error) {
 	printConflictHeader(c)
 	switch c.Kind {
@@ -41,9 +35,6 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 	return false, nil
 }
 
-// printConflictHeader writes the per-conflict identification block
-// (kind, project, branch, workspace, details). Pure formatting; no
-// state mutation.
 func printConflictHeader(c conflict.Conflict) {
 	fmt.Println()
 	fmt.Printf("Conflict: %s\n", c.Kind)
@@ -60,9 +51,6 @@ func printConflictHeader(c conflict.Conflict) {
 	fmt.Println()
 }
 
-// resolveNeedsMigration is a one-shot informational stop: tell the user
-// to run ws migrate, wait for a key, leave the conflict for the next
-// reconciler tick to clear once migration completes.
 func resolveNeedsMigration(c conflict.Conflict) (bool, error) {
 	fmt.Println("This project needs migration. Run:")
 	fmt.Printf("  ws migrate %s\n", c.Project)
@@ -71,12 +59,6 @@ func resolveNeedsMigration(c conflict.Conflict) (bool, error) {
 	return false, nil
 }
 
-// resolveBranchDuplicate handles two [[branches]] entries with the same
-// name in the same project — typically caused by two machines adding
-// the same branch concurrently. Offers to open workspace.toml in $EDITOR
-// for manual reconciliation; auto-merge is intentionally not offered
-// because correctness depends on knowing which CreatedBy/CreatedAt to
-// trust, which the tool cannot decide.
 func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
 	return runPromptLoop([]promptAction{
 		{"e", "open workspace.toml in $EDITOR — pick which entry to keep",
@@ -84,9 +66,6 @@ func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
 	}, "k", "")
 }
 
-// editWorkspaceForDuplicate opens workspace.toml in $EDITOR (or vi)
-// at the workspace root and asks for confirmation that the duplicate
-// is resolved. Returns (true, nil) when the user confirms.
 func editWorkspaceForDuplicate(c conflict.Conflict) (bool, error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
@@ -102,10 +81,6 @@ func editWorkspaceForDuplicate(c conflict.Conflict) (bool, error) {
 	return false, nil
 }
 
-// resolveBranchOrphan handles a registered branch whose origin ref has
-// disappeared (typical: PR merged with auto-delete-branch on GitHub).
-// Two clean exits: drop the entry+worktree (the merged-PR case) or
-// keep the local branch (rare; the user wants to preserve unmerged work).
 func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
 	wtPath := findOrphanWorktree(c)
 	dropLabel := "drop [[branches]] entry — no local worktree on this machine"
@@ -120,14 +95,6 @@ func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
 	}, "s", "")
 }
 
-// findOrphanWorktree returns the on-disk worktree path for the orphan
-// branch on this machine, or "" when this machine never had a local
-// checkout of it. Two distinct scenarios converge into "drop":
-//   - We have a worktree → user must run `ws worktree rm` themselves
-//     to remove it from disk; the registry entry is dropped after.
-//   - We never had one (the [[branches]] entry arrived via
-//     workspace.toml sync from another machine) → there is nothing
-//     on disk to remove; the registry entry is dropped directly.
 func findOrphanWorktree(c conflict.Conflict) string {
 	if ws == nil || c.Project == "" {
 		return ""
@@ -140,10 +107,6 @@ func findOrphanWorktree(c conflict.Conflict) string {
 	return locateWorktreeForBranch(barePath, c.Branch)
 }
 
-// dropOrphanEntry handles the "d" path. When a local worktree is
-// present, it instructs the user to run ws worktree rm and waits for
-// confirmation. The registry entry is then removed in both cases so
-// the reconciler stops re-recording the orphan.
 func dropOrphanEntry(c conflict.Conflict, wtPath string) (bool, error) {
 	if wtPath != "" {
 		fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
@@ -159,9 +122,6 @@ func dropOrphanEntry(c conflict.Conflict, wtPath string) (bool, error) {
 	return true, nil
 }
 
-// removeBranchFromWorkspace drops the [[branches]] entry for `branch`
-// from the named project and persists workspace.toml. No-op if the
-// state isn't loaded or the branch isn't registered.
 func removeBranchFromWorkspace(project, branch string) error {
 	if ws == nil || project == "" || branch == "" {
 		return nil
@@ -174,10 +134,6 @@ func removeBranchFromWorkspace(project, branch string) error {
 	return saveWorkspace()
 }
 
-// keepOrphanLocal handles the "k" path. Clears last_pushed_* so the
-// reconciler's orphan check skips this branch on the next tick — the
-// user is intentionally keeping a local-only branch around. A future
-// ws worktree push reinstates the field and normal detection resumes.
 func keepOrphanLocal(c conflict.Conflict) (bool, error) {
 	if ws == nil || c.Project == "" || c.Branch == "" {
 		return true, nil
@@ -200,19 +156,11 @@ func keepOrphanLocal(c conflict.Conflict) (bool, error) {
 	return true, nil
 }
 
-// promptAction is one entry on the conflict-resolution menu. The
-// handler returns (done, err): done=true exits the loop with that
-// resolution status; an error short-circuits the loop unchanged.
 type promptAction struct {
 	key, label string
 	handler    func() (done bool, err error)
 }
 
-// runPromptLoop renders `actions` as a numbered menu, reads one line
-// of input, dispatches to the matching handler, and repeats until a
-// handler returns done=true (or err) or the user picks one of the
-// `skipKeys`. Centralizes the "for { print menu; read; switch }" boilerplate
-// shared across every conflict-resolution prompt.
 func runPromptLoop(actions []promptAction, skipKeys ...string) (bool, error) {
 	for {
 		printPromptMenu(actions, skipKeys)
@@ -250,8 +198,6 @@ func isSkipKey(choice string, skipKeys []string) bool {
 	return false
 }
 
-// dispatchPromptChoice runs the handler whose key matches `choice`.
-// Unknown choices are no-ops — the loop re-prompts.
 func dispatchPromptChoice(choice string, actions []promptAction) (bool, error) {
 	for _, a := range actions {
 		if a.key == choice {
@@ -261,9 +207,6 @@ func dispatchPromptChoice(choice string, actions []promptAction) (bool, error) {
 	return false, nil
 }
 
-// resolveTOMLConflict drives the prompt for workspace.toml-level
-// conflicts (rebase failed, push rejected). Both options open
-// external tooling (shell or git status); we never auto-merge.
 func resolveTOMLConflict(c conflict.Conflict) (bool, error) {
 	return runPromptLoop([]promptAction{
 		{"s", "open shell in workspace repo — fix manually, exit shell to return",
@@ -273,9 +216,6 @@ func resolveTOMLConflict(c conflict.Conflict) (bool, error) {
 	}, "k", "")
 }
 
-// shellAndConfirm spawns a shell rooted at `dir` and asks for
-// confirmation that the conflict is resolved when the shell exits.
-// Used by both TOML and main-divergence flows.
 func shellAndConfirm(dir string) (bool, error) {
 	if err := openShell(dir); err != nil {
 		return false, err
@@ -287,9 +227,6 @@ func shellAndConfirm(dir string) (bool, error) {
 	return false, nil
 }
 
-// resolveProjectConflict drives the prompt for project-level
-// divergence (main worktree cannot fast-forward). Inspect logs in
-// either direction and / or open a shell to fix manually.
 func resolveProjectConflict(c conflict.Conflict) (bool, error) {
 	wtPath, err := findWorktreePath(c.Workspace, c.Project, c.Branch)
 	if err != nil {
@@ -305,9 +242,6 @@ func resolveProjectConflict(c conflict.Conflict) (bool, error) {
 	}, "k", "")
 }
 
-// openShellAtWorktree is the project-conflict "open shell" handler.
-// Prints a clear message and stays in the menu when no worktree is
-// known; otherwise spawns the shell + confirmation prompt.
 func openShellAtWorktree(wtPath string) (bool, error) {
 	if wtPath == "" {
 		fmt.Println("no worktree path; cannot open shell")
@@ -316,10 +250,6 @@ func openShellAtWorktree(wtPath string) (bool, error) {
 	return shellAndConfirm(wtPath)
 }
 
-// runDivergenceLog runs `git log --oneline <range>` in `wtPath`,
-// silently no-op when wtPath is empty. Errors surface to stderr via
-// runInTerm rather than as a return value because the caller treats
-// the inspection as best-effort.
 func runDivergenceLog(wtPath, gitRange string) {
 	if wtPath == "" {
 		return
@@ -328,7 +258,6 @@ func runDivergenceLog(wtPath, gitRange string) {
 }
 
 func findWorktreePath(workspace, project, branch string) (string, error) {
-	// Best-effort: ws is loaded, look the project up.
 	if ws == nil {
 		return "", fmt.Errorf("workspace not loaded")
 	}
@@ -337,8 +266,7 @@ func findWorktreePath(workspace, project, branch string) (string, error) {
 		return "", fmt.Errorf("project %s not in workspace.toml", project)
 	}
 	mainPath := workspace + string(os.PathSeparator) + proj.Path
-	// For now, return the main worktree. Branch-specific worktree resolution
-	// would require parsing `git worktree list` — overkill for the prompt UI.
+
 	_ = branch
 	return mainPath, nil
 }

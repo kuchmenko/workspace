@@ -12,7 +12,6 @@ type IPCClient struct {
 	conn net.Conn
 }
 
-// Dial connects to the daemon socket.
 func Dial() (*IPCClient, error) {
 	socketPath, err := SocketPath()
 	if err != nil {
@@ -49,7 +48,6 @@ func (c *IPCClient) send(req Request) (Response, error) {
 	return resp, nil
 }
 
-// Status queries the daemon for its current state.
 func (c *IPCClient) Status() (StatusData, error) {
 	resp, err := c.send(Request{Cmd: "status"})
 	if err != nil {
@@ -58,14 +56,13 @@ func (c *IPCClient) Status() (StatusData, error) {
 	if !resp.OK {
 		return StatusData{}, fmt.Errorf("daemon error: %s", resp.Error)
 	}
-	// Re-marshal Data to decode into StatusData
+
 	raw, _ := json.Marshal(resp.Data)
 	var status StatusData
 	json.Unmarshal(raw, &status)
 	return status, nil
 }
 
-// Notify tells the daemon about a workspace event.
 func (c *IPCClient) Notify(workspace, event string) error {
 	resp, err := c.send(Request{Cmd: "notify", Workspace: workspace, Event: event})
 	if err != nil {
@@ -77,7 +74,6 @@ func (c *IPCClient) Notify(workspace, event string) error {
 	return nil
 }
 
-// Stop tells the daemon to shut down.
 func (c *IPCClient) Stop() error {
 	resp, err := c.send(Request{Cmd: "stop"})
 	if err != nil {

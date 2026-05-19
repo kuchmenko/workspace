@@ -62,7 +62,7 @@ func (m CreateModel) renderOwnerList() string {
 		b.WriteString("    " + createDim.Render("(no owners loaded)"))
 		return b.String()
 	}
-	// Window: keep the cursor visible. Show up to 6 rows.
+
 	const maxRows = 6
 	start := m.ownerScroll
 	if m.ownerCursor < start {

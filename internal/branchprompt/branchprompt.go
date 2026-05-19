@@ -22,8 +22,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Model is a standalone bubbletea model. It is a value type — callers
-// re-assign after each Update, the same convention bubbles/* uses.
 type Model struct {
 	project    string
 	candidates []string
@@ -32,9 +30,6 @@ type Model struct {
 	input      textinput.Model
 }
 
-// NewModel constructs a Model for the given project with the given branch
-// candidates. candidates may be empty — the model auto-enters free-text
-// mode when the user presses enter on an empty list.
 func NewModel(project string, candidates []string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "branch name"
@@ -46,18 +41,8 @@ func NewModel(project string, candidates []string) Model {
 	}
 }
 
-// Init returns no initial command; the parent is expected to have already
-// switched steps and rendered a frame before this model is consulted.
 func (m Model) Init() tea.Cmd { return nil }
 
-// Update handles keystrokes. Non-key messages are ignored (the parent's
-// Update handles spinners, window resizes, etc.).
-//
-// On pick/cancel, Update emits PickedMsg or CancelledMsg via a returned
-// tea.Cmd. The parent Update is expected to recognize these messages
-// and act on them (unblock a channel, change step, etc.). Update does
-// NOT mutate any non-UI state of the parent — all side effects flow
-// through the emitted message.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
@@ -69,10 +54,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m.updateListMode(key)
 }
 
-// updateInputMode handles keystrokes while the user is typing a
-// free-text branch name. Enter confirms (emits PickedMsg with the
-// trimmed value, no-op on empty), Esc returns to the candidate list,
-// any other key forwards to the underlying textinput.
 func (m Model) updateInputMode(msg tea.Msg, key tea.KeyMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "enter":
@@ -90,10 +71,6 @@ func (m Model) updateInputMode(msg tea.Msg, key tea.KeyMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateListMode handles keystrokes while the user is browsing the
-// candidate-branch list. j/k or up/down move the cursor; Enter
-// confirms (or falls through to input mode when the list is empty);
-// i opens input mode unconditionally; Esc cancels the prompt.
 func (m Model) updateListMode(key tea.KeyMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "up", "k":
@@ -115,9 +92,6 @@ func (m Model) updateListMode(key tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// confirmListSelection commits the highlighted candidate as the
-// picked branch. When the candidate list is empty the user is
-// dropped into input mode so they can type one.
 func (m Model) confirmListSelection() (Model, tea.Cmd) {
 	if len(m.candidates) == 0 {
 		m.inputMode = true
@@ -126,27 +100,18 @@ func (m Model) confirmListSelection() (Model, tea.Cmd) {
 	return m, emitPickedCmd(m.project, m.candidates[m.cursor])
 }
 
-// emitPickedCmd builds a tea.Cmd that emits PickedMsg. Centralized
-// so the closure form lives in one place rather than scattered
-// across two return sites.
 func emitPickedCmd(project, branch string) tea.Cmd {
 	picked := PickedMsg{Project: project, Branch: branch}
 	return func() tea.Msg { return picked }
 }
 
-// emitCancelledCmd is the symmetric helper for CancelledMsg.
 func emitCancelledCmd(project string) tea.Cmd {
 	canceled := CancelledMsg{Project: project}
 	return func() tea.Msg { return canceled }
 }
 
-// Project returns the project name this prompt is for — useful for
-// headers rendered by the caller outside of this model's View.
 func (m Model) Project() string { return m.project }
 
-// View renders the prompt using the shared palette below. Callers that
-// want a different look should wrap this in their own styling rather
-// than reach into the model.
 func (m Model) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(" Default branch needed "))
@@ -180,10 +145,6 @@ func (m Model) View() string {
 	return b.String()
 }
 
-// Styles mirror the palette used by cli/bootstrap.go so the visual
-// language stays consistent after extraction. Keeping a private copy
-// here (rather than importing from cli) keeps the dependency graph
-// simple — branchprompt is a leaf.
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).

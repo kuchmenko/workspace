@@ -8,7 +8,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-// TargetKind tells whether an alias target is a project or a group.
 type TargetKind int
 
 const (
@@ -18,7 +17,6 @@ const (
 	TargetRoot
 )
 
-// RootTarget is the sentinel target value that resolves to the workspace root.
 const RootTarget = "."
 
 func (k TargetKind) String() string {
@@ -33,17 +31,13 @@ func (k TargetKind) String() string {
 	return "unknown"
 }
 
-// Resolved is a fully-resolved alias entry.
 type Resolved struct {
-	Name   string // alias name (key)
-	Target string // raw target (project or group key)
+	Name   string
+	Target string
 	Kind   TargetKind
-	Path   string // absolute filesystem path
+	Path   string
 }
 
-// ResolveAll returns every alias resolved, sorted by alias name.
-// Aliases that fail to resolve are returned with Kind=TargetUnknown
-// and an empty Path so callers can flag them.
 func ResolveAll(ws *config.Workspace, root string) []Resolved {
 	out := make([]Resolved, 0, len(ws.Aliases))
 	for name, target := range ws.Aliases {
@@ -84,4 +78,3 @@ func resolveTarget(ws *config.Workspace, root, name, target string) (Resolved, e
 	}
 	return Resolved{}, fmt.Errorf("alias %q points to unknown target %q", name, target)
 }
-

@@ -20,32 +20,17 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-// Options controls a migration run.
 type Options struct {
-	// WIP: when true, dirty working trees are auto-committed to a
-	// wt/<machine>/migration-wip-<ts> branch instead of aborting.
 	WIP bool
-	// StashBranch: when true, stash entries are converted into
-	// wt/<machine>/migration-stash-<ts>-N branches via `git stash branch`
-	// before the bare clone, so they survive into the new layout. Without
-	// this flag, the presence of any stash entries aborts the migration
-	// (stash refs are not copied by `clone --bare`).
+
 	StashBranch bool
-	// CheckoutDefault: when true, a project that is in detached HEAD has
-	// its current commit preserved into a wt/<machine>/migration-detached-<ts>
-	// branch (only if it isn't already reachable from a local branch),
-	// then the working copy switches to default_branch and migration
-	// proceeds. Without this flag, detached HEAD aborts the migration.
+
 	CheckoutDefault bool
-	// Machine is the sanitized machine name for branch namespacing. Required
-	// when WIP, StashBranch, or CheckoutDefault is true.
+
 	Machine string
-	// PromptDefaultBranch is invoked when the project's default branch can
-	// not be determined automatically. Implementations should pick from
-	// `candidates` (which may be empty) or return a free-form branch name.
-	// Returning an error aborts the migration.
+
 	PromptDefaultBranch func(project string, candidates []string) (string, error)
-	// Logf is the structured progress sink. nil means silent.
+
 	Logf func(format string, args ...interface{})
 }
 
@@ -55,33 +40,25 @@ func (o Options) logf(format string, args ...interface{}) {
 	}
 }
 
-// Result describes the outcome of migrating one project.
 type Result struct {
 	Project        string
 	BarePath       string
 	MainWorktree   string
 	DefaultBranch  string
 	HooksMigrated  []string
-	WIPBranch      string   // non-empty when --wip created a snapshot branch
-	WIPWorktree    string   // non-empty when --wip created an extra worktree
-	StashBranches  []string // wt/<machine>/migration-stash-* branches created from stashes
-	DetachedBranch string   // wt/<machine>/migration-detached-* preserving orphaned commits
-	BranchesPushed int      // count of local branches preserved into bare
+	WIPBranch      string
+	WIPWorktree    string
+	StashBranches  []string
+	DetachedBranch string
+	BranchesPushed int
 }
 
-// ErrAlreadyMigrated is returned when the project already has a sibling .bare
-// directory. Callers (notably MigrateAll) should treat this as a skip, not
-// a hard error.
 var ErrAlreadyMigrated = errors.New("project already migrated")
 
-// MigrateProject runs the full migration for one named project. The caller
-// owns the workspace.toml save: this function may mutate `proj` to fill in
-// DefaultBranch, but it does not write the file.
 func MigrateProject(wsRoot string, name string, proj *config.Project, opts Options) (*Result, error) {
 	mainPath := filepath.Join(wsRoot, proj.Path)
 	barePath := layout.BarePath(mainPath)
 
-	// Step 1: validate
 	if _, err := os.Stat(barePath); err == nil {
 		return nil, ErrAlreadyMigrated
 	}
@@ -97,22 +74,17 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 
 	opts.logf("migrate %s: starting at %s", name, mainPath)
 
-	// Step 2: determine default_branch
 	defaultBranch, err := resolveDefaultBranch(name, proj, mainPath, opts)
 	if err != nil {
 		return nil, err
 	}
 	opts.logf("migrate %s: default branch = %s", name, defaultBranch)
 
-	// Step 3: pre-flight — handle detached HEAD, stash, dirty in this order.
-	// Order matters: detached → checkout → stash → dirty. Each conversion
-	// creates a side branch that becomes part of the bare clone.
 	ts := time.Now().Unix()
 
 	originalBranch, _ := git.CurrentBranch(mainPath)
 	detachedBranch := ""
 	if originalBranch == "" {
-		// Detached HEAD. Either preserve and check out default_branch, or abort.
 		if !opts.CheckoutDefault {
 			return nil, fmt.Errorf("%s is in detached HEAD; check out a branch first or re-run with the interactive TUI", name)
 		}
@@ -120,9 +92,7 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 			return nil, fmt.Errorf("detached-HEAD recovery requires a configured machine name")
 		}
 		head := git.RevParse(mainPath, "HEAD")
-		// If the current commit is reachable from any local branch, we can
-		// safely walk away from it. Otherwise, snapshot it onto a side
-		// branch so the bare clone picks it up.
+
 		reachable, _ := commitReachableFromAnyBranch(mainPath, head)
 		if !reachable {
 			topic := fmt.Sprintf("migration-detached-%d", ts)
@@ -141,7 +111,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		originalBranch = defaultBranch
 	}
 
-	// Stash entries: convert to side branches via `git stash branch`, or abort.
 	stashCount := git.StashCount(mainPath)
 	stashBranches := []string{}
 	if stashCount > 0 {
@@ -151,9 +120,7 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		if opts.Machine == "" {
 			return nil, fmt.Errorf("stash-to-branch requires a configured machine name")
 		}
-		// `git stash branch <name>` always pops the most recent (stash@{0}),
-		// so we walk N times. Each call leaves us on the new branch with the
-		// stash applied — we commit it and then checkout originalBranch again.
+
 		for i := 0; i < stashCount; i++ {
 			topic := fmt.Sprintf("migration-stash-%d-%d", ts, i)
 			br := layout.BranchName(opts.Machine, topic)
@@ -161,9 +128,7 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 			if err := runGit(mainPath, "stash", "branch", br); err != nil {
 				return nil, fmt.Errorf("stash branch %s: %w", br, err)
 			}
-			// stash branch leaves the worktree dirty with the popped index
-			// staged. Commit it so the branch carries real history rather
-			// than just a checkout.
+
 			if err := runGit(mainPath, "add", "-A"); err != nil {
 				return nil, fmt.Errorf("stage stash branch %s: %w", br, err)
 			}
@@ -171,14 +136,13 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 				return nil, fmt.Errorf("commit stash branch %s: %w", br, err)
 			}
 			stashBranches = append(stashBranches, br)
-			// Return to original branch before processing the next stash.
+
 			if err := runGit(mainPath, "checkout", originalBranch); err != nil {
 				return nil, fmt.Errorf("restore %s after stash branch: %w", originalBranch, err)
 			}
 		}
 	}
 
-	// Dirty working tree: snapshot to WIP branch or abort.
 	dirty := git.IsDirty(mainPath)
 	wipBranch := ""
 	wipTopic := ""
@@ -201,15 +165,12 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		if err := runGit(mainPath, "commit", "-m", "ws: migration WIP snapshot"); err != nil {
 			return nil, fmt.Errorf("commit WIP: %w", err)
 		}
-		// Return main worktree to the original branch so the post-migration
-		// state matches what the user expects. The WIP commit lives only on
-		// the WIP branch, which becomes a sibling worktree below.
+
 		if err := runGit(mainPath, "checkout", originalBranch); err != nil {
 			return nil, fmt.Errorf("restore original branch %s: %w", originalBranch, err)
 		}
 	}
 
-	// Step 4: capture state
 	currentBranch := originalBranch
 	localBranches, err := git.Branches(mainPath)
 	if err != nil {
@@ -220,23 +181,17 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		return nil, fmt.Errorf("could not resolve HEAD in %s", mainPath)
 	}
 
-	// Step 5: detect hooks (pre-bare so we read from the original .git)
 	hooksDir := filepath.Join(mainPath, ".git", "hooks")
 	activeHooks, _ := listActiveHooks(hooksDir)
 	if len(activeHooks) > 0 {
 		opts.logf("migrate %s: found %d active hook(s): %s", name, len(activeHooks), strings.Join(activeHooks, ", "))
 	}
 
-	// Step 6: clone --bare --no-local into sibling
 	opts.logf("migrate %s: cloning bare → %s", name, barePath)
 	if err := git.CloneBareLocal(mainPath, barePath); err != nil {
 		return nil, err
 	}
 
-	// Step 7: ensure all local branches exist in bare. clone --bare copies
-	// HEAD's branch and everything reachable via refs, but a branch with no
-	// upstream and no other refs pointing at it can theoretically be missed
-	// in pathological cases. Belt and suspenders.
 	for _, b := range localBranches {
 		if git.HasBranch(barePath, b) {
 			continue
@@ -248,11 +203,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		}
 	}
 
-	// Step 8: point bare at the actual remote (clone --no-local set origin
-	// to mainPath, which is about to disappear), install the standard
-	// fetch refspec (clone --bare omits it — without it fetch only updates
-	// FETCH_HEAD and branch@{u} can never resolve), then fetch so
-	// refs/remotes/origin/* is populated from the real remote.
 	if proj.Remote != "" {
 		if err := git.SetRemoteURL(barePath, proj.Remote); err != nil {
 			rollbackBare(barePath)
@@ -263,84 +213,35 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 			return nil, fmt.Errorf("set fetch refspec: %w", err)
 		}
 		if err := git.Fetch(barePath); err != nil {
-			// Network failure here is recoverable — we still have a valid
-			// bare with all local objects. Just log and continue.
 			opts.logf("migrate %s: warning: initial fetch failed: %v", name, err)
 		}
-		// best-effort: pin origin/HEAD to default_branch
+
 		_ = git.SetRemoteHead(barePath, defaultBranch)
 	}
 
-	// Step 9: upstream tracking for the default branch so plain `git push`
-	// and `git pull` work in the main worktree without arguments.
-	// SetBranchUpstream writes branch.<default>.{remote,merge} via
-	// `git config`, which works even if the Step-8 fetch failed (offline
-	// migration) or hasn't populated refs/remotes/origin/<default> yet.
-	// We don't restore upstream for every local branch — the reconciler
-	// only pushes wt/<machine>/* and ordinary `git pull` resolves upstream
-	// lazily. Best-effort: a failure here doesn't abort migration.
 	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
 		opts.logf("migrate %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
 	}
 
-	// Step 10: migrate hooks
 	migratedHooks, err := copyHooks(hooksDir, filepath.Join(barePath, "hooks"), activeHooks)
 	if err != nil {
 		opts.logf("migrate %s: warning: hook migration partial: %v", name, err)
 	}
 
-	// Step 11: replace the working dir's .git with a worktree pointer.
-	//
-	// `git worktree add --force <existing-non-empty-dir> <branch>` does NOT
-	// work — modern git refuses to attach a worktree to a directory that
-	// already has files, regardless of --force. (--force only relaxes the
-	// "branch already checked out elsewhere" and "registered worktree
-	// missing" checks.)
-	//
-	// Working strategy:
-	//   1. Move existing .git aside to .git.migrating-<ts> (recoverable).
-	//   2. Create the worktree at a sibling tmp path under a hidden parent
-	//      dir, with --no-checkout. The worktree's basename matches
-	//      mainPath's basename so git's admin dir at <bare>/worktrees/<name>
-	//      gets a clean name (not "<name>.wt-tmp" or similar). git
-	//      materializes the .git pointer file there but writes no
-	//      working-tree files (and, importantly for step 6, populates no
-	//      index entries either — see below).
-	//   3. Move that .git pointer file from the tmp dir into mainPath
-	//      (which still contains the user's untouched files).
-	//   4. Remove the now-empty tmp dir AND its hidden parent.
-	//   5. `git worktree repair` so the bare repo's worktrees/<name>/gitdir
-	//      points at mainPath instead of the tmp location.
-	//   6. `git reset --mixed HEAD` to populate the index from HEAD.
-	//      `--no-checkout` leaves the index EMPTY (it only sets up the
-	//      worktree's HEAD pointer). Without this step `git status` shows
-	//      every file as both "deleted in index" and "untracked", which
-	//      is technically a working repo but completely broken UX.
-	//   7. Verify HEAD didn't shift and the worktree is clean.
-	//
-	// On any failure between steps 2–6 we restore the original .git from
-	// .git.migrating-<ts> and tear down the bare. Step 7 is the last point
-	// where a rollback is feasible.
 	movedGit := filepath.Join(mainPath, fmt.Sprintf(".git.migrating-%d", ts))
 	if err := os.Rename(filepath.Join(mainPath, ".git"), movedGit); err != nil {
 		rollbackBare(barePath)
 		return nil, fmt.Errorf("move .git aside: %w", err)
 	}
 
-	// Helper closure: rollback the .git move and clean up the bare. Used
-	// from every failure branch below.
 	restore := func() {
 		_ = os.Rename(movedGit, filepath.Join(mainPath, ".git"))
 		rollbackBare(barePath)
 	}
 
-	// Sibling hidden parent dir. The tmp worktree lives inside it with the
-	// SAME basename as mainPath, so git's admin dir at
-	// <bare>/worktrees/<basename> gets a sensible name. We rm -rf the
-	// parent at the end, so the user never sees this dir.
 	tmpParent := filepath.Join(filepath.Dir(mainPath), fmt.Sprintf(".ws-migrate-%d", ts))
 	tmpWT := filepath.Join(tmpParent, filepath.Base(mainPath))
-	// Defensive: stale dir from a previous crashed run.
+
 	_ = os.RemoveAll(tmpParent)
 	if err := os.MkdirAll(tmpParent, 0o755); err != nil {
 		restore()
@@ -353,9 +254,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		return nil, fmt.Errorf("create tmp worktree: %w", err)
 	}
 
-	// Move the .git pointer file (a regular file containing `gitdir: ...`,
-	// not a directory) from the tmp dir into mainPath. The user's working
-	// tree files in mainPath are untouched.
 	tmpDotGit := filepath.Join(tmpWT, ".git")
 	if err := os.Rename(tmpDotGit, filepath.Join(mainPath, ".git")); err != nil {
 		_ = os.RemoveAll(tmpParent)
@@ -363,33 +261,22 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		return nil, fmt.Errorf("move .git pointer from tmp: %w", err)
 	}
 
-	// Tmp parent should be empty (--no-checkout wrote nothing else).
 	if err := os.RemoveAll(tmpParent); err != nil {
 		opts.logf("migrate %s: warning: could not remove %s: %v", name, tmpParent, err)
 	}
 
-	// Tell git to update the worktrees admin dir so gitdir → mainPath, not
-	// the now-removed tmp path.
 	if err := git.WorktreeRepair(mainPath); err != nil {
 		_ = os.RemoveAll(filepath.Join(mainPath, ".git"))
 		restore()
 		return nil, fmt.Errorf("worktree repair: %w", err)
 	}
 
-	// Populate the index from HEAD. `git worktree add --no-checkout`
-	// creates the worktree with HEAD set but the index EMPTY — without
-	// this `git status` would show every tracked file as both
-	// "deleted in index" and "untracked on disk". `reset --mixed HEAD`
-	// reads HEAD into the index without touching the working tree, which
-	// is exactly what we need: the existing files match HEAD, so after
-	// the index is populated, status reports clean.
 	if err := runGit(mainPath, "reset", "--mixed", "HEAD"); err != nil {
 		_ = os.RemoveAll(filepath.Join(mainPath, ".git"))
 		restore()
 		return nil, fmt.Errorf("populate index from HEAD: %w", err)
 	}
 
-	// Verify the new worktree is functional and HEAD didn't shift.
 	if !git.IsRepo(mainPath) {
 		_ = os.RemoveAll(filepath.Join(mainPath, ".git"))
 		restore()
@@ -401,13 +288,10 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		return nil, fmt.Errorf("worktree verification failed: HEAD shifted from %s to %s", originalHead, newHead)
 	}
 
-	// Verification passed — irreversible step.
 	if err := os.RemoveAll(movedGit); err != nil {
 		opts.logf("migrate %s: warning: could not remove %s: %v", name, movedGit, err)
 	}
 
-	// Step 12: if WIP was created, attach it as a sibling worktree so the
-	// user can find their snapshot.
 	wipWorktree := ""
 	if wipBranch != "" {
 		wipWorktree = layout.WorktreePath(mainPath, opts.Machine, wipTopic)
@@ -417,7 +301,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 		}
 	}
 
-	// Mutate proj so the caller can persist default_branch.
 	proj.DefaultBranch = defaultBranch
 
 	opts.logf("migrate %s: done", name)
@@ -436,7 +319,6 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 	}, nil
 }
 
-// rollbackBare removes a partially-created bare repo. Best-effort.
 func rollbackBare(barePath string) {
 	_ = os.RemoveAll(barePath)
 }

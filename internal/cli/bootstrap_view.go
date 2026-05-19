@@ -46,7 +46,7 @@ func (m bootstrapModel) viewPlan() string {
 			continue
 		}
 		fmt.Fprintf(&b, "  %s %s (%d)\n", row.mark, bsHeaderStyle.Render(row.label), len(items))
-		// Truncate large lists in the TUI; full list still shown in dry-run.
+
 		max := len(items)
 		if max > 8 {
 			max = 8
@@ -116,7 +116,6 @@ func (m bootstrapModel) viewDone() string {
 	return b.String()
 }
 
-// renderProgressBar draws a simple [█████░░░░░] bar.
 func renderProgressBar(done, total, width int) string {
 	if total <= 0 {
 		return strings.Repeat("░", width)
@@ -129,8 +128,6 @@ func renderProgressBar(done, total, width int) string {
 		bsBarEmptyStyle.Render(strings.Repeat("░", width-filled))
 }
 
-// indent prefixes every line of s with prefix. Used for nesting git stderr
-// inside the post-exit error report.
 func indent(s, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
