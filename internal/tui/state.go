@@ -43,4 +43,6 @@ func (s Stepper) View() string {
 }
 
 func (s Stepper) Current() int { return s.idx }
-func (s Stepper) Done() bool   { return s.idx >= len(s.steps) || (s.idx == len(s.steps)-1 && s.steps[s.idx].IsDone()) }
+func (s Stepper) Done() bool {
+	return s.idx >= len(s.steps) || (s.idx == len(s.steps)-1 && s.steps[s.idx].IsDone())
+}

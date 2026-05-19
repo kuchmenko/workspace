@@ -47,8 +47,8 @@ func (s Spinner) Update(msg Msg) (Spinner, Cmd) {
 	return Spinner{sp: next}, ownCmd(cmd)
 }
 
-func (s Spinner) View() string         { return s.sp.View() }
-func (s Spinner) Tick() Msg            { return s.sp.Tick() }
+func (s Spinner) View() string              { return s.sp.View() }
+func (s Spinner) Tick() Msg                 { return s.sp.Tick() }
 func (s *Spinner) SetStyle(st SpinnerStyle) { s.sp.Spinner = st.s }
 func (s *Spinner) SetTextStyle(st Style)    { s.sp.Style = st.s }
 
@@ -85,7 +85,7 @@ func ownCmd(c tea.Cmd) Cmd {
 }
 
 var ownToTeaKeyType = map[KeyType]tea.KeyType{
-	KeyRunes:      tea.KeyRunes,
+	KeyRunes:     tea.KeyRunes,
 	KeySpace:     tea.KeySpace,
 	KeyEnter:     tea.KeyEnter,
 	KeyEsc:       tea.KeyEsc,
