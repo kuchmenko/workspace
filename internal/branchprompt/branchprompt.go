@@ -17,9 +17,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type Model struct {
@@ -27,13 +25,14 @@ type Model struct {
 	candidates []string
 	cursor     int
 	inputMode  bool
-	input      textinput.Model
+	input      tui.TextInput
 }
 
 func NewModel(project string, candidates []string) Model {
-	ti := textinput.New()
-	ti.Placeholder = "branch name"
-	ti.CharLimit = 80
+	ti := tui.NewTextInput()
+	ti.SetPlaceholder("branch name")
+	ti.SetCharLimit(80)
+	ti.Focus()
 	return Model{
 		project:    project,
 		candidates: candidates,
@@ -41,10 +40,10 @@ func NewModel(project string, candidates []string) Model {
 	}
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tui.Cmd { return nil }
 
-func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+func (m Model) Update(msg tui.Msg) (Model, tui.Cmd) {
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -54,7 +53,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m.updateListMode(key)
 }
 
-func (m Model) updateInputMode(msg tea.Msg, key tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) updateInputMode(msg tui.Msg, key tui.KeyMsg) (Model, tui.Cmd) {
 	switch key.String() {
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
@@ -66,12 +65,12 @@ func (m Model) updateInputMode(msg tea.Msg, key tea.KeyMsg) (Model, tea.Cmd) {
 		m.inputMode = false
 		return m, nil
 	}
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
 
-func (m Model) updateListMode(key tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) updateListMode(key tui.KeyMsg) (Model, tui.Cmd) {
 	switch key.String() {
 	case "up", "k":
 		if m.cursor > 0 {
@@ -92,7 +91,7 @@ func (m Model) updateListMode(key tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) confirmListSelection() (Model, tea.Cmd) {
+func (m Model) confirmListSelection() (Model, tui.Cmd) {
 	if len(m.candidates) == 0 {
 		m.inputMode = true
 		return m, m.input.Focus()
@@ -100,14 +99,14 @@ func (m Model) confirmListSelection() (Model, tea.Cmd) {
 	return m, emitPickedCmd(m.project, m.candidates[m.cursor])
 }
 
-func emitPickedCmd(project, branch string) tea.Cmd {
+func emitPickedCmd(project, branch string) tui.Cmd {
 	picked := PickedMsg{Project: project, Branch: branch}
-	return func() tea.Msg { return picked }
+	return func() tui.Msg { return picked }
 }
 
-func emitCancelledCmd(project string) tea.Cmd {
+func emitCancelledCmd(project string) tui.Cmd {
 	canceled := CancelledMsg{Project: project}
-	return func() tea.Msg { return canceled }
+	return func() tui.Msg { return canceled }
 }
 
 func (m Model) Project() string { return m.project }
@@ -146,26 +145,26 @@ func (m Model) View() string {
 }
 
 var (
-	titleStyle = lipgloss.NewStyle().
+	titleStyle = tui.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	headerStyle = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	dimStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	helpStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	cursorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	cursorStyle = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6"))
+	selectedStyle = tui.NewStyle().
+			Foreground(tui.Color("6"))
 )

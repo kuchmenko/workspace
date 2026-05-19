@@ -4,12 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type AddModel struct {
@@ -28,7 +25,7 @@ type AddModel struct {
 
 	width, height int
 
-	spinner spinner.Model
+	spinner tui.Spinner
 
 	sourceOutcomes []SourceOutcome
 	sourcesDone    int
@@ -36,11 +33,11 @@ type AddModel struct {
 	cursor         int
 	allSuggestions []Suggestion
 	filterMode     bool
-	filterInput    textinput.Model
+	filterInput    tui.TextInput
 
 	selectedURLs map[string]bool
 
-	manualInput textinput.Model
+	manualInput tui.TextInput
 	manualErr   string
 
 	editFields editFields
@@ -88,19 +85,19 @@ type branchAnswer struct {
 }
 
 func NewAddModel(opts AddModelOptions) AddModel {
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	sp := tui.NewSpinner()
+	sp.SetStyle(tui.DotSpinner)
+	sp.SetTextStyle(tui.NewStyle().Foreground("6"))
 
-	manual := textinput.New()
-	manual.Placeholder = "git@github.com:owner/repo.git"
-	manual.CharLimit = 200
-	manual.Width = 60
+	manual := tui.NewTextInput()
+	manual.SetPlaceholder("git@github.com:owner/repo.git")
+	manual.SetCharLimit(200)
+	manual.SetWidth(60)
 
-	filter := textinput.New()
-	filter.Placeholder = "type to search name / url / description / org..."
-	filter.CharLimit = 60
-	filter.Width = 50
+	filter := tui.NewTextInput()
+	filter.SetPlaceholder("type to search name / url / description / org...")
+	filter.SetCharLimit(60)
+	filter.SetWidth(50)
 
 	return AddModel{
 		state:       addStateGathering,
@@ -129,20 +126,20 @@ type AddModelOptions struct {
 	PreURLs []string
 }
 
-func (m AddModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.spinner.Tick}
+func (m AddModel) Init() tui.Cmd {
+	cmds := []tui.Cmd{m.spinner.Tick}
 	for _, src := range m.sources {
 		cmds = append(cmds, m.startSource(src))
 	}
-	return tea.Batch(cmds...)
+	return tui.Batch(cmds...)
 }
 
-func (m AddModel) startSource(src Source) tea.Cmd {
+func (m AddModel) startSource(src Source) tui.Cmd {
 	timeout := m.gatherTO
 	if timeout <= 0 {
 		timeout = DefaultSourceTimeout
 	}
-	return func() tea.Msg {
+	return func() tui.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		start := time.Now()
@@ -156,13 +153,13 @@ func (m AddModel) startSource(src Source) tea.Cmd {
 	}
 }
 
-func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AddModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 
 		if !m.stateChangedAt.IsZero() && time.Since(m.stateChangedAt) < 100*time.Millisecond {
 			return m, nil
@@ -170,7 +167,7 @@ func (m AddModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			done := m.toDone()
 			if m.standalone {
-				return done, tea.Sequence(emit(AddDoneMsg{}), tea.Quit)
+				return done, tui.Sequence(emit(AddDoneMsg{}), tui.Quit)
 			}
 			return done, emit(AddDoneMsg{})
 		}

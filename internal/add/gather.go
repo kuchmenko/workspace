@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) handleSourceDone(msg sourceDoneMsg) (tea.Model, tea.Cmd) {
+func (m AddModel) handleSourceDone(msg sourceDoneMsg) (tui.Model, tui.Cmd) {
 	m.sourcesDone++
 	m.sourceOutcomes = append(m.sourceOutcomes, SourceOutcome{
 		Name:     msg.name,
@@ -37,9 +36,9 @@ func (m AddModel) handleSourceDone(msg sourceDoneMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m AddModel) updateGathering(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if msg, ok := msg.(spinner.TickMsg); ok {
-		var cmd tea.Cmd
+func (m AddModel) updateGathering(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if _, ok := msg.(tui.SpinnerTickMsg); ok {
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	}

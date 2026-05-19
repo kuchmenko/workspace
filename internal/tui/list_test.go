@@ -25,7 +25,7 @@ func key(s string) KeyMsg {
 	case "tab":
 		return KeyMsg{Type: KeyTab}
 	}
-	return KeyMsg{Type: KeyRune, Runes: []rune(s)}
+	return KeyMsg{Type: KeyRunes, Runes: []rune(s)}
 }
 
 func TestFilterableList_CursorMovement(t *testing.T) {
@@ -53,7 +53,7 @@ func TestFilterableList_FilterMode(t *testing.T) {
 		t.Fatal("expected filter mode active after /")
 	}
 	for _, c := range "av" {
-		m, _ = l.Update(KeyMsg{Type: KeyRune, Runes: []rune{c}})
+		m, _ = l.Update(KeyMsg{Type: KeyRunes, Runes: []rune{c}})
 		l = m.(FilterableList)
 	}
 	if l.Filter() != "av" {

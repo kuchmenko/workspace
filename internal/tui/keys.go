@@ -5,7 +5,7 @@ import "strings"
 type KeyType int
 
 const (
-	KeyRune KeyType = iota
+	KeyRunes KeyType = iota
 	KeyEnter
 	KeyEsc
 	KeyTab
@@ -24,6 +24,8 @@ const (
 	KeyCtrlC
 	KeyCtrlD
 )
+
+const KeyEscape = KeyEsc
 
 type KeyMsg struct {
 	Type  KeyType
@@ -60,7 +62,7 @@ func (k KeyMsg) String() string {
 	if k.Ctrl && k.Type != KeyCtrlC && k.Type != KeyCtrlD {
 		b.WriteString("ctrl+")
 	}
-	if k.Type == KeyRune {
+	if k.Type == KeyRunes {
 		b.WriteString(string(k.Runes))
 	} else if name, ok := keyNames[k.Type]; ok {
 		b.WriteString(name)

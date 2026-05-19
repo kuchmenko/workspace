@@ -8,9 +8,9 @@ func TestConfirmDialog_YesNoCancel(t *testing.T) {
 		key  KeyMsg
 		want Msg
 	}{
-		{KeyMsg{Type: KeyRune, Runes: []rune{'y'}}, ConfirmedMsg{}},
+		{KeyMsg{Type: KeyRunes, Runes: []rune{'y'}}, ConfirmedMsg{}},
 		{KeyMsg{Type: KeyEnter}, ConfirmedMsg{}},
-		{KeyMsg{Type: KeyRune, Runes: []rune{'n'}}, CancelledMsg{}},
+		{KeyMsg{Type: KeyRunes, Runes: []rune{'n'}}, CancelledMsg{}},
 		{KeyMsg{Type: KeyEsc}, CancelledMsg{}},
 	}
 	for _, c := range cases {

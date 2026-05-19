@@ -21,10 +21,10 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/clipboard"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 var ErrEmbedNotSupported = errors.New("embedded mode not yet supported")
@@ -84,10 +84,10 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 		Standalone:    true,
 	})
 
-	prog := tea.NewProgram(
+	prog := tui.NewProgram(
 		model,
-		tea.WithAltScreen(),
-		tea.WithContext(ctx),
+		tui.WithAltScreen(),
+		tui.WithContext(ctx),
 	)
 
 	finalModel, err := prog.Run()

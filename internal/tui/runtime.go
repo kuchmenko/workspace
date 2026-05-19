@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -9,9 +11,10 @@ type ProgramOption func(*programConfig)
 type programConfig struct {
 	altScreen bool
 	mouse     bool
+	ctx       interface{}
 }
 
-func WithAltScreen() ProgramOption  { return func(c *programConfig) { c.altScreen = true } }
+func WithAltScreen() ProgramOption       { return func(c *programConfig) { c.altScreen = true } }
 func WithMouseCellMotion() ProgramOption { return func(c *programConfig) { c.mouse = true } }
 
 type Program struct {
@@ -32,6 +35,11 @@ func NewProgram(m Model, opts ...ProgramOption) *Program {
 	}
 	if cfg.mouse {
 		teaOpts = append(teaOpts, tea.WithMouseCellMotion())
+	}
+	if cfg.ctx != nil {
+		if ctx, ok := cfg.ctx.(context.Context); ok {
+			teaOpts = append(teaOpts, tea.WithContext(ctx))
+		}
 	}
 	return &Program{p: tea.NewProgram(w, teaOpts...), bt: w, cfg: cfg}
 }
@@ -103,7 +111,7 @@ func translateOut(msg Msg) tea.Msg {
 }
 
 var teaToOwnKeyType = map[tea.KeyType]KeyType{
-	tea.KeyRunes:     KeyRune,
+	tea.KeyRunes:     KeyRunes,
 	tea.KeySpace:     KeySpace,
 	tea.KeyEnter:     KeyEnter,
 	tea.KeyEsc:       KeyEsc,

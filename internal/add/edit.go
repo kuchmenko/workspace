@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+func (m AddModel) updateEdit(msg tui.Msg) (tui.Model, tui.Cmd) {
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -35,7 +35,7 @@ func (m AddModel) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		s := key.String()
 
-		if key.Type == tea.KeyRunes {
+		if key.Type == tui.KeyRunes {
 			runes := key.Runes
 			m.applyEditRunes(runes)
 			return m, nil
@@ -133,14 +133,14 @@ func (m AddModel) viewEdit() string {
 	return b.String()
 }
 
-func (m AddModel) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m AddModel) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
 			m.queue = append(m.queue, m.editFields)
 			m.currentIdx = 0
 			m.transitionTo(addStateCloning)
-			return m, tea.Batch(m.spinner.Tick, m.startCloneJob(0))
+			return m, tui.Batch(m.spinner.Tick, m.startCloneJob(0))
 		case "n", "N", "esc":
 			m.transitionTo(addStateBrowse)
 			return m, nil
@@ -167,8 +167,8 @@ func (m AddModel) viewConfirm() string {
 	return b.String()
 }
 
-func (m AddModel) updateBulkConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+func (m AddModel) updateBulkConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -183,7 +183,7 @@ func (m AddModel) updateBulkConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentIdx = 0
 		m.selectedURLs = nil
 		m.transitionTo(addStateCloning)
-		return m, tea.Batch(m.spinner.Tick, m.startCloneJob(0))
+		return m, tui.Batch(m.spinner.Tick, m.startCloneJob(0))
 	case "n", "N", "esc":
 		m.transitionTo(addStateBrowse)
 		return m, nil

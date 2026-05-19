@@ -1,53 +1,55 @@
 package add
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/kuchmenko/workspace/internal/tui"
+)
 
 var (
-	addTitle = lipgloss.NewStyle().
+	addTitle = tui.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	addDim = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	addDim = tui.NewStyle().Foreground(tui.Color("8"))
 
-	addHelp = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	addHelp = tui.NewStyle().Foreground(tui.Color("8"))
 
-	addCursor = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	addCursor = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	addAccent = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	addAccent = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	addErr = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("1")).
+	addErr = tui.NewStyle().
+		Foreground(tui.Color("1")).
 		Bold(true)
 
-	addCheck = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	addCheck = tui.NewStyle().Foreground(tui.Color("2"))
 
-	addChip = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	addChip = tui.NewStyle().Foreground(tui.Color("4"))
 
-	addGroupHdr = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("5")).
+	addGroupHdr = tui.NewStyle().
+			Foreground(tui.Color("5")).
 			Bold(true).
 			Underline(true)
 
-	addItemName = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	addItemName = tui.NewStyle().Foreground(tui.Color("15"))
 
-	addExists = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("3")).
+	addExists = tui.NewStyle().
+			Foreground(tui.Color("3")).
 			Bold(true)
 
-	addExistsTag = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("3")).
+	addExistsTag = tui.NewStyle().
+			Foreground(tui.Color("3")).
 			Italic(true)
 
-	addPreviewName = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("14")).
+	addPreviewName = tui.NewStyle().
+			Foreground(tui.Color("14")).
 			Bold(true)
 
-	addCursorRow = lipgloss.NewStyle().
-			Background(lipgloss.Color("237"))
+	addCursorRow = tui.NewStyle().
+			Background(tui.Color("237"))
 )

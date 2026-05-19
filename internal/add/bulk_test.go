@@ -1,12 +1,11 @@
 package add
 
 import (
+	"github.com/kuchmenko/workspace/internal/tui"
 	"testing"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
-func keySpace() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}} }
+func keySpace() tui.KeyMsg { return tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{' '}} }
 
 // browseModelWith returns a model that has already transitioned to
 // browse with the given suggestions.

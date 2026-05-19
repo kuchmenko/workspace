@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"strings"
 	"time"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 func truncate(s string, n int) string {
@@ -41,8 +39,8 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-func emit(msg tea.Msg) tea.Cmd {
-	return func() tea.Msg { return msg }
+func emit(msg tui.Msg) tui.Cmd {
+	return func() tui.Msg { return msg }
 }
 
 func parseRepoNameFromURL(url string) string {
@@ -99,8 +97,8 @@ func renderSourceChipsLive(outcomes []SourceOutcome) string {
 			color = "2"
 			label = fmt.Sprintf("%s:%d", o.Name, o.Count)
 		}
-		chips = append(chips, lipgloss.NewStyle().
-			Foreground(lipgloss.Color(color)).Render(label))
+		chips = append(chips, tui.NewStyle().
+			Foreground(tui.Color(color)).Render(label))
 	}
 	return strings.Join(chips, "  ")
 }

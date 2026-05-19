@@ -5,18 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/clone"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) startCloneJob(idx int) tea.Cmd {
+func (m AddModel) startCloneJob(idx int) tui.Cmd {
 	if idx >= len(m.queue) {
-		return func() tea.Msg { return allClonesDoneMsg{} }
+		return func() tui.Msg { return allClonesDoneMsg{} }
 	}
 	job := m.queue[idx]
-	return func() tea.Msg {
+	return func() tui.Msg {
 		opts := Options{
 			URLs:      []string{job.URL},
 			Name:      job.Name,
@@ -46,10 +45,10 @@ func (m AddModel) startCloneJob(idx int) tea.Cmd {
 	}
 }
 
-func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AddModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		var cmd tea.Cmd
+	case tui.SpinnerTickMsg:
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	case cloneDoneMsg:
@@ -65,7 +64,7 @@ func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentIdx >= len(m.queue) {
 			m.transitionTo(addStateDone)
 			if m.standalone {
-				return m, tea.Sequence(emit(m.doneMsg()), tea.Quit)
+				return m, tui.Sequence(emit(m.doneMsg()), tui.Quit)
 			}
 			return m, emit(m.doneMsg())
 		}
@@ -79,7 +78,7 @@ func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case allClonesDoneMsg:
 		m.transitionTo(addStateDone)
 		if m.standalone {
-			return m, tea.Sequence(emit(m.doneMsg()), tea.Quit)
+			return m, tui.Sequence(emit(m.doneMsg()), tui.Quit)
 		}
 		return m, emit(m.doneMsg())
 	}
@@ -105,7 +104,7 @@ func (m AddModel) viewCloning() string {
 	return b.String()
 }
 
-func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AddModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case branchprompt.PickedMsg:
 		m.resolveBranch(msg.Branch, nil)
@@ -116,7 +115,7 @@ func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transitionTo(addStateCloning)
 		return m, nil
 	}
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.branchPrompt, cmd = m.branchPrompt.Update(msg)
 	return m, cmd
 }
@@ -128,10 +127,10 @@ func (m *AddModel) resolveBranch(branch string, err error) {
 	}
 }
 
-func (m AddModel) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(tea.KeyMsg); ok {
+func (m AddModel) updateDone(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if _, ok := msg.(tui.KeyMsg); ok {
 		if m.standalone {
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 	return m, nil

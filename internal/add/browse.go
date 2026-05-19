@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+func (m AddModel) updateBrowse(msg tui.Msg) (tui.Model, tui.Cmd) {
+	key, ok := msg.(tui.KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -27,7 +27,7 @@ func (m AddModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			return m, nil
 		}
-		var cmd tea.Cmd
+		var cmd tui.Cmd
 		m.filterInput, cmd = m.filterInput.Update(msg)
 		m.cursor = 0
 		return m, cmd
@@ -121,7 +121,7 @@ func (m AddModel) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		done := m.toDone()
 		if m.standalone {
-			return done, tea.Sequence(emit(m.doneMsg()), tea.Quit)
+			return done, tui.Sequence(emit(m.doneMsg()), tui.Quit)
 		}
 		return done, emit(m.doneMsg())
 	}

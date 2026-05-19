@@ -10,7 +10,7 @@ func TestModalForm_TypingAndSubmit(t *testing.T) {
 		{Name: "branch", Value: ""},
 	})
 	for _, c := range "feat/x" {
-		m, _ := f.Update(KeyMsg{Type: KeyRune, Runes: []rune{c}})
+		m, _ := f.Update(KeyMsg{Type: KeyRunes, Runes: []rune{c}})
 		f = m.(ModalForm)
 	}
 	_, cmd := f.Update(KeyMsg{Type: KeyEnter})
