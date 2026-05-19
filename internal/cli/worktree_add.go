@@ -72,33 +72,14 @@ EXAMPLES
 				return err
 			}
 
-			// One-time repair: pre-0.5.1 bare repos were created without
-			// remote.origin.fetch configured. Without it, the fetch below
-			// would only update FETCH_HEAD, leaving refs/remotes/origin/*
-			// untouched — and HasRemoteBranch would always return false,
-			// breaking the "branch is on origin" detection. Mirrors the
-			// reconciler's repair step at reconciler.go:336.
 			if !git.HasFetchRefspec(barePath) {
 				_ = git.SetFetchRefspec(barePath)
 			}
 
-			// Best-effort fetch the named branch via the standard remote-
-			// tracking refspec so refs/remotes/origin/<branch> reflects
-			// the latest origin state. We deliberately do NOT force-fetch
-			// into refs/heads/<branch> here: that would silently rewind a
-			// local branch with unpushed commits (e.g. legacy
-			// wt/<machine>/* re-registration with work-in-progress) to
-			// origin's tip.
 			_ = git.FetchRefspec(barePath, "origin", branch)
 			localExists := git.HasBranch(barePath, branch)
 			remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
 
-			// Re-registration short-circuit: if the branch is already
-			// checked out in some existing worktree (legacy wt/<machine>/*
-			// dir, or a previous `ws worktree add` whose saveWorkspace
-			// step failed), don't try to create another worktree — git
-			// refuses without --force, and the user's intent is to repair
-			// metadata, not to materialize a duplicate checkout.
 			if existingWtPath := locateWorktreeForBranch(barePath, branch); existingWtPath != "" {
 				p := ws.Projects[projectName]
 				changed, _ := p.ClaimBranch(branch, machine)
@@ -122,7 +103,7 @@ EXAMPLES
 				return fmt.Errorf("worktree path already exists: %s", wtPath)
 			}
 
-			source := "" // "fetched", "local", or "" for new
+			source := ""
 			switch {
 			case localExists:
 				if fromBase != "" {
@@ -160,11 +141,6 @@ EXAMPLES
 				_ = git.SetBranchUpstream(wtPath, branch, "origin")
 			}
 
-			// Update the registry: claim this machine against the branch.
-			// When we attached to a branch that was already on origin
-			// ("fetched" path), also mark it as pushed — the branch was
-			// observed on origin at this exact moment, so the orphan
-			// detector should treat it as published from now on.
 			p := ws.Projects[projectName]
 			changed, _ := p.ClaimBranch(branch, machine)
 			if source == "fetched" && p.MarkPushed(branch, machine, time.Now()) {

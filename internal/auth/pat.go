@@ -9,7 +9,6 @@ import (
 	"time"
 )
 
-// PromptPAT reads a GitHub Personal Access Token from stdin and validates it.
 func PromptPAT() (Token, error) {
 	fmt.Println("\n  Create a token at: https://github.com/settings/tokens")
 	fmt.Println("  Required scopes: repo, read:user, read:org")
@@ -26,7 +25,6 @@ func PromptPAT() (Token, error) {
 		return Token{}, fmt.Errorf("empty token")
 	}
 
-	// Validate by making a test API call
 	fmt.Print("  Validating... ")
 	if err := validateToken(token); err != nil {
 		return Token{}, err

@@ -5,30 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/clone"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m AddModel) startCloneJob(idx int) tea.Cmd {
+func (m AddModel) startCloneJob(idx int) tui.Cmd {
 	if idx >= len(m.queue) {
-		return func() tea.Msg { return allClonesDoneMsg{} }
+		return func() tui.Msg { return allClonesDoneMsg{} }
 	}
 	job := m.queue[idx]
-	return func() tea.Msg {
-		// Build a per-iteration Options for Register. Disk-found
-		// suggestions register-only (NoClone) since the repo is
-		// already on the user's machine; everything else clones into
-		// the bare+worktree layout via Register → CloneIntoLayout.
-		//
-		// Register is non-interactive: if the clone returns
-		// ErrNeedsBootstrap, we surface it as a per-job error and
-		// the user is told to run `ws bootstrap <name>` afterwards.
-		// The branchPrompt sub-state in the TUI is wired to handle
-		// a future needsBranchMsg flow if we ever decide to plumb
-		// the prompt through (the same answer-channel pattern
-		// bootstrap uses).
+	return func() tui.Msg {
 		opts := Options{
 			URLs:      []string{job.URL},
 			Name:      job.Name,
@@ -38,7 +25,7 @@ func (m AddModel) startCloneJob(idx int) tea.Cmd {
 			Workspace: m.ws,
 			Save:      m.saveFn,
 			Mode:      ModeHeadless,
-			NoClone:   job.FromDisk != "", // disk-found → register only
+			NoClone:   job.FromDisk != "",
 		}
 
 		regRes, err := Register(opts, job.URL)
@@ -58,10 +45,10 @@ func (m AddModel) startCloneJob(idx int) tea.Cmd {
 	}
 }
 
-func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AddModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		var cmd tea.Cmd
+	case tui.SpinnerTickMsg:
+		var cmd tui.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	case cloneDoneMsg:
@@ -77,17 +64,13 @@ func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.currentIdx >= len(m.queue) {
 			m.transitionTo(addStateDone)
 			if m.standalone {
-				return m, tea.Sequence(emit(m.doneMsg()), tea.Quit)
+				return m, tui.Sequence(emit(m.doneMsg()), tui.Quit)
 			}
 			return m, emit(m.doneMsg())
 		}
 		return m, m.startCloneJob(m.currentIdx)
 	case needsBranchMsg:
-		// Wired but unreachable today: no clone path emits
-		// needsBranchMsg. Kept so a future caller that wants to
-		// route clone.ErrNeedsBootstrap through the TUI prompt
-		// has the plumbing ready (same answer-channel pattern as
-		// bootstrap).
+
 		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		m.transitionTo(addStateBranchPrompt)
@@ -95,7 +78,7 @@ func (m AddModel) updateCloning(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case allClonesDoneMsg:
 		m.transitionTo(addStateDone)
 		if m.standalone {
-			return m, tea.Sequence(emit(m.doneMsg()), tea.Quit)
+			return m, tui.Sequence(emit(m.doneMsg()), tui.Quit)
 		}
 		return m, emit(m.doneMsg())
 	}
@@ -121,11 +104,7 @@ func (m AddModel) viewCloning() string {
 	return b.String()
 }
 
-// Branch prompt: plumbing for routing clone.ErrNeedsBootstrap through
-// the branchprompt sub-state. Currently unreachable — no clone path
-// emits needsBranchMsg — but the wiring is complete so a future
-// caller can hook it up without restructuring the state machine.
-func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m AddModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case branchprompt.PickedMsg:
 		m.resolveBranch(msg.Branch, nil)
@@ -136,7 +115,7 @@ func (m AddModel) updateBranchPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.transitionTo(addStateCloning)
 		return m, nil
 	}
-	var cmd tea.Cmd
+	var cmd tui.Cmd
 	m.branchPrompt, cmd = m.branchPrompt.Update(msg)
 	return m, cmd
 }
@@ -148,10 +127,10 @@ func (m *AddModel) resolveBranch(branch string, err error) {
 	}
 }
 
-func (m AddModel) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if _, ok := msg.(tea.KeyMsg); ok {
+func (m AddModel) updateDone(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if _, ok := msg.(tui.KeyMsg); ok {
 		if m.standalone {
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 	return m, nil

@@ -67,11 +67,7 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 			case noTUI:
 				mode = add.ModeHeadless
 			case len(urls) == 0:
-				// No URLs and no explicit mode flag — fall through to
-				// add.Run's auto handling. add.Run will still error
-				// with ErrTUINotImplemented in Phase 2 because the
-				// TUI ships in Phase 3, but the dispatch shape is in
-				// place for a flag-flip when Phase 3 lands.
+
 			default:
 				if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
 					mode = add.ModeHeadless
@@ -100,9 +96,6 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 
 			printResult(res)
 
-			// Non-zero exit only if something actually failed; per-URL
-			// failures in Errors are user-visible above. ErrAlreadyRegistered
-			// is in Skipped, not Errors, so it doesn't trip exit.
 			if len(res.Errors) > 0 {
 				return fmt.Errorf("%d of %d URL(s) failed", len(res.Errors), len(urls))
 			}
@@ -117,20 +110,11 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI (default when no URLs given on a TTY)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force headless mode; error if no URLs are provided")
 
-	// cmd.Context() is a no-op default; wire to a real context for now.
-	// The CLI is invoked synchronously from main, so a Background ctx
-	// covers ordinary cases. A future signal-aware context can replace
-	// this without touching add.Run.
 	cmd.SetContext(context.Background())
 
 	return cmd
 }
 
-// collectURLs assembles the URL list from positional args. The dash
-// sentinel "-" means "read from stdin, one URL per line, ignoring
-// blank lines and shell-style # comments". Mixing "-" with other args
-// is allowed: positional URLs come first in the resulting slice, then
-// the stdin batch.
 func collectURLs(args []string) ([]string, error) {
 	var urls []string
 	for _, a := range args {
@@ -147,10 +131,6 @@ func collectURLs(args []string) ([]string, error) {
 	return urls, nil
 }
 
-// readURLsFromStdin reads non-blank, non-comment lines from stdin.
-// Comments use '#'. Returns nil + error only on read failure; an
-// empty stdin returns (nil, nil) and the caller decides whether to
-// treat that as a no-op or an error.
 func readURLsFromStdin() ([]string, error) {
 	var out []string
 	scanner := bufio.NewScanner(os.Stdin)
@@ -167,10 +147,6 @@ func readURLsFromStdin() ([]string, error) {
 	return out, nil
 }
 
-// printResult renders one human-readable line per Added project, plus
-// one line per Skipped/Errored URL. Format mirrors the legacy single-URL
-// output ("clone X → Y" / "added X") so existing eyeballs/parsers see
-// familiar shapes.
 func printResult(res *add.Result) {
 	for _, p := range res.Added {
 		fmt.Printf("  added  %s (group: %s, %s)\n", projectNameFromPath(p.Path), groupOrCategory(p), p.Status)
@@ -186,9 +162,6 @@ func printResult(res *add.Result) {
 	}
 }
 
-// projectNameFromPath strips the directory from a workspace-relative
-// project path. The Project struct has Path = "<group>/<name>" or
-// "<category>/<name>"; we render the trailing component.
 func projectNameFromPath(p string) string {
 	if idx := strings.LastIndex(p, "/"); idx >= 0 {
 		return p[idx+1:]
@@ -196,8 +169,6 @@ func projectNameFromPath(p string) string {
 	return p
 }
 
-// groupOrCategory returns the group when set, else the category, for
-// the success-line summary. Matches legacy `ws add` output behavior.
 func groupOrCategory(p config.Project) string {
 	if p.Group != "" {
 		return p.Group

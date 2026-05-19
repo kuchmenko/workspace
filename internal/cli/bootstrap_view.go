@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/bootstrap"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func (m bootstrapModel) View() string {
@@ -46,7 +46,7 @@ func (m bootstrapModel) viewPlan() string {
 			continue
 		}
 		fmt.Fprintf(&b, "  %s %s (%d)\n", row.mark, bsHeaderStyle.Render(row.label), len(items))
-		// Truncate large lists in the TUI; full list still shown in dry-run.
+
 		max := len(items)
 		if max > 8 {
 			max = 8
@@ -116,7 +116,6 @@ func (m bootstrapModel) viewDone() string {
 	return b.String()
 }
 
-// renderProgressBar draws a simple [█████░░░░░] bar.
 func renderProgressBar(done, total, width int) string {
 	if total <= 0 {
 		return strings.Repeat("░", width)
@@ -129,8 +128,6 @@ func renderProgressBar(done, total, width int) string {
 		bsBarEmptyStyle.Render(strings.Repeat("░", width-filled))
 }
 
-// indent prefixes every line of s with prefix. Used for nesting git stderr
-// inside the post-exit error report.
 func indent(s, prefix string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
@@ -140,41 +137,41 @@ func indent(s, prefix string) string {
 }
 
 var (
-	bsTitleStyle = lipgloss.NewStyle().
+	bsTitleStyle = tui.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	bsHeaderStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6")).
+	bsHeaderStyle = tui.NewStyle().
+			Foreground(tui.Color("6")).
 			Bold(true)
 
-	bsDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	bsDimStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	bsHelpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	bsHelpStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	bsCheckStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("2"))
+	bsCheckStyle = tui.NewStyle().
+			Foreground(tui.Color("2"))
 
-	bsWarnStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("3"))
+	bsWarnStyle = tui.NewStyle().
+			Foreground(tui.Color("3"))
 
-	bsErrStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("1"))
+	bsErrStyle = tui.NewStyle().
+			Foreground(tui.Color("1"))
 
-	bsArrowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("6"))
+	bsArrowStyle = tui.NewStyle().
+			Foreground(tui.Color("6"))
 
-	bsBarFilledStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("6"))
+	bsBarFilledStyle = tui.NewStyle().
+				Foreground(tui.Color("6"))
 
-	bsBarEmptyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8"))
+	bsBarEmptyStyle = tui.NewStyle().
+			Foreground(tui.Color("8"))
 
-	errorBannerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("1")).
+	errorBannerStyle = tui.NewStyle().
+				Foreground(tui.Color("1")).
 				Bold(true)
 )

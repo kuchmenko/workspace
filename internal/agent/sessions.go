@@ -11,23 +11,19 @@ import (
 	"time"
 )
 
-// Session is a Claude Code session discovered from ~/.claude/projects.
 type Session struct {
 	ID      string
-	Title   string // first user message, truncated
-	Cwd     string // original working directory
+	Title   string
+	Cwd     string
 	Updated time.Time
 }
 
-// LoadSessions scans ~/.claude/projects for sessions whose cwd matches
-// any of the given paths. Returns sessions sorted by most-recent first.
 func LoadSessions(paths []string) []Session {
 	claudeRoot := claudeProjectsDir()
 	if claudeRoot == "" {
 		return nil
 	}
 
-	// Build lookup: encoded-cwd → original path.
 	pathLookup := make(map[string]string, len(paths))
 	for _, p := range paths {
 		encoded := encodeCwd(p)
@@ -83,8 +79,6 @@ func LoadSessions(paths []string) []Session {
 	return sessions
 }
 
-// extractTitle reads the first "type":"user" message from a JSONL file
-// and returns the content (truncated to 60 chars).
 func extractTitle(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -109,7 +103,7 @@ func extractTitle(path string) string {
 		if err := json.Unmarshal(line, &entry); err != nil || entry.Type != "user" {
 			continue
 		}
-		// Content can be string or array of objects.
+
 		var text string
 		if err := json.Unmarshal(entry.Message.Content, &text); err != nil {
 			var parts []struct {
@@ -127,9 +121,6 @@ func extractTitle(path string) string {
 	return ""
 }
 
-// encodeCwd converts a filesystem path to the format Claude Code uses
-// for directory names in ~/.claude/projects: slashes replaced with
-// dashes.
 func encodeCwd(path string) string {
 	return strings.ReplaceAll(path, "/", "-")
 }
@@ -146,8 +137,6 @@ func claudeProjectsDir() string {
 	return dir
 }
 
-// FindSession searches all sessions in ~/.claude/projects for one
-// matching the given ID. Returns nil if not found.
 func FindSession(id string) *Session {
 	claudeRoot := claudeProjectsDir()
 	if claudeRoot == "" {
@@ -169,10 +158,9 @@ func FindSession(id string) *Session {
 		if err != nil {
 			continue
 		}
-		// Decode cwd from directory name (dashes back to slashes).
+
 		cwd := strings.ReplaceAll(entry.Name(), "-", "/")
-		// Verify the path exists — prevents false positives from
-		// ambiguous dash-to-slash decoding.
+
 		if _, err := os.Stat(cwd); err != nil {
 			continue
 		}
@@ -186,21 +174,14 @@ func FindSession(id string) *Session {
 	return nil
 }
 
-// SessionCache is a lazy, map-based cache for Claude Code sessions.
-// Sessions are loaded from disk on first access for a given path and
-// then served from memory. Invalidation is explicit — call Invalidate
-// after operations that may create new sessions.
 type SessionCache struct {
-	data map[string][]Session // mainPath → sessions
+	data map[string][]Session
 }
 
-// NewSessionCache creates an empty session cache.
 func NewSessionCache() *SessionCache {
 	return &SessionCache{data: make(map[string][]Session)}
 }
 
-// Get returns sessions for the given mainPath, loading from disk on
-// first access and caching the result.
 func (c *SessionCache) Get(mainPath string) []Session {
 	if sessions, ok := c.data[mainPath]; ok {
 		return sessions
@@ -210,18 +191,14 @@ func (c *SessionCache) Get(mainPath string) []Session {
 	return sessions
 }
 
-// Count returns the number of sessions for the given mainPath.
 func (c *SessionCache) Count(mainPath string) int {
 	return len(c.Get(mainPath))
 }
 
-// Invalidate removes cached sessions for a path, forcing a reload
-// on the next Get call.
 func (c *SessionCache) Invalidate(mainPath string) {
 	delete(c.data, mainPath)
 }
 
-// TimeAgo returns a human-readable relative time string.
 func TimeAgo(t time.Time) string {
 	d := time.Since(t)
 	switch {

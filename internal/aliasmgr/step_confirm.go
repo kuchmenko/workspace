@@ -6,23 +6,23 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
+func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
 			m.result = Result{
 				Confirmed: true,
 				Aliases:   m.buildAliasMap(),
 			}
-			return m, tea.Quit
+			return m, tui.Quit
 		case "n", "N":
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		case "esc":
 			m.step = stepManage
 			m.stepChangedAt = time.Now()
@@ -48,7 +48,6 @@ func (m Model) viewConfirm() string {
 		return b.String()
 	}
 
-	// Build a temporary workspace view so we can resolve via the alias package.
 	tmp := &config.Workspace{
 		Projects: m.ws.Projects,
 		Groups:   m.ws.Groups,
@@ -56,7 +55,6 @@ func (m Model) viewConfirm() string {
 	}
 	resolved := alias.ResolveAll(tmp, m.root)
 
-	// Sort by name for stable display.
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
 
 	for _, r := range resolved {

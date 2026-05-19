@@ -12,13 +12,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newCreateCmd wires `ws create` into cobra. Two modes: interactive
-// TUI when invoked without --owner/--name on a TTY, headless when
-// both are provided or --no-tui is set.
-//
-// The command holds a `create` sidecar for the workspace while it
-// runs, so the daemon pauses for that workspace (no fetch race with
-// the about-to-exist remote, no toml-merge race with our save).
 func newCreateCmd() *cobra.Command {
 	var (
 		owner       string
@@ -87,9 +80,7 @@ Requires gh authentication: run 'gh auth login' first.`,
 			case noTUI:
 				mode = create.ModeHeadless
 			default:
-				// Auto: headless when stdin is not a TTY AND required
-				// fields are present. Otherwise auto stays — Run will
-				// pick TUI when fields are missing.
+
 				if !isatty.IsTerminal(os.Stdin.Fd()) && !isatty.IsCygwinTerminal(os.Stdin.Fd()) {
 					mode = create.ModeHeadless
 				}
@@ -109,7 +100,6 @@ Requires gh authentication: run 'gh auth login' first.`,
 				Save:        func(*config.Workspace) error { return saveWorkspace() },
 			})
 			if errors.Is(err, create.ErrCancelled) {
-				// User-initiated abort: silent exit 0.
 				return nil
 			}
 			if err != nil {
@@ -141,9 +131,6 @@ Requires gh authentication: run 'gh auth login' first.`,
 	return cmd
 }
 
-// resolveVisibility merges --visibility and --public flags into a
-// single create.Visibility. --public overrides --visibility when both
-// are set; empty defaults to private.
 func resolveVisibility(visibility string, isPublic bool) (create.Visibility, error) {
 	if isPublic {
 		return create.VisibilityPublic, nil

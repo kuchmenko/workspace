@@ -7,14 +7,14 @@ import (
 
 type Repo struct {
 	Name        string
-	FullName    string // owner/repo
+	FullName    string
 	Owner       string
 	SSHURL      string
 	Description string
 	Private     bool
 	Fork        bool
 	PushedAt    time.Time
-	Activity    int // event count from Events API (last 90 days)
+	Activity    int
 }
 
 type rawRepo struct {
@@ -37,7 +37,6 @@ type rawEvent struct {
 	} `json:"repo"`
 }
 
-// FetchAll resolves a client, fetches repos and activity, merges them, and returns sorted by activity.
 func FetchAll() ([]Repo, string, error) {
 	client, err := ResolveClient()
 	if err != nil {
@@ -70,7 +69,6 @@ func FetchAll() ([]Repo, string, error) {
 	return repos, username, nil
 }
 
-// Orgs extracts unique org/owner names from repos.
 func Orgs(repos []Repo) []string {
 	seen := make(map[string]bool)
 	var orgs []string

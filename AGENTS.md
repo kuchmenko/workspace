@@ -426,6 +426,20 @@ removed on the next `config.Save`. No manual edit is required.
 - All paths in `workspace.toml` are relative to the workspace root.
 - Scripts and reconciler logic must be idempotent — safe to re-run.
 - No secrets in this repo.
+- **No comments in production Go code.** Things explained by a comment
+  should become code (named constants, asserts, typed wrappers, explicit
+  state enums). Permitted: build constraints (`//go:build`), package doc
+  comments (one line, required by `go doc`), `// DECISION:` blocks for
+  non-obvious WHY anchored to a specific line, `// TODO:` / `// FIXME:`
+  / `// HACK:` markers. Test files (`*_test.go`) are exempt — explanatory
+  comments in tests are fine.
+- **TUI consumers import `internal/tui` only.** Direct imports of
+  `github.com/charmbracelet/{bubbletea,lipgloss,bubbles/*}` outside
+  `internal/tui/` are a regression. The seam exists so a future PR can
+  swap the bubbletea implementation behind `internal/tui` without
+  touching consumers. Quick check:
+  `grep -rln "charmbracelet" --include='*.go' | grep -v internal/tui`
+  should return zero.
 - `workspace.toml` is the only file that changes during normal operation
   (plus `.gitattributes` once, on the reconciler's first run).
 - The daemon **never** runs `merge`, `rebase`, `reset`, `force`, **or

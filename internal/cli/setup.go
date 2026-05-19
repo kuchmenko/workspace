@@ -3,9 +3,9 @@ package cli
 import (
 	"fmt"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/setup"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +20,7 @@ func newSetupCmd() *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := setup.NewModel()
-			p := tea.NewProgram(m, tea.WithAltScreen())
+			p := tui.NewProgram(m, tui.WithAltScreen())
 
 			result, err := p.Run()
 			if err != nil {
@@ -30,18 +30,15 @@ func newSetupCmd() *cobra.Command {
 			final := result.(setup.Model)
 			r := final.GetResult()
 
-			// Error from GitHub API or other failure
 			if r.Err != nil {
 				return fmt.Errorf("setup failed: %w", r.Err)
 			}
 
-			// User explicitly canceled (ctrl+c, esc, n)
 			if r.Canceled {
 				fmt.Println("Setup canceled by user.")
 				return nil
 			}
 
-			// Confirmed — write workspace.toml
 			if !r.Confirmed {
 				fmt.Println("Setup exited without confirmation.")
 				return nil

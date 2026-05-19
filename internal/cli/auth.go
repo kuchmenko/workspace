@@ -104,7 +104,6 @@ func newAuthStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			// Fetch username from GitHub API
 			req, err := http.NewRequest(http.MethodGet, "https://api.github.com/user", nil)
 			if err != nil {
 				return err

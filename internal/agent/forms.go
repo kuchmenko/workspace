@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 
 	switch key {
@@ -23,7 +22,7 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.wtField = (m.wtField + 1) % 2
 		return m, nil
 	case "enter":
-		if m.wtField == 1 { // confirm
+		if m.wtField == 1 {
 			return m.executeNewWorktree()
 		}
 		m.wtField = (m.wtField + 1) % 2
@@ -41,7 +40,7 @@ func (m *Model) updateNewWorktree(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
+func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	branch := strings.TrimSpace(m.wtBranch)
 	if branch == "" {
 		return m, nil
@@ -56,7 +55,6 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 	}
 	m.wtCache.Invalidate(m.popupProj.Path)
 
-	// If "create worktree only" (w key), go back to list.
 	if m.wtNoLaunch {
 		m.wtNoLaunch = false
 		m.mode = viewList
@@ -66,7 +64,6 @@ func (m *Model) executeNewWorktree() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Go to prompt input before launching.
 	m.pendingLaunch = &LaunchRequest{Cwd: result.Path}
 	m.promptInput = ""
 	m.mode = viewPromptInput
@@ -85,7 +82,6 @@ func (m *Model) viewNewWorktree() string {
 	lines = append(lines, popupTitleStyle.Width(innerW).Render(fmt.Sprintf("%s New worktree for %s", iconWorktree, p.Name)))
 	lines = append(lines, "")
 
-	// Field 0: branch (single input — user types the literal branch name).
 	branchLabel := "  Branch name:"
 	branchVal := m.wtBranch + "█"
 	if m.wtField != 0 {
@@ -107,7 +103,6 @@ func (m *Model) viewNewWorktree() string {
 	}
 	lines = append(lines, "")
 
-	// Field 1: confirm button
 	confirmLabel := "  → Create worktree"
 	if m.wtField == 1 {
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(confirmLabel))
@@ -121,22 +116,22 @@ func (m *Model) viewNewWorktree() string {
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
 
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }
 
-func (m *Model) updatePromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updatePromptInput(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
 		m.mode = viewList
 		m.pendingLaunch = nil
 	case "enter":
-		// Launch with or without prompt.
+
 		m.pendingLaunch.Prompt = strings.TrimSpace(m.promptInput)
 		m.Launch = m.pendingLaunch
 		m.pendingLaunch = nil
-		return m, tea.Quit
+		return m, tui.Quit
 	case "backspace":
 		if len(m.promptInput) > 0 {
 			m.promptInput = m.promptInput[:len(m.promptInput)-1]
@@ -176,6 +171,6 @@ func (m *Model) viewPromptInput() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }

@@ -1,125 +1,40 @@
 package agent
 
-import "github.com/charmbracelet/lipgloss"
+import "github.com/kuchmenko/workspace/internal/tui"
 
-// Warm amber "command post" palette.
 var (
-	// Header / footer bars.
-	headerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")). // amber dim — breadcrumb
-			Background(lipgloss.Color("235"))
+	headerStyle    = tui.Amber.Header
+	footerStyle    = tui.Amber.Footer
+	accentBarStyle = tui.NewStyle().Foreground("215")
+	selectedStyle  = tui.Amber.Selected
+	groupStyle     = tui.Amber.Group
+	itemStyle      = tui.Amber.Item
+	dimStyle       = tui.Amber.Dim
 
-	footerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Background(lipgloss.Color("235"))
+	wtStyle       = tui.NewStyle().Foreground("108")
+	sessionStyle  = tui.NewStyle().Foreground("110")
+	badgeStyle    = tui.NewStyle().Foreground("240")
+	wtStatusStyle = tui.NewStyle().Foreground("173")
 
-	// Selection: amber accent bar.
-	accentBarStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")) // warm amber ▌
+	statusMsgStyle    = tui.NewStyle().Foreground("215").Bold(true)
+	favoriteStarStyle = tui.NewStyle().Foreground("215")
+	activityAgeStyle  = tui.NewStyle().Foreground("240")
 
-	selectedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")). // bright text
-			Background(lipgloss.Color("236")). // subtle dark bg
-			Bold(true)
+	chipNumberStyle = tui.NewStyle().Foreground("245")
+	chipNameStyle   = tui.NewStyle().Foreground("254").Bold(true)
 
-	// Type colors.
-	groupStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("182")). // soft mauve
-			Bold(true)
+	flashSearchStyle = tui.NewStyle().Bold(true).Foreground("215").Background("235")
+	flashLabelStyle  = tui.NewStyle().Bold(true).Foreground("235").Background("215")
+	flashMatchStyle  = tui.NewStyle().Underline(true).Foreground("215")
 
-	itemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")) // white — primary items
+	popupBorderStyle   = tui.NewStyle().Border(tui.RoundedBorder()).BorderForeground("173").Padding(1, 1)
+	popupTitleStyle    = tui.NewStyle().Bold(true).Foreground("215")
+	popupSelectedStyle = tui.NewStyle().Bold(true).Foreground("215").Background("237")
+	popupItemStyle     = tui.NewStyle().Foreground("254")
+	popupDimStyle      = tui.NewStyle().Foreground("240")
 
-	wtStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("108")) // muted sage — git/branch
-
-	sessionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("110")) // cool steel — history
-
-	badgeStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")) // subtle
-
-	wtStatusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("173")) // warm amber dim — dirty/ahead indicators
-
-	statusMsgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("215")). // amber
-			Bold(true)
-
-	dimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	// favoriteStarStyle paints the leading `*` indicator placed
-	// before favorited projects in the header section.
-	favoriteStarStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")) // amber, slightly brighter than section
-
-	// activityAgeStyle is the right-aligned " 2m linux" column on
-	// header-section rows.
-	activityAgeStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
-
-	// chipNumberStyle paints the leading "1." part of a header chip.
-	// Dimmer than the project name so the eye reads the name first;
-	// the digit is still picked up at a glance for hotkey use.
-	chipNumberStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
-
-	// chipNameStyle paints the project name inside a header chip.
-	chipNameStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254")).
-			Bold(true)
-
-	// Flash search.
-	flashSearchStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("215")). // amber
-				Background(lipgloss.Color("235"))
-
-	flashLabelStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("235")). // dark on amber
-			Background(lipgloss.Color("215"))
-
-	flashMatchStyle = lipgloss.NewStyle().
-			Underline(true).
-			Foreground(lipgloss.Color("215")) // amber underlined match
-
-	// Popup forms.
-	popupBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("173")).
-				Padding(1, 1)
-
-	popupTitleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("215")) // amber
-
-	popupSelectedStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("215")).
-				Background(lipgloss.Color("237"))
-
-	popupItemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("254"))
-
-	popupDimStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
-	// Which-key panel.
-	whichKeyBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("173")).
-				Padding(0, 1)
-
-	whichKeyTitleStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")).
-				Bold(true)
-
-	whichKeyKeyStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("215")). // amber key
-				Bold(true)
-
-	whichKeyDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")) // secondary text
+	whichKeyBorderStyle = tui.NewStyle().Border(tui.RoundedBorder()).BorderForeground("173").Padding(0, 1)
+	whichKeyTitleStyle  = tui.NewStyle().Foreground("215").Bold(true)
+	whichKeyKeyStyle    = tui.NewStyle().Foreground("215").Bold(true)
+	whichKeyDescStyle   = tui.NewStyle().Foreground("245")
 )

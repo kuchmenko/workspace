@@ -31,7 +31,6 @@ func newStatusCmd() *cobra.Command {
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "PROJECT\tGROUP\tSTATUS\tBRANCH\tLAST COMMIT\tLAYOUT")
 
-			// Sort projects by name
 			names := make([]string, 0, len(ws.Projects))
 			for name := range ws.Projects {
 				names = append(names, name)
@@ -58,7 +57,6 @@ func newStatusCmd() *cobra.Command {
 					}
 				}
 				if _, err := os.Stat(layout.BarePath(absPath)); err == nil {
-					// Migrated. Count extra worktrees by enumerating siblings.
 					n := countExtraWorktrees(absPath)
 					if n > 0 {
 						layoutInfo = fmt.Sprintf("worktree+%d", n)
@@ -81,8 +79,6 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// countExtraWorktrees counts sibling directories of mainPath that match the
-// "<base>-wt-*" naming convention. Cheap O(N) scan of the parent directory.
 func countExtraWorktrees(mainPath string) int {
 	parent := filepath.Dir(mainPath)
 	base := filepath.Base(mainPath) + "-wt-"

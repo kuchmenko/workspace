@@ -4,11 +4,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type step int
@@ -18,7 +16,6 @@ const (
 	stepConfirm
 )
 
-// kind of an item in the manage list.
 type itemKind int
 
 const (
@@ -28,13 +25,12 @@ const (
 )
 
 type item struct {
-	name    string // project or group key
+	name    string
 	kind    itemKind
-	alias   string // current alias name (empty if not aliased)
-	checked bool   // selected to have an alias
+	alias   string
+	checked bool
 }
 
-// Result is returned to the caller after the TUI exits.
 type Result struct {
 	Confirmed bool
 	Canceled  bool
@@ -50,10 +46,10 @@ type Model struct {
 	items         []item
 	cursor        int
 	offset        int
-	search        textinput.Model
+	search        tui.TextInput
 	editing       bool
-	editInput     textinput.Model
-	editTarget    int // index in items being edited
+	editInput     tui.TextInput
+	editTarget    int
 	result        Result
 	stepChangedAt time.Time
 }
@@ -61,12 +57,12 @@ type Model struct {
 func New(ws *config.Workspace, root string) Model {
 	items := buildItems(ws)
 
-	search := textinput.New()
-	search.Placeholder = "type to search..."
-	search.CharLimit = 60
+	search := tui.NewTextInput()
+	search.SetPlaceholder("type to search...")
+	search.SetCharLimit(60)
 
-	edit := textinput.New()
-	edit.CharLimit = 32
+	edit := tui.NewTextInput()
+	edit.SetCharLimit(32)
 
 	return Model{
 		ws:        ws,
@@ -78,14 +74,13 @@ func New(ws *config.Workspace, root string) Model {
 }
 
 func buildItems(ws *config.Workspace) []item {
-	// Reverse map alias→target so we can fill `alias` field per item.
 	aliasFor := make(map[string]string, len(ws.Aliases))
 	for n, t := range ws.Aliases {
 		aliasFor[t] = n
 	}
 
 	var items []item
-	// Synthetic workspace-root row, always present.
+
 	{
 		rootAlias := aliasFor[alias.RootTarget]
 		items = append(items, item{
@@ -115,14 +110,13 @@ func buildItems(ws *config.Workspace) []item {
 	}
 
 	sort.Slice(items, func(i, j int) bool {
-		// Root row pinned to the top.
 		if items[i].kind == kindRoot {
 			return true
 		}
 		if items[j].kind == kindRoot {
 			return false
 		}
-		// aliased first, then by name
+
 		if items[i].checked != items[j].checked {
 			return items[i].checked
 		}
@@ -134,23 +128,23 @@ func buildItems(ws *config.Workspace) []item {
 	return items
 }
 
-func (m Model) Init() tea.Cmd {
+func (m Model) Init() tui.Cmd {
 	return m.search.Focus()
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case tui.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-	case tea.KeyMsg:
+	case tui.KeyMsg:
 		if !m.stepChangedAt.IsZero() && time.Since(m.stepChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
 			m.result = Result{Canceled: true}
-			return m, tea.Quit
+			return m, tui.Quit
 		}
 	}
 
@@ -173,11 +167,8 @@ func (m Model) View() string {
 	return ""
 }
 
-// GetResult returns the model's result after Quit.
 func (m Model) GetResult() Result { return m.result }
 
-// generationSeed returns the string used to derive an auto-generated alias.
-// For a synthetic root row we don't want to feed "." into Generate.
 func (it item) generationSeed() string {
 	if it.kind == kindRoot {
 		return "workspace"
@@ -185,12 +176,10 @@ func (it item) generationSeed() string {
 	return it.name
 }
 
-// buildAliasMap collects checked items, generating names for ones the user
-// did not edit explicitly.
 func (m Model) buildAliasMap() map[string]string {
 	out := make(map[string]string)
 	taken := make(map[string]struct{})
-	// Pass 1: explicit names
+
 	for _, it := range m.items {
 		if !it.checked || it.alias == "" {
 			continue
@@ -198,7 +187,7 @@ func (m Model) buildAliasMap() map[string]string {
 		taken[it.alias] = struct{}{}
 		out[it.alias] = it.name
 	}
-	// Pass 2: generated names
+
 	for _, it := range m.items {
 		if !it.checked || it.alias != "" {
 			continue
@@ -210,21 +199,20 @@ func (m Model) buildAliasMap() map[string]string {
 	return out
 }
 
-// Styles
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true).
-			Foreground(lipgloss.Color("15")).
-			Background(lipgloss.Color("6")).
+	titleStyle = tui.NewStyle().Bold(true).
+			Foreground(tui.Color("15")).
+			Background(tui.Color("6")).
 			Padding(0, 1)
 
-	selectedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	cursorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
-	checkStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	uncheckStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	warnStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	helpStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	groupNameStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)
-	rootNameStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)
+	selectedStyle  = tui.NewStyle().Foreground(tui.Color("6"))
+	dimStyle       = tui.NewStyle().Foreground(tui.Color("8"))
+	cursorStyle    = tui.NewStyle().Foreground(tui.Color("6")).Bold(true)
+	checkStyle     = tui.NewStyle().Foreground(tui.Color("2"))
+	uncheckStyle   = tui.NewStyle().Foreground(tui.Color("8"))
+	warnStyle      = tui.NewStyle().Foreground(tui.Color("3"))
+	errStyle       = tui.NewStyle().Foreground(tui.Color("1"))
+	helpStyle      = tui.NewStyle().Foreground(tui.Color("8"))
+	groupNameStyle = tui.NewStyle().Foreground(tui.Color("4")).Bold(true)
+	rootNameStyle  = tui.NewStyle().Foreground(tui.Color("5")).Bold(true)
 )

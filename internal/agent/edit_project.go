@@ -5,17 +5,10 @@ import (
 	"sort"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-// EditProjectMetadata persists a project's group and category to
-// workspace.toml. Loads the on-disk config fresh, mutates the named
-// project, writes back. Returns an error if the project is missing.
-//
-// Called by the agent TUI from updateEditProject. Pulled out into a
-// pure function so it can be unit-tested without bubbletea.
 func EditProjectMetadata(wsRoot, projID, group string, category config.Category) error {
 	if wsRoot == "" {
 		return fmt.Errorf("workspace root required")
@@ -45,9 +38,6 @@ func EditProjectMetadata(wsRoot, projID, group string, category config.Category)
 	return nil
 }
 
-// existingGroups returns the union of currently-known group names
-// across all loaded workspaces, sorted, for use as suggestions in the
-// edit form.
 func existingGroups(workspaces []WorkspaceData) []string {
 	seen := map[string]bool{}
 	for _, ws := range workspaces {
@@ -65,9 +55,7 @@ func existingGroups(workspaces []WorkspaceData) []string {
 	return out
 }
 
-// updateEditProject handles input while the edit-project popup is open.
-// Field layout: 0=Group (text), 1=Category (space toggles), 2=Save.
-func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
@@ -112,10 +100,7 @@ func (m *Model) updateEditProject(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// executeEditProject persists the edited fields, then refreshes the
-// in-memory workspace state so the list reflects the change without a
-// reload.
-func (m *Model) executeEditProject() (tea.Model, tea.Cmd) {
+func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 	proj := m.popupProj
 	if proj == nil {
 		m.mode = viewList
@@ -135,10 +120,6 @@ func (m *Model) executeEditProject() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Patch in-memory state. The loaded WorkspaceData carries pointer-
-	// less Project copies in a slice — find by ID, mutate, recompute
-	// the workspace's Groups list, then expand any newly-introduced
-	// group so the moved project is visible.
 	for wi := range m.workspaces {
 		if m.workspaces[wi].Root != wsRoot {
 			continue
@@ -164,7 +145,7 @@ func (m *Model) executeEditProject() (tea.Model, tea.Cmd) {
 	m.statusMsg = fmt.Sprintf("updated %s: group=%s category=%s",
 		proj.Name, displayGroup(newGroup), newCat)
 	m.rebuildItems()
-	// Re-find the project so cursor lands on the moved row.
+
 	m.jumpToProject(proj.ID)
 	m.ensureVisible()
 	return m, nil
@@ -192,8 +173,6 @@ func recomputeGroups(projects []Project) []string {
 	return out
 }
 
-// viewEditProject renders the edit-project popup. Mirrors the layout
-// of viewNewWorktree / viewPromote for visual consistency.
 func (m *Model) viewEditProject() string {
 	p := m.popupProj
 	popupW := 56
@@ -210,7 +189,6 @@ func (m *Model) viewEditProject() string {
 	lines = append(lines, popupTitleStyle.Width(innerW).Render(title))
 	lines = append(lines, "")
 
-	// Field 0: group.
 	groupLabel := "  Group:"
 	groupVal := m.editGroup
 	if m.editField == 0 {
@@ -230,7 +208,6 @@ func (m *Model) viewEditProject() string {
 	}
 	lines = append(lines, "")
 
-	// Field 1: category.
 	catLabel := "  Category:"
 	catVal := string(m.editCategory) + "   (space to toggle: personal | work)"
 	if m.editField == 1 {
@@ -243,7 +220,6 @@ func (m *Model) viewEditProject() string {
 	}
 	lines = append(lines, "")
 
-	// Field 2: save button.
 	saveLabel := "  → Save"
 	if m.editField == 2 {
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(saveLabel))
@@ -261,12 +237,10 @@ func (m *Model) viewEditProject() string {
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, popup,
-		lipgloss.WithWhitespaceBackground(lipgloss.Color("234")))
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
+		tui.WithWhitespaceBackground(tui.Color("234")))
 }
 
-// groupHint returns a comma-joined preview of existing groups for the
-// edit popup. Capped at 5 for visual brevity.
 func groupHint(workspaces []WorkspaceData) string {
 	groups := existingGroups(workspaces)
 	if len(groups) == 0 {

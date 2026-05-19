@@ -10,37 +10,14 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-// ErrNoOwner is returned in headless mode when Options.Owner is empty.
-// Headless cannot consult the user; the TUI is the usual answer to
-// missing fields.
 var ErrNoOwner = errors.New("no owner provided; pass --owner or run without --no-tui")
 
-// ErrNoName is returned in headless mode when Options.Name is empty.
 var ErrNoName = errors.New("no repo name provided; pass --name or run without --no-tui")
 
-// ErrInvalidName is returned when Options.Name fails GitHub's
-// allowed-character check (alphanumerics, -, _, .). Validated client
-// side so the user sees the error before a gh round-trip.
 var ErrInvalidName = errors.New("invalid repo name")
 
-// nameRegex enforces the subset of GitHub's accepted names that we
-// also want as project keys: starts with alphanumeric, then
-// alphanumerics, dash, underscore, period. 1–100 chars. GitHub itself
-// is slightly more permissive, but allowing leading "." or unusual
-// chars complicates path derivation in workspace.toml.
 var nameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 
-// Run is the single entry point for `ws create`. Owns the sidecar
-// lifecycle and dispatches on Mode:
-//
-//	ModeAuto with both Owner+Name set → headless
-//	ModeAuto missing Owner or Name    → TUI
-//	ModeHeadless missing fields       → ErrNoOwner / ErrNoName
-//	ModeTUI                           → TUI regardless of fields
-//
-// On success, returns the Result describing the new project. The
-// project is already registered in workspace.toml and cloned in
-// bare+worktree form when Run returns.
 func Run(ctx context.Context, opts Options) (*Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -71,7 +48,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("create.Run: unknown mode %d", opts.Mode)
 	}
 
-	// Sidecar acquire — pauses daemon, blocks concurrent ws create.
 	if _, err := acquireSidecar(opts.WsRoot, opts.Mode, opts.Owner, opts.Name); err != nil {
 		return nil, err
 	}
@@ -83,9 +59,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	return runHeadless(ctx, opts)
 }
 
-// runHeadless executes the create→register→clone pipeline using only
-// Options fields. No prompts, no fallbacks — required fields missing
-// is an error.
 func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 	if err := validateName(opts.Name); err != nil {
 		return nil, err
@@ -132,9 +105,6 @@ func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 
 	regRes, err := add.Register(regOpts, sshURL)
 	if err != nil {
-		// Clone failed but the GitHub repo exists — surface clearly so
-		// the user can re-run `ws add` after fixing whatever blocked
-		// the clone (auth, path conflict, etc).
 		return nil, fmt.Errorf("repo created on GitHub at %s but local register failed: %w", sshURL, err)
 	}
 
@@ -146,16 +116,6 @@ func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 	}, nil
 }
 
-// buildRegisterOpts wires create.Options into add.Options for the
-// final Register call. The transformations:
-//
-//   - ProjectName override → add.Options.Name (Register's name field)
-//   - Category default → personal (Register also defaults but we want
-//     a consistent value to surface in our own Result)
-//   - Group default → owner login when category is work, else category.
-//     Mirrors the legacy `ws setup` policy that grouped GitHub repos
-//     by owner; for personal projects the flat "personal/<name>"
-//     layout matches what `ws add` does today.
 func buildRegisterOpts(opts Options) add.Options {
 	cat := opts.Category
 	if cat == "" {
@@ -188,9 +148,6 @@ func resolveSaveFn(opts Options) func(*config.Workspace) error {
 	}
 }
 
-// validateName enforces GitHub's accepted-name subset. The TUI calls
-// this on every keystroke for inline error rendering; headless calls
-// it once at the top of runHeadless.
 func validateName(name string) error {
 	if name == "" {
 		return ErrNoName
