@@ -149,16 +149,9 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
 }
 
-// DeleteWorktree removes a worktree. Refuses if it's the main worktree.
-// The workspace.toml [[branches]] entry is updated when wsRoot/projID
-// are non-empty: this machine is released from the branch's machines
-// slice; an empty machines slice causes the entry to be GC'd on Save.
-func DeleteWorktree(mainPath, wtPath string, force bool) error {
-	return DeleteWorktreeWithRegistry(mainPath, wtPath, force, "", "", "")
-}
-
-// DeleteWorktreeWithRegistry is the registry-aware variant. Pass empty
-// strings for wsRoot/projID/branch to skip the workspace.toml update.
+// DeleteWorktreeWithRegistry removes a worktree and releases this machine
+// from the workspace.toml [[branches]] entry. Pass empty wsRoot/projID/branch
+// to skip the registry update.
 func DeleteWorktreeWithRegistry(mainPath, wtPath string, force bool, wsRoot, projID, branch string) error {
 	if wtPath == mainPath {
 		return fmt.Errorf("cannot delete main worktree")

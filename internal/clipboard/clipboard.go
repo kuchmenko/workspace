@@ -45,14 +45,6 @@ type Reader interface {
 	Read(ctx context.Context) (string, error)
 }
 
-// Read is the package-level convenience wrapper around DefaultReader.Read.
-// It detects the platform tool at call time, not at package init, so
-// missing tools can be installed mid-session and picked up on the next
-// invocation.
-func Read(ctx context.Context) (string, error) {
-	return DefaultReader.Read(ctx)
-}
-
 // DefaultReader is the production Reader. Use it as the zero-config
 // choice; tests substitute their own implementation.
 var DefaultReader Reader = systemReader{}
@@ -134,9 +126,3 @@ func runTool(ctx context.Context, cmd string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-// Detect exposes the current platform's (tool, args) pair and availability
-// for diagnostics. Returns the command path (not just the base name) so
-// callers can show "clipboard: /usr/bin/wl-paste" in status output.
-func Detect() (tool string, args []string, err error) {
-	return detect()
-}

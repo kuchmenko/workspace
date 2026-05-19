@@ -41,15 +41,6 @@ type Resolved struct {
 	Path   string // absolute filesystem path
 }
 
-// Resolve looks up a single alias and returns its absolute path.
-func Resolve(ws *config.Workspace, root, name string) (Resolved, error) {
-	target, ok := ws.Aliases[name]
-	if !ok {
-		return Resolved{}, fmt.Errorf("alias %q not defined", name)
-	}
-	return resolveTarget(ws, root, name, target)
-}
-
 // ResolveAll returns every alias resolved, sorted by alias name.
 // Aliases that fail to resolve are returned with Kind=TargetUnknown
 // and an empty Path so callers can flag them.
@@ -94,16 +85,3 @@ func resolveTarget(ws *config.Workspace, root, name, target string) (Resolved, e
 	return Resolved{}, fmt.Errorf("alias %q points to unknown target %q", name, target)
 }
 
-// RemoveForTarget deletes every alias whose target equals `target`.
-// Returns the names removed.
-func RemoveForTarget(ws *config.Workspace, target string) []string {
-	var removed []string
-	for name, t := range ws.Aliases {
-		if t == target {
-			removed = append(removed, name)
-			delete(ws.Aliases, name)
-		}
-	}
-	sort.Strings(removed)
-	return removed
-}

@@ -33,24 +33,6 @@ func WorktreeAdd(repoPath, wtPath, branch, createFromBase string) error {
 	return nil
 }
 
-// WorktreeAddExisting attaches an existing directory as a worktree for the
-// named branch. Used by migration: after we move the original checkout's
-// .git aside, we run this to make the existing files become a real worktree.
-// Requires --force because the target path already contains files.
-//
-// DEPRECATED: kept for backwards compatibility. Modern git refuses to attach
-// a worktree to a non-empty existing directory even with --force; use
-// WorktreeAddNoCheckout + manual pointer swap instead. See migrate.go for
-// the working strategy.
-func WorktreeAddExisting(repoPath, wtPath, branch string) error {
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "--force", wtPath, branch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree add --force %s in %s: %s", wtPath, repoPath, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 // WorktreeAddNoCheckout creates a worktree at wtPath checked out on branch,
 // but skips writing the working-tree files. The result is a directory
 // containing only a .git pointer file (and the matching admin dir under
@@ -96,22 +78,6 @@ func WorktreeRemove(repoPath, wtPath string, force bool) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git worktree remove %s: %s", wtPath, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// WorktreeMove renames a worktree directory. Wraps `git worktree move`,
-// which updates the bare repo's worktrees/<name>/gitdir entry and the
-// worktree's .git pointer file atomically. Refuses if the worktree is
-// dirty or locked.
-//
-// repoPath can be either the bare repo or any worktree — `git worktree
-// move` accepts both, since they share the same admin dir.
-func WorktreeMove(repoPath, oldPath, newPath string) error {
-	cmd := exec.Command("git", "-C", repoPath, "worktree", "move", oldPath, newPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git worktree move %s → %s: %s", oldPath, newPath, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

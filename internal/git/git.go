@@ -9,17 +9,6 @@ import (
 	"time"
 )
 
-func Clone(remote, dest string) error {
-	cmd := exec.Command("git", "clone", remote, dest)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git clone %s: %s", remote, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
 func Pull(repoPath string) error {
 	cmd := exec.Command("git", "-C", repoPath, "pull", "--ff-only")
 	out, err := cmd.CombinedOutput()
@@ -306,17 +295,3 @@ func ParseRepoName(remote string) string {
 	return remote
 }
 
-// ParseOwnerRepo extracts "owner/repo" from a git remote URL.
-func ParseOwnerRepo(remote string) string {
-	remote = strings.TrimSuffix(remote, ".git")
-	// SSH: git@github.com:owner/repo
-	if idx := strings.Index(remote, ":"); idx >= 0 && !strings.Contains(remote, "://") {
-		return remote[idx+1:]
-	}
-	// HTTPS: https://github.com/owner/repo
-	parts := strings.Split(remote, "/")
-	if len(parts) >= 2 {
-		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-	}
-	return remote
-}
