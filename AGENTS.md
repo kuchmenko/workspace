@@ -555,7 +555,7 @@ infrastructure. The agent is the gate.
   - Detects regressions in pure Go code (allocations, hot loops, escape).
 
 - **L2 — synthetic-workspace macrobenchmarks** (`just bench-l2`)
-  - Cross-package flows on a fixture built by `internal/benchfixture`.
+  - Cross-package flows on a fixture built by `bench/benchfixture`.
     e.g. `reconciler.Tick` over 50 fake projects.
   - Wall: ~3-5min. Manual (`just bench-l2`) or after architectural changes.
   - Bench files are tagged `//go:build bench_l2` so they don't run on

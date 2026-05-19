@@ -20,6 +20,15 @@ import (
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
+type PickedMsg struct {
+	Project string
+	Branch  string
+}
+
+type CancelledMsg struct {
+	Project string
+}
+
 type Model struct {
 	project    string
 	candidates []string

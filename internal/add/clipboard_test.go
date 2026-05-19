@@ -3,12 +3,11 @@ package add
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
-
-	"github.com/kuchmenko/workspace/internal/clipboard"
+	"time"
 )
 
-// fakeClipboardReader returns canned content for ClipboardSource tests.
 type fakeClipboardReader struct {
 	val string
 	err error
@@ -16,6 +15,54 @@ type fakeClipboardReader struct {
 
 func (f fakeClipboardReader) Read(_ context.Context) (string, error) {
 	return f.val, f.err
+}
+
+func TestDetectClipboard_UnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		t.Skip("detectClipboard returns ErrClipboardUnavailable only on unsupported platforms; this GOOS is supported")
+	}
+	_, _, err := detectClipboard()
+	if !errors.Is(err, ErrClipboardUnavailable) {
+		t.Errorf("want ErrClipboardUnavailable, got %v", err)
+	}
+}
+
+func TestSystemClipboardReader_ContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := DefaultClipboardReader.Read(ctx)
+	if err == nil {
+		t.Fatal("expected error from canceled context or missing tool")
+	}
+	if !errors.Is(err, ErrClipboardUnavailable) && !errors.Is(err, context.Canceled) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestSystemClipboardReader_DeadlineExceeded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
+	defer cancel()
+	time.Sleep(10 * time.Millisecond)
+
+	_, err := DefaultClipboardReader.Read(ctx)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestClipboardReaderInterface_CanSwapDefault(t *testing.T) {
+	orig := DefaultClipboardReader
+	t.Cleanup(func() { DefaultClipboardReader = orig })
+
+	DefaultClipboardReader = fakeClipboardReader{val: "git@github.com:foo/bar.git"}
+	got, err := DefaultClipboardReader.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "git@github.com:foo/bar.git" {
+		t.Errorf("got %q", got)
+	}
 }
 
 func TestLooksLikeGitURL(t *testing.T) {
@@ -30,38 +77,31 @@ func TestLooksLikeGitURL(t *testing.T) {
 		in   string
 		want bool
 	}{
-		// Accepted: SCP shorthand.
 		{"ssh shorthand", "git@github.com:foo/bar.git", true},
 		{"ssh shorthand no .git", "git@github.com:foo/bar", true},
 		{"ssh shorthand unknown host", "git@self-hosted.example:foo/bar", true},
 
-		// Accepted: scheme + .git suffix.
 		{"https with .git", "https://github.com/foo/bar.git", true},
 		{"http with .git", "http://example.com/foo/bar.git", true},
 		{"ssh:// scheme", "ssh://git@github.com/foo/bar.git", true},
 		{"git:// scheme", "git://example.com/foo/bar.git", true},
 
-		// Accepted: known forge host + owner/repo path.
 		{"github plain", "https://github.com/foo/bar", true},
 		{"gitlab plain", "https://gitlab.com/foo/bar", true},
 		{"bitbucket plain", "https://bitbucket.org/foo/bar", true},
 
-		// Accepted: unknown host but owner/repo shape.
 		{"unknown host owner/repo", "https://gittea.example.com/foo/bar", true},
 
-		// Rejected: forge front pages, deep paths, non-git URLs.
 		{"github root", "https://github.com/", false},
 		{"github single segment", "https://github.com/foo", false},
 		{"github deep path", "https://github.com/foo/bar/baz", false},
 		{"web URL", "https://example.com", false},
 		{"web URL with path", "https://news.ycombinator.com/item?id=1", false},
 
-		// Rejected: empty / whitespace / multi-line.
 		{"empty", "", false},
 		{"whitespace", "   ", false},
 		{"newline embedded", "git@github.com:foo/bar.git\nextra", false},
 
-		// Rejected: scheme is unknown.
 		{"file scheme", "file:///tmp/foo.git", false},
 	}
 
@@ -135,11 +175,11 @@ func TestClipboardSource_TrimsWhitespace(t *testing.T) {
 
 func TestClipboardSource_UnavailableIsSilent(t *testing.T) {
 	src := &ClipboardSource{
-		Reader: fakeClipboardReader{err: clipboard.ErrUnavailable},
+		Reader: fakeClipboardReader{err: ErrClipboardUnavailable},
 	}
 	got, err := src.FetchSuggestions(context.Background())
 	if err != nil {
-		t.Errorf("ErrUnavailable should be silent, got %v", err)
+		t.Errorf("ErrClipboardUnavailable should be silent, got %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("expected no suggestions, got %v", got)
@@ -152,13 +192,11 @@ func TestClipboardSource_OtherErrorPropagates(t *testing.T) {
 	}
 	_, err := src.FetchSuggestions(context.Background())
 	if err == nil {
-		t.Error("expected error to propagate (non-ErrUnavailable)")
+		t.Error("expected error to propagate (non-ErrClipboardUnavailable)")
 	}
 }
 
 func TestClipboardSource_AllowedHostsExtra(t *testing.T) {
-	// "myforge.example" is not in the built-in whitelist. Plain URL
-	// without .git or owner/repo shape rejected.
 	src := &ClipboardSource{
 		Reader: fakeClipboardReader{val: "https://myforge.example/repo-only"},
 	}
@@ -167,7 +205,6 @@ func TestClipboardSource_AllowedHostsExtra(t *testing.T) {
 		t.Errorf("expected reject without whitelist, got %v", got)
 	}
 
-	// Test with known shape — owner/repo, single segment each.
 	src.Reader = fakeClipboardReader{val: "https://myforge.example/team/api"}
 	got, _ = src.FetchSuggestions(context.Background())
 	if len(got) != 1 {
