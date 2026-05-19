@@ -44,7 +44,7 @@ L1 (pure Go, no subprocess):
 - Name as `BenchmarkFoo_Small` / `Medium` / `Large` if input scales.
 
 L2 (cross-package on synthetic workspace):
-- Drop `*_bench_test.go` into `internal/benchfixture/` with the
+- Drop `*_bench_test.go` into `bench/benchfixture/` with the
   `//go:build bench_l2` tag.
 - Use `benchfixture.Build(b, opts)` to spin up a workspace.
 - Each iteration must re-use the fixture; setup goes before

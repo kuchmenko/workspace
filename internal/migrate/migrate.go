@@ -1,16 +1,11 @@
-// Package migrate converts plain `git clone` checkouts under a workspace
-// into the worktree-based layout (bare repo + main worktree sibling).
-//
-// The migration is intentionally fail-safe rather than reversible: there is
-// no `ws unmigrate`, but every step before the irreversible final swap
-// preserves the original .git so the user can recover by hand. See
-// MigrateProject for the precise ordering.
 package migrate
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,7 +13,127 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 )
+
+type CheckResult struct {
+	Project    string
+	State      string
+	MainPath   string
+	BarePath   string
+	HasStash   bool
+	IsDirty    bool
+	Detached   bool
+	Branch     string
+	HooksFound int
+}
+
+func Check(wsRoot string, name string, proj config.Project) CheckResult {
+	mainPath := filepath.Join(wsRoot, proj.Path)
+	barePath := layout.BarePath(mainPath)
+	res := CheckResult{Project: name, MainPath: mainPath, BarePath: barePath}
+
+	if _, err := os.Stat(barePath); err == nil {
+		res.State = "migrated"
+		return res
+	}
+	if _, err := os.Stat(mainPath); os.IsNotExist(err) {
+		res.State = "missing"
+		return res
+	}
+	if !git.IsRepo(mainPath) {
+		res.State = "not-a-repo"
+		return res
+	}
+	res.State = "needs-migration"
+	res.HasStash = git.HasStash(mainPath)
+	res.IsDirty = git.IsDirty(mainPath)
+	if br, _ := git.CurrentBranch(mainPath); br == "" {
+		res.Detached = true
+	} else {
+		res.Branch = br
+	}
+	hooks, _ := listActiveHooks(filepath.Join(mainPath, ".git", "hooks"))
+	res.HooksFound = len(hooks)
+	return res
+}
+
+func runGit(repoPath string, args ...string) error {
+	full := append([]string{"-C", repoPath}, args...)
+	cmd := exec.Command("git", full...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %s in %s: %s", strings.Join(args, " "), repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func listActiveHooks(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".sample") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.Mode()&0o111 == 0 {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out, nil
+}
+
+func copyHooks(srcDir, dstDir string, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return nil, err
+	}
+	var copied []string
+	for _, name := range names {
+		if err := copyFilePreservingMode(filepath.Join(srcDir, name), filepath.Join(dstDir, name)); err != nil {
+			return copied, fmt.Errorf("copy hook %s: %w", name, err)
+		}
+		copied = append(copied, name)
+	}
+	return copied, nil
+}
+
+func copyFilePreservingMode(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
 
 type Options struct {
 	WIP bool
@@ -321,4 +436,112 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 
 func rollbackBare(barePath string) {
 	_ = os.RemoveAll(barePath)
+}
+
+func commitReachableFromAnyBranch(repoPath, sha string) (bool, error) {
+	if sha == "" {
+		return false, nil
+	}
+	branches, err := git.Branches(repoPath)
+	if err != nil {
+		return false, err
+	}
+	for _, b := range branches {
+		if err := runGit(repoPath, "merge-base", "--is-ancestor", sha, b); err == nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func resolveDefaultBranch(name string, proj *config.Project, mainPath string, opts Options) (string, error) {
+	if proj.DefaultBranch != "" {
+		return proj.DefaultBranch, nil
+	}
+	if br := git.SymbolicRef(mainPath, "refs/remotes/origin/HEAD"); br != "" {
+		if i := strings.Index(br, "/"); i >= 0 {
+			br = br[i+1:]
+		}
+		return br, nil
+	}
+
+	var candidates []string
+	for _, c := range []string{"main", "master", "trunk"} {
+		if git.HasBranch(mainPath, c) {
+			candidates = append(candidates, c)
+		}
+	}
+	if opts.PromptDefaultBranch == nil {
+		if len(candidates) == 1 {
+			return candidates[0], nil
+		}
+		return "", fmt.Errorf("cannot determine default branch for %s and no prompter configured", name)
+	}
+	picked, err := opts.PromptDefaultBranch(name, candidates)
+	if err != nil {
+		return "", err
+	}
+	picked = strings.TrimSpace(picked)
+	if picked == "" {
+		return "", fmt.Errorf("no default branch selected for %s", name)
+	}
+	return picked, nil
+}
+
+type DoneEntry struct {
+	DefaultBranch string    `json:"default_branch"`
+	MigratedAt    time.Time `json:"migrated_at"`
+}
+
+type Sidecar struct {
+	*sidecar.Sidecar
+}
+
+func New(wsRoot string) *Sidecar {
+	return &Sidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindMigrate)}
+}
+
+func Load(wsRoot string) (*Sidecar, error) {
+	sc, err := sidecar.Load(wsRoot, sidecar.KindMigrate)
+	if err != nil || sc == nil {
+		return nil, err
+	}
+	return &Sidecar{Sidecar: sc}, nil
+}
+
+func Save(sc *Sidecar) error {
+	if sc == nil {
+		return nil
+	}
+	return sidecar.Save(sc.Sidecar)
+}
+
+func Delete(wsRoot string) error {
+	return sidecar.Delete(wsRoot, sidecar.KindMigrate)
+}
+
+func IsAlive(sc *Sidecar) bool {
+	if sc == nil {
+		return false
+	}
+	return sidecar.IsAlive(sc.Sidecar)
+}
+
+func (s *Sidecar) MarkDone(name, defaultBranch string) error {
+	return s.Set(name, DoneEntry{
+		DefaultBranch: defaultBranch,
+		MigratedAt:    time.Now().UTC(),
+	})
+}
+
+func (s *Sidecar) DoneEntries() (map[string]DoneEntry, error) {
+	out := make(map[string]DoneEntry, len(s.Done))
+	for name := range s.Done {
+		var entry DoneEntry
+		if _, err := s.Get(name, &entry); err != nil {
+			return nil, err
+		}
+		out[name] = entry
+	}
+	return out, nil
 }

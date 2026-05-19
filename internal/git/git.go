@@ -1,13 +1,277 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
+
+func CloneBare(remote, dest string) error {
+	cmd := exec.Command("git", "clone", "--bare", remote, dest)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone --bare %s: %s", remote, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func CloneBareLocal(srcRepoPath, destBarePath string) error {
+	cmd := exec.Command("git", "clone", "--bare", "--no-local", srcRepoPath, destBarePath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git clone --bare --no-local %s: %s", srcRepoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func IsBare(path string) bool {
+	cmd := exec.Command("git", "-C", path, "rev-parse", "--is-bare-repository")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
+func SetRemoteURL(repoPath, url string) error {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "set-url", "origin", url)
+	if err := cmd.Run(); err == nil {
+		return nil
+	}
+	cmd = exec.Command("git", "-C", repoPath, "remote", "add", "origin", url)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("set remote in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func SetRemoteHead(repoPath, branch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "set-head", "origin", branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("set remote head %s in %s: %s", branch, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func FetchRefspec(repoPath, source, refspec string) error {
+	cmd := exec.Command("git", "-C", repoPath, "fetch", source, refspec)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git fetch %s %s in %s: %s", source, refspec, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+const standardFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
+
+func SetFetchRefspec(repoPath string) error {
+	return setConfig(repoPath, "remote.origin.fetch", standardFetchRefspec)
+}
+
+func HasFetchRefspec(repoPath string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get-all", "remote.origin.fetch")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+func HasBranch(repoPath, branch string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return cmd.Run() == nil
+}
+
+func HasRemoteBranch(repoPath, remote, branch string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch)
+	return cmd.Run() == nil
+}
+
+type CloneOptions struct {
+	PromptDefaultBranch func(project string, candidates []string) (string, error)
+
+	Logf func(format string, args ...interface{})
+}
+
+func (o CloneOptions) logf(format string, args ...interface{}) {
+	if o.Logf != nil {
+		o.Logf(format, args...)
+	}
+}
+
+type CloneResult struct {
+	Project       string
+	BarePath      string
+	MainWorktree  string
+	DefaultBranch string
+}
+
+var (
+	ErrAlreadyCloned = errors.New("project already cloned")
+
+	ErrNeedsMigration = errors.New("project exists as plain clone, run 'ws migrate'")
+
+	ErrPathBlocked = errors.New("non-repo files present at project path")
+
+	ErrNeedsBootstrap = errors.New("default branch needs interactive selection")
+)
+
+func CloneIntoLayout(wsRoot, name string, proj *config.Project, opts CloneOptions) (*CloneResult, error) {
+	if err := validateCloneInputs(name, proj); err != nil {
+		return nil, err
+	}
+	mainPath := filepath.Join(wsRoot, proj.Path)
+	barePath := layout.BarePath(mainPath)
+	if err := preflightLayout(barePath, mainPath); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		return nil, fmt.Errorf("create parent %s: %w", filepath.Dir(barePath), err)
+	}
+	opts.logf("clone %s: git clone --bare %s → %s", name, proj.Remote, barePath)
+	if err := CloneBare(proj.Remote, barePath); err != nil {
+		return nil, err
+	}
+	defaultBranch, err := initBareLayout(name, proj, barePath, opts)
+	if err != nil {
+		_ = os.RemoveAll(barePath)
+		return nil, err
+	}
+	if err := materializeMainWorktree(name, barePath, mainPath, defaultBranch, opts); err != nil {
+		return nil, err
+	}
+	proj.DefaultBranch = defaultBranch
+	return &CloneResult{
+		Project:       name,
+		BarePath:      barePath,
+		MainWorktree:  mainPath,
+		DefaultBranch: defaultBranch,
+	}, nil
+}
+
+func validateCloneInputs(name string, proj *config.Project) error {
+	if proj == nil {
+		return fmt.Errorf("clone %s: nil project", name)
+	}
+	if proj.Remote == "" {
+		return fmt.Errorf("clone %s: empty remote", name)
+	}
+	if proj.Path == "" {
+		return fmt.Errorf("clone %s: empty path", name)
+	}
+	return nil
+}
+
+func preflightLayout(barePath, mainPath string) error {
+	if _, err := os.Stat(barePath); err == nil {
+		return ErrAlreadyCloned
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", barePath, err)
+	}
+	info, err := os.Stat(mainPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", mainPath, err)
+	}
+	if info.IsDir() && IsRepo(mainPath) {
+		return ErrNeedsMigration
+	}
+	return ErrPathBlocked
+}
+
+func initBareLayout(name string, proj *config.Project, barePath string, opts CloneOptions) (string, error) {
+	if err := SetFetchRefspec(barePath); err != nil {
+		return "", fmt.Errorf("set fetch refspec: %w", err)
+	}
+	defaultBranch, err := resolveDefaultBranch(name, proj, barePath, opts)
+	if err != nil {
+		return "", err
+	}
+	opts.logf("clone %s: default branch = %s", name, defaultBranch)
+
+	_ = SetRemoteHead(barePath, defaultBranch)
+	return defaultBranch, nil
+}
+
+func materializeMainWorktree(name, barePath, mainPath, defaultBranch string, opts CloneOptions) error {
+	opts.logf("clone %s: worktree add %s on %s", name, mainPath, defaultBranch)
+	if err := WorktreeAdd(barePath, mainPath, defaultBranch, ""); err != nil {
+		_ = os.RemoveAll(barePath)
+		_ = os.RemoveAll(mainPath)
+		return fmt.Errorf("worktree add: %w", err)
+	}
+	if !IsRepo(mainPath) {
+		_ = os.RemoveAll(mainPath)
+		_ = os.RemoveAll(barePath)
+		return fmt.Errorf("verification failed: %s is not a git repo after worktree add", mainPath)
+	}
+
+	if err := SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {
+		opts.logf("clone %s: warning: could not set upstream for %s: %v", name, defaultBranch, err)
+	}
+	return nil
+}
+
+func resolveDefaultBranch(name string, proj *config.Project, barePath string, opts CloneOptions) (string, error) {
+	if proj.DefaultBranch != "" {
+		return proj.DefaultBranch, nil
+	}
+	if br := defaultBranchFromOriginHEAD(barePath); br != "" {
+		return br, nil
+	}
+	candidates := wellKnownDefaultCandidates(barePath)
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if opts.PromptDefaultBranch == nil {
+		return "", ErrNeedsBootstrap
+	}
+	return promptForDefaultBranch(name, candidates, opts.PromptDefaultBranch)
+}
+
+func defaultBranchFromOriginHEAD(barePath string) string {
+	br := SymbolicRef(barePath, "refs/remotes/origin/HEAD")
+	if br == "" {
+		return ""
+	}
+	if i := strings.Index(br, "/"); i >= 0 {
+		return br[i+1:]
+	}
+	return br
+}
+
+func wellKnownDefaultCandidates(barePath string) []string {
+	var out []string
+	for _, c := range []string{"main", "master", "trunk"} {
+		if HasBranch(barePath, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func promptForDefaultBranch(name string, candidates []string, prompt func(string, []string) (string, error)) (string, error) {
+	picked, err := prompt(name, candidates)
+	if err != nil {
+		return "", err
+	}
+	picked = strings.TrimSpace(picked)
+	if picked == "" {
+		return "", fmt.Errorf("no default branch selected for %s", name)
+	}
+	return picked, nil
+}
 
 func Pull(repoPath string) error {
 	cmd := exec.Command("git", "-C", repoPath, "pull", "--ff-only")
@@ -246,4 +510,110 @@ func ParseRepoName(remote string) string {
 		return remote[idx+1:]
 	}
 	return remote
+}
+
+type Worktree struct {
+	Path     string
+	HEAD     string
+	Branch   string
+	Bare     bool
+	Detached bool
+}
+
+func WorktreeAdd(repoPath, wtPath, branch, createFromBase string) error {
+	args := []string{"-C", repoPath, "worktree", "add"}
+	if createFromBase != "" {
+		args = append(args, "-b", branch, wtPath, createFromBase)
+	} else {
+		args = append(args, wtPath, branch)
+	}
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree add %s in %s: %s", wtPath, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func WorktreeAddNoCheckout(repoPath, wtPath, branch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "worktree", "add", "--no-checkout", wtPath, branch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree add --no-checkout %s in %s: %s", wtPath, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func WorktreeRepair(repoPath string) error {
+	cmd := exec.Command("git", "-C", repoPath, "worktree", "repair")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree repair in %s: %s", repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func WorktreeRemove(repoPath, wtPath string, force bool) error {
+	args := []string{"-C", repoPath, "worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, wtPath)
+	cmd := exec.Command("git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git worktree remove %s: %s", wtPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func WorktreeList(repoPath string) ([]Worktree, error) {
+	cmd := exec.Command("git", "-C", repoPath, "worktree", "list", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git worktree list in %s: %w", repoPath, err)
+	}
+	return parsePorcelainWorktreeList(string(out)), nil
+}
+
+func parsePorcelainWorktreeList(text string) []Worktree {
+	var (
+		result []Worktree
+		cur    Worktree
+		open   bool
+	)
+	flush := func() {
+		if open {
+			result = append(result, cur)
+		}
+		cur = Worktree{}
+		open = false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			flush()
+			continue
+		}
+		open = true
+		applyWorktreeLine(&cur, line)
+	}
+	flush()
+	return result
+}
+
+func applyWorktreeLine(cur *Worktree, line string) {
+	switch {
+	case strings.HasPrefix(line, "worktree "):
+		cur.Path = strings.TrimPrefix(line, "worktree ")
+	case strings.HasPrefix(line, "HEAD "):
+		cur.HEAD = strings.TrimPrefix(line, "HEAD ")
+	case strings.HasPrefix(line, "branch "):
+		ref := strings.TrimPrefix(line, "branch ")
+		cur.Branch = strings.TrimPrefix(ref, "refs/heads/")
+	case line == "bare":
+		cur.Bare = true
+	case line == "detached":
+		cur.Detached = true
+	}
 }
