@@ -51,7 +51,7 @@ type AddModel struct {
 	currentIdx   int
 	branchAnswer chan branchAnswer
 
-	branchPrompt branchprompt.Model
+	branchPrompt branchprompt.BranchPromptModel
 
 	added   []config.Project
 	skipped []SkipReason

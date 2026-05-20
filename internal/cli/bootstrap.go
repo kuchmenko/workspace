@@ -238,7 +238,7 @@ type bootstrapModel struct {
 	spinner tui.Spinner
 	sidecar *bootstrap.Sidecar
 
-	branchPrompt branchprompt.Model
+	branchPrompt branchprompt.BranchPromptModel
 	branchAnswer chan branchAnswer
 }
 
@@ -384,7 +384,7 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 		m.step = bsStepBranchPrompt
 		m.stepChangedAt = time.Now()
-		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
+		m.branchPrompt = branchprompt.NewBranchPromptModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		return m, m.branchPrompt.Init()
 
@@ -420,12 +420,12 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 func (m bootstrapModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case branchprompt.PickedMsg:
+	case branchprompt.BranchPromptPickedMsg:
 		m.resolveBranch(msg.Branch, nil)
 		m.step = bsStepCloning
 		m.stepChangedAt = time.Now()
 		return m, nil
-	case branchprompt.CancelledMsg:
+	case branchprompt.BranchPromptCancelledMsg:
 
 		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.step = bsStepCloning

@@ -365,7 +365,7 @@ func (m AddModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 		return m, m.startCloneJob(m.currentIdx)
 	case needsBranchMsg:
 
-		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
+		m.branchPrompt = branchprompt.NewBranchPromptModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		m.transitionTo(addStateBranchPrompt)
 		return m, nil
@@ -400,11 +400,11 @@ func (m AddModel) viewCloning() string {
 
 func (m AddModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case branchprompt.PickedMsg:
+	case branchprompt.BranchPromptPickedMsg:
 		m.resolveBranch(msg.Branch, nil)
 		m.transitionTo(addStateCloning)
 		return m, nil
-	case branchprompt.CancelledMsg:
+	case branchprompt.BranchPromptCancelledMsg:
 		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.transitionTo(addStateCloning)
 		return m, nil
