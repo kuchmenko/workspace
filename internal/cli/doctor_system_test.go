@@ -1,4 +1,4 @@
-package doctor
+package cli
 
 import (
 	"encoding/json"
@@ -181,7 +181,7 @@ func TestCheckConfig_Invalid(t *testing.T) {
 	// surface, but we don't want to pin on exact count — just >= 3.
 	// Smoke-check one phrase per class.
 	for _, needle := range []string{"missing remote", "missing path", "unknown status", "not a valid duration"} {
-		if !contains(f.Message, needle) {
+		if !containsSubstr(f.Message, needle) {
 			t.Errorf("Message missing %q: %s", needle, f.Message)
 		}
 	}
@@ -232,7 +232,7 @@ func TestSidecarFixtureRoundtrip(t *testing.T) {
 	}
 }
 
-func contains(haystack, needle string) bool {
+func containsSubstr(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
 }
 

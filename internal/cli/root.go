@@ -22,7 +22,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/create"
 	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/doctor"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/kuchmenko/workspace/internal/layout"
@@ -1029,7 +1028,7 @@ and leaves the action to the user.`,
 				}
 			}
 
-			r := &doctor.Runner{
+			r := &Runner{
 				WsRoot:     wsRoot,
 				WS:         ws,
 				Only:       only,
@@ -1039,8 +1038,8 @@ and leaves the action to the user.`,
 			streaming := !asJSON && !fix
 			if streaming {
 				first := true
-				r.OnScope = func(scope string, findings []doctor.Finding) {
-					doctor.WriteScope(os.Stdout, scope, findings, first)
+				r.OnScope = func(scope string, findings []Finding) {
+					WriteScope(os.Stdout, scope, findings, first)
 					first = false
 				}
 			}
@@ -1048,18 +1047,18 @@ and leaves the action to the user.`,
 
 			var fixesApplied int
 			if fix {
-				fixesApplied = doctor.ApplyFixes(report)
+				fixesApplied = ApplyFixes(report)
 			}
 
 			switch {
 			case asJSON:
-				if err := doctor.WriteJSON(os.Stdout, report); err != nil {
+				if err := WriteJSON(os.Stdout, report); err != nil {
 					return err
 				}
 			case streaming:
-				doctor.WriteFooter(os.Stdout, report, doctor.FixableCount(report))
+				WriteFooter(os.Stdout, report, FixableCount(report))
 			default:
-				doctor.WriteText(os.Stdout, report)
+				WriteText(os.Stdout, report)
 			}
 
 			os.Exit(exitCodeFor(report, fix, fixesApplied))
@@ -1074,11 +1073,11 @@ and leaves the action to the user.`,
 	return cmd
 }
 
-func exitCodeFor(rep *doctor.Report, fixRequested bool, fixesApplied int) int {
+func exitCodeFor(rep *Report, fixRequested bool, fixesApplied int) int {
 	if fixRequested && fixesApplied > 0 {
 		return exitDoctorFixApplied
 	}
-	if rep.MaxSeverity() >= doctor.Warn {
+	if rep.MaxSeverity() >= Warn {
 		return exitDoctorIssues
 	}
 	return exitDoctorOK
