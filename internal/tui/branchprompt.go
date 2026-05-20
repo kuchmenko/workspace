@@ -16,7 +16,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-
 )
 
 type BranchPromptPickedMsg struct {

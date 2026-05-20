@@ -55,7 +55,7 @@ type Conflict struct {
 	Workspace  string          `json:"workspace"`
 	Project    string          `json:"project,omitempty"`
 	Branch     string          `json:"branch,omitempty"`
-	Kind ConflictKind `json:"kind"`
+	Kind       ConflictKind    `json:"kind"`
 	DetectedAt time.Time       `json:"detected_at"`
 	Details    json.RawMessage `json:"details,omitempty"`
 }

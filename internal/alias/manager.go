@@ -51,7 +51,7 @@ type ManagerModel struct {
 	editing       bool
 	editInput     tui.TextInput
 	editTarget    int
-	result ManagerResult
+	result        ManagerResult
 	stepChangedAt time.Time
 }
 
