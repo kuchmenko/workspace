@@ -9,7 +9,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/bootstrap"
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
@@ -146,10 +146,10 @@ func runBootstrap(args []string, dryRun bool) error {
 	total := cloned + failed
 	fmt.Printf("\nBootstrap complete: %d cloned, %d failed (of %d planned).\n", cloned, failed, total)
 	if failed > 0 {
-		conflict.Notify("ws: bootstrap finished with errors",
+		daemon.Notify("ws: bootstrap finished with errors",
 			fmt.Sprintf("%d/%d cloned — see terminal", cloned, total))
 	} else if cloned > 0 {
-		conflict.Notify("ws: bootstrap finished",
+		daemon.Notify("ws: bootstrap finished",
 			fmt.Sprintf("%d projects cloned", cloned))
 	}
 
@@ -331,7 +331,7 @@ func (m bootstrapModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				m.errors = append(m.errors, bootstrapError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
-			conflict.Notify("ws: bootstrap started",
+			daemon.Notify("ws: bootstrap started",
 				fmt.Sprintf("%s: cloning %d projects", wsRoot, len(m.toClone)))
 			m.step = bsStepCloning
 			m.stepChangedAt = time.Now()
@@ -401,7 +401,7 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 		m.current = msg.index + 1
 
 		if m.current > 0 && m.current%5 == 0 && m.current < len(m.toClone) {
-			conflict.Notify("ws: bootstrap progress",
+			daemon.Notify("ws: bootstrap progress",
 				fmt.Sprintf("%d/%d cloned", m.current, len(m.toClone)))
 		}
 		if m.current >= len(m.toClone) {

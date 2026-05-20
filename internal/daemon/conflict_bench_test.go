@@ -1,4 +1,4 @@
-package conflict_test
+package daemon_test
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 )
 
 // BenchmarkRecord_Fresh measures the cost of inserting a brand-new
@@ -27,11 +27,11 @@ func BenchmarkRecord_Fresh(b *testing.B) {
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 
-	s, err := conflict.Open()
+	s, err := daemon.OpenConflictStore()
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}
-	confPath, err := conflict.Path()
+	confPath, err := daemon.ConflictPath()
 	if err != nil {
 		b.Fatalf("resolve path: %v", err)
 	}
@@ -44,11 +44,11 @@ func BenchmarkRecord_Fresh(b *testing.B) {
 		_ = os.Remove(confPath)
 		b.StartTimer()
 
-		_, err := s.Record(conflict.Conflict{
+		_, err := s.Record(daemon.Conflict{
 			Workspace: "/ws",
 			Project:   fmt.Sprintf("proj-%d", i),
 			Branch:    "main",
-			Kind:      conflict.KindNeedsBootstrap,
+			Kind:      daemon.KindNeedsBootstrap,
 		})
 		if err != nil {
 			b.Fatal(err)
@@ -66,20 +66,20 @@ func benchDuplicateMatch(b *testing.B, existing int) {
 	b.Helper()
 	s := storeAt(b)
 	for i := 0; i < existing; i++ {
-		if _, err := s.Record(conflict.Conflict{
+		if _, err := s.Record(daemon.Conflict{
 			Workspace: "/ws",
 			Project:   fmt.Sprintf("proj-%d", i),
 			Branch:    "main",
-			Kind:      conflict.KindNeedsBootstrap,
+			Kind:      daemon.KindNeedsBootstrap,
 		}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	target := conflict.Conflict{
+	target := daemon.Conflict{
 		Workspace:  "/ws",
 		Project:    fmt.Sprintf("proj-%d", existing-1), // last entry — worst case for linear scan
 		Branch:     "main",
-		Kind:       conflict.KindNeedsBootstrap,
+		Kind:       daemon.KindNeedsBootstrap,
 		DetectedAt: time.Now().UTC(),
 	}
 
@@ -102,11 +102,11 @@ func benchList(b *testing.B, count int) {
 	b.Helper()
 	s := storeAt(b)
 	for i := 0; i < count; i++ {
-		if _, err := s.Record(conflict.Conflict{
+		if _, err := s.Record(daemon.Conflict{
 			Workspace: "/ws",
 			Project:   fmt.Sprintf("proj-%d", i),
 			Branch:    "feat/branch",
-			Kind:      conflict.KindBranchOrphan,
+			Kind:      daemon.KindBranchOrphan,
 		}); err != nil {
 			b.Fatal(err)
 		}
@@ -125,11 +125,11 @@ func benchList(b *testing.B, count int) {
 // storeAt creates a fresh Store backed by t.TempDir(). Sets XDG_STATE_HOME
 // before Open so we never touch the real ~/.local/state/ws/conflicts.json
 // — see feedback_test_xdg_isolation.md.
-func storeAt(b *testing.B) *conflict.Store {
+func storeAt(b *testing.B) *daemon.ConflictStore {
 	b.Helper()
 	dir := b.TempDir()
 	b.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	s, err := conflict.Open()
+	s, err := daemon.OpenConflictStore()
 	if err != nil {
 		b.Fatalf("open store: %v", err)
 	}

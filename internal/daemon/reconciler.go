@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/sidecar"
@@ -20,7 +19,7 @@ import (
 type Reconciler struct {
 	root   string
 	logger *log.Logger
-	store  *conflict.Store
+	store  *ConflictStore
 
 	mu sync.Mutex
 
@@ -43,7 +42,7 @@ func NewReconciler(root string, interval time.Duration, logger *log.Logger) *Rec
 	if interval < time.Minute {
 		interval = 5 * time.Minute
 	}
-	store, err := conflict.Open()
+	store, err := OpenConflictStore()
 	if err != nil {
 		logger.Printf("reconciler: cannot open conflicts store: %v", err)
 	}
@@ -163,7 +162,7 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 	}
 
 	if bareMissing {
-		r.recordProjectConflict(name, "", conflict.KindNeedsMigration, fmt.Sprintf("plain checkout at %s", mainPath))
+		r.recordProjectConflict(name, "", KindNeedsMigration, fmt.Sprintf("plain checkout at %s", mainPath))
 		return nil
 	}
 
@@ -207,12 +206,12 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 			}
 			if behind > 0 && ahead == 0 {
 				if err := git.Pull(wt.Path); err != nil {
-					r.recordProjectConflict(name, wt.Branch, conflict.KindMainDivergence, err.Error())
+					r.recordProjectConflict(name, wt.Branch, KindMainDivergence, err.Error())
 					continue
 				}
-				_ = r.clearProjectConflict(name, wt.Branch, conflict.KindMainDivergence)
+				_ = r.clearProjectConflict(name, wt.Branch, KindMainDivergence)
 			} else if ahead > 0 && behind > 0 {
-				r.recordProjectConflict(name, wt.Branch, conflict.KindMainDivergence,
+				r.recordProjectConflict(name, wt.Branch, KindMainDivergence,
 					fmt.Sprintf("ahead %d, behind %d — main worktree should not be diverged", ahead, behind))
 			}
 			continue
@@ -230,16 +229,16 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 
 	for _, b := range proj.Branches {
 		if b.LastPushedAt == "" {
-			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
+			_ = r.clearProjectConflict(name, b.Name, KindBranchOrphan)
 			continue
 		}
 		if git.HasRemoteBranch(barePath, "origin", b.Name) {
-			_ = r.clearProjectConflict(name, b.Name, conflict.KindBranchOrphan)
+			_ = r.clearProjectConflict(name, b.Name, KindBranchOrphan)
 			continue
 		}
 		details := fmt.Sprintf("origin ref refs/remotes/origin/%s missing post-fetch (last pushed by %s at %s)",
 			b.Name, b.LastPushedMachine, b.LastPushedAt)
-		r.recordProjectConflict(name, b.Name, conflict.KindBranchOrphan, details)
+		r.recordProjectConflict(name, b.Name, KindBranchOrphan, details)
 	}
 
 	return nil
@@ -254,26 +253,26 @@ func (r *Reconciler) autoCloneMissing(name string, proj config.Project) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, git.ErrNeedsBootstrap):
-			r.recordProjectConflict(name, "", conflict.KindNeedsBootstrap,
+			r.recordProjectConflict(name, "", KindNeedsBootstrap,
 				"default branch could not be auto-detected — run `ws bootstrap "+name+"`")
 			return nil
 		case errors.Is(err, git.ErrPathBlocked):
-			r.recordProjectConflict(name, "", conflict.KindPathBlocked,
+			r.recordProjectConflict(name, "", KindPathBlocked,
 				"non-repo files at project path — clean up manually and re-run")
 			return nil
 		case errors.Is(err, git.ErrNeedsMigration), errors.Is(err, git.ErrAlreadyCloned):
 
 			return nil
 		default:
-			r.recordProjectConflict(name, "", conflict.KindCloneFailed, err.Error())
+			r.recordProjectConflict(name, "", KindCloneFailed, err.Error())
 			return err
 		}
 	}
 
 	r.logger.Printf("reconciler: cloned %s → %s (default_branch=%s)", name, res.BarePath, res.DefaultBranch)
 
-	_ = r.clearProjectConflict(name, "", conflict.KindCloneFailed)
-	_ = r.clearProjectConflict(name, "", conflict.KindNeedsBootstrap)
+	_ = r.clearProjectConflict(name, "", KindCloneFailed)
+	_ = r.clearProjectConflict(name, "", KindNeedsBootstrap)
 
 	if proj.DefaultBranch != "" {
 		fresh, err := config.Load(r.root)
@@ -300,17 +299,17 @@ func (r *Reconciler) recordValidationIssues(ws *config.Workspace) {
 	for _, issue := range ws.Validate() {
 		switch issue.Kind {
 		case config.ValidationDuplicateBranch:
-			r.recordProjectConflict(issue.Project, issue.Branch, conflict.KindBranchDuplicate, issue.Detail)
+			r.recordProjectConflict(issue.Project, issue.Branch, KindBranchDuplicate, issue.Detail)
 		}
 	}
 }
 
-func (r *Reconciler) recordProjectConflict(project, branch string, kind conflict.Kind, msg string) {
+func (r *Reconciler) recordProjectConflict(project, branch string, kind ConflictKind, msg string) {
 	if r.store == nil {
 		return
 	}
 	details, _ := json.Marshal(map[string]string{"message": msg})
-	c := conflict.Conflict{
+	c := Conflict{
 		Workspace: r.root,
 		Project:   project,
 		Branch:    branch,
@@ -324,11 +323,11 @@ func (r *Reconciler) recordProjectConflict(project, branch string, kind conflict
 	}
 	if created {
 		r.logger.Printf("reconciler: NEW conflict %s for %s/%s: %s", kind, project, branch, msg)
-		conflict.NotifyNew(c)
+		NotifyNew(c)
 	}
 }
 
-func (r *Reconciler) clearProjectConflict(project, branch string, kind conflict.Kind) error {
+func (r *Reconciler) clearProjectConflict(project, branch string, kind ConflictKind) error {
 	if r.store == nil {
 		return nil
 	}
@@ -426,7 +425,7 @@ func (r *Reconciler) syncTOML() (bool, error) {
 
 	if behind > 0 {
 		if err := runIn(repoRoot, "git", "pull", "--rebase"); err != nil {
-			r.recordTOMLConflict(repoRoot, conflict.KindTOMLMerge, err)
+			r.recordTOMLConflict(repoRoot, KindTOMLMerge, err)
 			return false, err
 		}
 		_ = r.clearTOMLConflicts()
@@ -437,11 +436,11 @@ func (r *Reconciler) syncTOML() (bool, error) {
 			r.logger.Printf("reconciler: %s holding auto-sync commit for amend (cooldown %s)", repoRoot, r.pushCooldown)
 		} else if err := git.Push(repoRoot); err != nil {
 			if perr := runIn(repoRoot, "git", "pull", "--rebase"); perr != nil {
-				r.recordTOMLConflict(repoRoot, conflict.KindTOMLMerge, perr)
+				r.recordTOMLConflict(repoRoot, KindTOMLMerge, perr)
 				return false, perr
 			}
 			if perr := git.Push(repoRoot); perr != nil {
-				r.recordTOMLConflict(repoRoot, conflict.KindTOMLPushFailed, perr)
+				r.recordTOMLConflict(repoRoot, KindTOMLPushFailed, perr)
 				return false, perr
 			}
 		}
@@ -469,12 +468,12 @@ func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string, ahead int) boo
 	return time.Since(t) < r.pushCooldown
 }
 
-func (r *Reconciler) recordTOMLConflict(workspace string, kind conflict.Kind, cause error) {
+func (r *Reconciler) recordTOMLConflict(workspace string, kind ConflictKind, cause error) {
 	if r.store == nil {
 		return
 	}
 	details, _ := json.Marshal(map[string]string{"error": cause.Error()})
-	c := conflict.Conflict{
+	c := Conflict{
 		Workspace: workspace,
 		Kind:      kind,
 		Details:   details,
@@ -486,7 +485,7 @@ func (r *Reconciler) recordTOMLConflict(workspace string, kind conflict.Kind, ca
 	}
 	if created {
 		r.logger.Printf("reconciler: NEW conflict %s in %s: %v", kind, workspace, cause)
-		conflict.NotifyNew(c)
+		NotifyNew(c)
 	}
 }
 
@@ -494,7 +493,7 @@ func (r *Reconciler) clearTOMLConflicts() error {
 	if r.store == nil {
 		return nil
 	}
-	for _, k := range []conflict.Kind{conflict.KindTOMLMerge, conflict.KindTOMLPushFailed} {
+	for _, k := range []ConflictKind{KindTOMLMerge, KindTOMLPushFailed} {
 		_ = r.store.Clear(r.root, "", "", k)
 	}
 	return nil

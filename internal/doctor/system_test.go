@@ -8,7 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
@@ -92,16 +92,16 @@ func TestCheckConflicts_Mine(t *testing.T) {
 	isolateState(t)
 	wsRoot := t.TempDir()
 
-	store, err := conflict.Open()
+	store, err := daemon.OpenConflictStore()
 	if err != nil {
-		t.Fatalf("conflict.Open: %v", err)
+		t.Fatalf("daemon.OpenConflictStore: %v", err)
 	}
 	absWsRoot, _ := filepath.Abs(wsRoot)
-	if _, err := store.Record(conflict.Conflict{
+	if _, err := store.Record(daemon.Conflict{
 		Workspace: absWsRoot,
 		Project:   "demo",
 		Branch:    "wt/test/foo",
-		Kind:      conflict.KindBranchOrphan,
+		Kind:      daemon.KindBranchOrphan,
 		Details:   json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -121,14 +121,14 @@ func TestCheckConflicts_OtherWorkspaceIgnored(t *testing.T) {
 	wsRoot := t.TempDir()
 	other := t.TempDir()
 
-	store, err := conflict.Open()
+	store, err := daemon.OpenConflictStore()
 	if err != nil {
-		t.Fatalf("conflict.Open: %v", err)
+		t.Fatalf("daemon.OpenConflictStore: %v", err)
 	}
 	absOther, _ := filepath.Abs(other)
-	if _, err := store.Record(conflict.Conflict{
+	if _, err := store.Record(daemon.Conflict{
 		Workspace: absOther,
-		Kind:      conflict.KindTOMLMerge,
+		Kind:      daemon.KindTOMLMerge,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}

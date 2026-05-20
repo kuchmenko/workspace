@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/migrate"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
@@ -406,7 +406,7 @@ func (m migrateModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
-			conflict.Notify("ws: migrate started",
+			daemon.Notify("ws: migrate started",
 				fmt.Sprintf("%s: %d projects", wsRoot, len(m.queue)))
 			return m.advance()
 		case "n", "N", "escape":
@@ -623,12 +623,12 @@ func runMigrateTUI(args []string) error {
 	total := migrated + failed + skipped
 	fmt.Printf("\nMigrate complete: %d migrated, %d failed, %d skipped (of %d ready).\n", migrated, failed, skipped, total)
 	if failed > 0 {
-		conflict.Notify("ws: migrate finished with errors",
+		daemon.Notify("ws: migrate finished with errors",
 			fmt.Sprintf("%d/%d migrated — see terminal", migrated, total))
 		return errors.New("migrate finished with errors")
 	}
 	if migrated > 0 {
-		conflict.Notify("ws: migrate finished",
+		daemon.Notify("ws: migrate finished",
 			fmt.Sprintf("%d projects migrated", migrated))
 	}
 	return nil
