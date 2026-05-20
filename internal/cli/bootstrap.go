@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/bootstrap"
-	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -238,7 +237,7 @@ type bootstrapModel struct {
 	spinner tui.Spinner
 	sidecar *bootstrap.Sidecar
 
-	branchPrompt branchprompt.BranchPromptModel
+	branchPrompt tui.BranchPromptModel
 	branchAnswer chan branchAnswer
 }
 
@@ -384,7 +383,7 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 		m.step = bsStepBranchPrompt
 		m.stepChangedAt = time.Now()
-		m.branchPrompt = branchprompt.NewBranchPromptModel(msg.project, msg.candidates)
+		m.branchPrompt = tui.NewBranchPromptModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		return m, m.branchPrompt.Init()
 
@@ -420,12 +419,12 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 func (m bootstrapModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case branchprompt.BranchPromptPickedMsg:
+	case tui.BranchPromptPickedMsg:
 		m.resolveBranch(msg.Branch, nil)
 		m.step = bsStepCloning
 		m.stepChangedAt = time.Now()
 		return m, nil
-	case branchprompt.BranchPromptCancelledMsg:
+	case tui.BranchPromptCancelledMsg:
 
 		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.step = bsStepCloning

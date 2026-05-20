@@ -1,25 +1,24 @@
-package branchprompt
+package tui
 
 import (
-	"github.com/kuchmenko/workspace/internal/tui"
 	"testing"
 )
 
 // keyMsg constructs a tea.KeyMsg from a single-key string shortcut that
 // the model accepts ("up", "down", "enter", "esc", "i", "k", "j").
 // Text input in free-text mode uses KeyMsg with Runes populated.
-func keyMsg(s string) tui.KeyMsg {
+func keyMsg(s string) KeyMsg {
 	switch s {
 	case "up":
-		return tui.KeyMsg{Type: tui.KeyUp}
+		return KeyMsg{Type: KeyUp}
 	case "down":
-		return tui.KeyMsg{Type: tui.KeyDown}
+		return KeyMsg{Type: KeyDown}
 	case "enter":
-		return tui.KeyMsg{Type: tui.KeyEnter}
+		return KeyMsg{Type: KeyEnter}
 	case "esc":
-		return tui.KeyMsg{Type: tui.KeyEscape}
+		return KeyMsg{Type: KeyEscape}
 	default:
-		return tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune(s)}
+		return KeyMsg{Type: KeyRunes, Runes: []rune(s)}
 	}
 }
 
@@ -27,7 +26,7 @@ func keyMsg(s string) tui.KeyMsg {
 // Mirrors how the bubbletea runtime dispatches the returned cmd back
 // through Update — good enough for asserting the "one-shot message"
 // emissions BranchPromptPickedMsg / BranchPromptCancelledMsg.
-func collectMsg(cmd tui.Cmd) tui.Msg {
+func collectMsg(cmd Cmd) Msg {
 	if cmd == nil {
 		return nil
 	}
@@ -96,7 +95,7 @@ func TestModel_InputMode_EnterEmpty_NoEmit(t *testing.T) {
 	m := NewBranchPromptModel("x", nil)
 	m, _ = m.Update(keyMsg("enter"))
 	// Now in input mode, empty value.
-	var cmd tui.Cmd
+	var cmd Cmd
 	m, cmd = m.Update(keyMsg("enter"))
 	if msg := collectMsg(cmd); msg != nil {
 		t.Fatalf("expected no msg for empty enter, got %T", msg)
@@ -136,7 +135,7 @@ func TestModel_InputMode_EnterEmitsPicked(t *testing.T) {
 
 func TestModel_Escape_EmitsCancelled(t *testing.T) {
 	m := NewBranchPromptModel("proj", []string{"main", "master"})
-	var cmd tui.Cmd
+	var cmd Cmd
 	_, cmd = m.Update(keyMsg("esc"))
 	msg := collectMsg(cmd)
 

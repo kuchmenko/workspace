@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
@@ -365,7 +364,7 @@ func (m AddModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 		return m, m.startCloneJob(m.currentIdx)
 	case needsBranchMsg:
 
-		m.branchPrompt = branchprompt.NewBranchPromptModel(msg.project, msg.candidates)
+		m.branchPrompt = tui.NewBranchPromptModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		m.transitionTo(addStateBranchPrompt)
 		return m, nil
@@ -400,11 +399,11 @@ func (m AddModel) viewCloning() string {
 
 func (m AddModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case branchprompt.BranchPromptPickedMsg:
+	case tui.BranchPromptPickedMsg:
 		m.resolveBranch(msg.Branch, nil)
 		m.transitionTo(addStateCloning)
 		return m, nil
-	case branchprompt.BranchPromptCancelledMsg:
+	case tui.BranchPromptCancelledMsg:
 		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.transitionTo(addStateCloning)
 		return m, nil

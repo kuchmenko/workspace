@@ -11,13 +11,12 @@
 // or cancels, the model emits PickedMsg / CancelledMsg; the parent is
 // responsible for unblocking whichever goroutine is waiting on the answer
 // (typically via a channel passed into clone.Options.PromptDefaultBranch).
-package branchprompt
+package tui
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type BranchPromptPickedMsg struct {
@@ -34,11 +33,11 @@ type BranchPromptModel struct {
 	candidates []string
 	cursor     int
 	inputMode  bool
-	input      tui.TextInput
+	input      TextInput
 }
 
 func NewBranchPromptModel(project string, candidates []string) BranchPromptModel {
-	ti := tui.NewTextInput()
+	ti := NewTextInput()
 	ti.SetPlaceholder("branch name")
 	ti.SetCharLimit(80)
 	ti.Focus()
@@ -49,10 +48,10 @@ func NewBranchPromptModel(project string, candidates []string) BranchPromptModel
 	}
 }
 
-func (m BranchPromptModel) Init() tui.Cmd { return nil }
+func (m BranchPromptModel) Init() Cmd { return nil }
 
-func (m BranchPromptModel) Update(msg tui.Msg) (BranchPromptModel, tui.Cmd) {
-	key, ok := msg.(tui.KeyMsg)
+func (m BranchPromptModel) Update(msg Msg) (BranchPromptModel, Cmd) {
+	key, ok := msg.(KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -62,7 +61,7 @@ func (m BranchPromptModel) Update(msg tui.Msg) (BranchPromptModel, tui.Cmd) {
 	return m.updateListMode(key)
 }
 
-func (m BranchPromptModel) updateInputMode(msg tui.Msg, key tui.KeyMsg) (BranchPromptModel, tui.Cmd) {
+func (m BranchPromptModel) updateInputMode(msg Msg, key KeyMsg) (BranchPromptModel, Cmd) {
 	switch key.String() {
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
@@ -74,12 +73,12 @@ func (m BranchPromptModel) updateInputMode(msg tui.Msg, key tui.KeyMsg) (BranchP
 		m.inputMode = false
 		return m, nil
 	}
-	var cmd tui.Cmd
+	var cmd Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
 
-func (m BranchPromptModel) updateListMode(key tui.KeyMsg) (BranchPromptModel, tui.Cmd) {
+func (m BranchPromptModel) updateListMode(key KeyMsg) (BranchPromptModel, Cmd) {
 	switch key.String() {
 	case "up", "k":
 		if m.cursor > 0 {
@@ -100,7 +99,7 @@ func (m BranchPromptModel) updateListMode(key tui.KeyMsg) (BranchPromptModel, tu
 	return m, nil
 }
 
-func (m BranchPromptModel) confirmListSelection() (BranchPromptModel, tui.Cmd) {
+func (m BranchPromptModel) confirmListSelection() (BranchPromptModel, Cmd) {
 	if len(m.candidates) == 0 {
 		m.inputMode = true
 		return m, m.input.Focus()
@@ -108,14 +107,14 @@ func (m BranchPromptModel) confirmListSelection() (BranchPromptModel, tui.Cmd) {
 	return m, emitPickedCmd(m.project, m.candidates[m.cursor])
 }
 
-func emitPickedCmd(project, branch string) tui.Cmd {
+func emitPickedCmd(project, branch string) Cmd {
 	picked := BranchPromptPickedMsg{Project: project, Branch: branch}
-	return func() tui.Msg { return picked }
+	return func() Msg { return picked }
 }
 
-func emitCancelledCmd(project string) tui.Cmd {
+func emitCancelledCmd(project string) Cmd {
 	canceled := BranchPromptCancelledMsg{Project: project}
-	return func() tui.Msg { return canceled }
+	return func() Msg { return canceled }
 }
 
 func (m BranchPromptModel) Project() string { return m.project }
@@ -154,26 +153,26 @@ func (m BranchPromptModel) View() string {
 }
 
 var (
-	titleStyle = tui.NewStyle().
+	titleStyle = NewStyle().
 			Bold(true).
-			Foreground(tui.Color("15")).
-			Background(tui.Color("6")).
+			Foreground(Color("15")).
+			Background(Color("6")).
 			Padding(0, 1)
 
-	headerStyle = tui.NewStyle().
-			Foreground(tui.Color("6")).
+	headerStyle = NewStyle().
+			Foreground(Color("6")).
 			Bold(true)
 
-	dimStyle = tui.NewStyle().
-			Foreground(tui.Color("8"))
+	dimStyle = NewStyle().
+			Foreground(Color("8"))
 
-	helpStyle = tui.NewStyle().
-			Foreground(tui.Color("8"))
+	helpStyle = NewStyle().
+			Foreground(Color("8"))
 
-	cursorStyle = tui.NewStyle().
-			Foreground(tui.Color("6")).
+	cursorStyle = NewStyle().
+			Foreground(Color("6")).
 			Bold(true)
 
-	selectedStyle = tui.NewStyle().
-			Foreground(tui.Color("6"))
+	selectedStyle = NewStyle().
+			Foreground(Color("6"))
 )
