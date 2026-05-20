@@ -20,12 +20,12 @@ import (
 	"github.com/kuchmenko/workspace/internal/agent"
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/aliasmgr"
-	"github.com/kuchmenko/workspace/internal/auth"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/create"
 	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/doctor"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/setup"
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -521,23 +521,23 @@ func newAuthLoginCmd() *cobra.Command {
 			"agent:safety": "Interactive: requires user to complete GitHub device flow or paste a PAT.",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var token auth.Token
+			var token github.Token
 			var err error
 
 			if usePAT {
-				token, err = auth.PromptPAT()
+				token, err = github.PromptPAT()
 			} else {
-				token, err = auth.DeviceFlow()
+				token, err = github.DeviceFlow()
 			}
 			if err != nil {
 				return err
 			}
 
-			if err := auth.SaveToken(token); err != nil {
+			if err := github.SaveToken(token); err != nil {
 				return fmt.Errorf("saving token: %w", err)
 			}
 
-			path, _ := auth.TokenPath()
+			path, _ := github.TokenPath()
 			fmt.Printf("\n  Authenticated! Token saved to %s\n", path)
 			return nil
 		},
@@ -556,11 +556,11 @@ func newAuthLogoutCmd() *cobra.Command {
 			"agent:when": "Remove the stored GitHub token",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !auth.HasToken() {
+			if !github.HasToken() {
 				fmt.Println("  Not authenticated.")
 				return nil
 			}
-			if err := auth.DeleteToken(); err != nil {
+			if err := github.DeleteToken(); err != nil {
 				return err
 			}
 			fmt.Println("  Token removed.")
@@ -578,7 +578,7 @@ func newAuthStatusCmd() *cobra.Command {
 			"agent:when": "Check whether GitHub authentication is configured and valid",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := auth.LoadToken()
+			token, err := github.LoadToken()
 			if err != nil {
 				fmt.Println("  Not authenticated.")
 				fmt.Println("  Run 'ws auth login' to authenticate with GitHub.")
@@ -609,7 +609,7 @@ func newAuthStatusCmd() *cobra.Command {
 			}
 			json.NewDecoder(resp.Body).Decode(&user)
 
-			path, _ := auth.TokenPath()
+			path, _ := github.TokenPath()
 			fmt.Printf("  Authenticated as: %s\n", user.Login)
 			fmt.Printf("  Token: %s\n", path)
 			fmt.Printf("  Scopes: %s\n", token.Scope)
