@@ -11,7 +11,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/migrate"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -90,7 +90,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 				targets = args
 			}
 
-			opts := migrate.Options{
+			opts := repo.MigrateOptions{
 				WIP:                 wip,
 				Machine:             machine,
 				PromptDefaultBranch: promptDefaultBranchStdin,
@@ -116,7 +116,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 				}
 
 				if all {
-					switch migrate.Check(wsRoot, name, proj).State {
+					switch repo.Check(wsRoot, name, proj).State {
 					case "missing":
 						fmt.Printf("  skip   %s: not cloned on this machine\n", name)
 						skippedMissing++
@@ -130,9 +130,9 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 						continue
 					}
 				}
-				res, err := migrate.MigrateProject(wsRoot, name, &proj, opts)
+				res, err := repo.MigrateProject(wsRoot, name, &proj, opts)
 				if err != nil {
-					if errors.Is(err, migrate.ErrAlreadyMigrated) {
+					if errors.Is(err, repo.ErrAlreadyMigrated) {
 						fmt.Printf("  skip   %s: already migrated\n", name)
 						skippedAlready++
 						continue
@@ -164,7 +164,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 					if skippedMissing > 0 || skippedAlready > 0 {
 						fmt.Printf("Nothing to migrate (%d already migrated, %d not cloned on this machine).\n", skippedAlready, skippedMissing)
 					} else {
-						fmt.Println("No active projects to migrate.")
+						fmt.Println("No active projects to repo.")
 					}
 				} else {
 					fmt.Printf("Migrated %d project(s); skipped %d already migrated, %d not cloned locally.\n", migratedCount, skippedAlready, skippedMissing)
@@ -202,7 +202,7 @@ func runMigrateCheck(args []string) error {
 			fmt.Printf("  ?      %s: not in workspace.toml\n", name)
 			continue
 		}
-		r := migrate.Check(wsRoot, name, proj)
+		r := repo.Check(wsRoot, name, proj)
 		var note []string
 		if r.HasStash {
 			note = append(note, "stash present")
@@ -319,7 +319,7 @@ type migrateModel struct {
 	canceled  bool
 
 	spinner tui.Spinner
-	sidecar *migrate.Sidecar
+	sidecar *repo.MigrateSidecar
 }
 
 type migrateDecision struct {
@@ -332,18 +332,18 @@ type migrateDecision struct {
 type migrateDoneMsg struct {
 	index   int
 	project string
-	res     *migrate.Result
+	res     *repo.MigrateResult
 	err     error
 }
 
 type migrateAllDoneMsg struct{}
 
-func newMigrateModel(plan *migratePlan, machine string, resume map[string]migrate.DoneEntry) migrateModel {
+func newMigrateModel(plan *migratePlan, machine string, resume map[string]repo.MigrateDoneEntry) migrateModel {
 	sp := tui.NewSpinner()
 	sp.SetStyle(tui.DotSpinner)
 	sp.SetTextStyle(tui.NewStyle().Foreground("6"))
 
-	sc := migrate.New(wsRoot)
+	sc := repo.NewMigrateSidecar(wsRoot)
 	for k, v := range resume {
 		_ = sc.Set(k, v)
 	}
@@ -402,7 +402,7 @@ func (m migrateModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				return m, tui.Quit
 			}
 
-			if err := migrate.Save(m.sidecar); err != nil {
+			if err := repo.SaveMigrateSidecar(m.sidecar); err != nil {
 				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
@@ -505,13 +505,13 @@ func (m migrateModel) startMigrate(index int) tui.Cmd {
 	machine := m.machine
 	return func() tui.Msg {
 		proj := item.Project
-		opts := migrate.Options{
+		opts := repo.MigrateOptions{
 			WIP:             dec.WIP,
 			StashBranch:     dec.StashBranch,
 			CheckoutDefault: dec.CheckoutDefault,
 			Machine:         machine,
 		}
-		res, err := migrate.MigrateProject(wsRoot, item.Name, &proj, opts)
+		res, err := repo.MigrateProject(wsRoot, item.Name, &proj, opts)
 		return migrateDoneMsg{index: index, project: item.Name, res: res, err: err}
 	}
 }
@@ -529,7 +529,7 @@ func (m migrateModel) updateMigrating(msg tui.Msg) (tui.Model, tui.Cmd) {
 			m.successes = append(m.successes, msg.project)
 			if msg.res != nil {
 				_ = m.sidecar.MarkDone(msg.project, msg.res.DefaultBranch)
-				_ = migrate.Save(m.sidecar)
+				_ = repo.SaveMigrateSidecar(m.sidecar)
 			}
 		}
 		m.cursor++
@@ -549,17 +549,17 @@ func runMigrateTUI(args []string) error {
 
 	plan := buildMigratePlan(args)
 	if len(plan.Items) == 0 {
-		fmt.Println("No active projects to migrate.")
+		fmt.Println("No active projects to repo.")
 		return nil
 	}
 
-	existing, err := migrate.Load(wsRoot)
+	existing, err := repo.LoadMigrateSidecar(wsRoot)
 	if err != nil {
 		return fmt.Errorf("read migrate sidecar: %w", err)
 	}
-	resumeFrom := map[string]migrate.DoneEntry{}
+	resumeFrom := map[string]repo.MigrateDoneEntry{}
 	if existing != nil {
-		if migrate.IsAlive(existing) {
+		if repo.MigrateSidecarIsAlive(existing) {
 			return fmt.Errorf("migrate already running (pid %d, started %s)",
 				existing.Meta.PID, existing.Meta.Started.Local().Format(time.RFC3339))
 		}
@@ -577,7 +577,7 @@ func runMigrateTUI(args []string) error {
 				return fmt.Errorf("read sidecar entries: %w", err)
 			}
 		case "d", "discard":
-			if err := migrate.Delete(wsRoot); err != nil {
+			if err := repo.DeleteMigrateSidecar(wsRoot); err != nil {
 				return err
 			}
 		default:
@@ -612,7 +612,7 @@ func runMigrateTUI(args []string) error {
 		if err := commitMigrate(final.sidecar); err != nil {
 			return fmt.Errorf("commit migrate: %w", err)
 		}
-		if err := migrate.Delete(wsRoot); err != nil {
+		if err := repo.DeleteMigrateSidecar(wsRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not remove sidecar: %v\n", err)
 		}
 	}
@@ -647,7 +647,7 @@ func buildMigratePlan(only []string) *migratePlan {
 		if len(wantOnly) > 0 && !wantOnly[name] {
 			continue
 		}
-		check := migrate.Check(wsRoot, name, proj)
+		check := repo.Check(wsRoot, name, proj)
 		item := migratePlanItem{
 			Name:    name,
 			Project: proj,
@@ -678,7 +678,7 @@ func buildMigratePlan(only []string) *migratePlan {
 	return plan
 }
 
-func commitMigrate(sc *migrate.Sidecar) error {
+func commitMigrate(sc *repo.MigrateSidecar) error {
 	freshWS, err := config.Load(wsRoot)
 	if err != nil {
 		return err
@@ -736,7 +736,7 @@ func (s migrateState) label() string {
 type migratePlanItem struct {
 	Name    string
 	Project config.Project
-	Check   migrate.CheckResult
+	Check   repo.CheckResult
 	State   migrateState
 }
 

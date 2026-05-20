@@ -1,4 +1,4 @@
-package bootstrap
+package repo
 
 import (
 	"os"
@@ -158,56 +158,56 @@ func normalizeRemote(s string) string {
 	return strings.ToLower(s)
 }
 
-type DoneEntry struct {
+type BootstrapDoneEntry struct {
 	DefaultBranch string    `json:"default_branch"`
 	ClonedAt      time.Time `json:"cloned_at"`
 }
 
-type Sidecar struct {
+type BootstrapSidecar struct {
 	*sidecar.Sidecar
 }
 
-func New(wsRoot string) *Sidecar {
-	return &Sidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindBootstrap)}
+func NewBootstrapSidecar(wsRoot string) *BootstrapSidecar {
+	return &BootstrapSidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindBootstrap)}
 }
 
-func Load(wsRoot string) (*Sidecar, error) {
+func LoadBootstrapSidecar(wsRoot string) (*BootstrapSidecar, error) {
 	sc, err := sidecar.Load(wsRoot, sidecar.KindBootstrap)
 	if err != nil || sc == nil {
 		return nil, err
 	}
-	return &Sidecar{Sidecar: sc}, nil
+	return &BootstrapSidecar{Sidecar: sc}, nil
 }
 
-func Save(sc *Sidecar) error {
+func SaveBootstrapSidecar(sc *BootstrapSidecar) error {
 	if sc == nil {
 		return nil
 	}
 	return sidecar.Save(sc.Sidecar)
 }
 
-func Delete(wsRoot string) error {
+func DeleteBootstrapSidecar(wsRoot string) error {
 	return sidecar.Delete(wsRoot, sidecar.KindBootstrap)
 }
 
-func IsAlive(sc *Sidecar) bool {
+func BootstrapSidecarIsAlive(sc *BootstrapSidecar) bool {
 	if sc == nil {
 		return false
 	}
 	return sidecar.IsAlive(sc.Sidecar)
 }
 
-func (s *Sidecar) MarkDone(name, defaultBranch string) error {
-	return s.Set(name, DoneEntry{
+func (s *BootstrapSidecar) MarkDone(name, defaultBranch string) error {
+	return s.Set(name, BootstrapDoneEntry{
 		DefaultBranch: defaultBranch,
 		ClonedAt:      time.Now().UTC(),
 	})
 }
 
-func (s *Sidecar) DoneEntries() (map[string]DoneEntry, error) {
-	out := make(map[string]DoneEntry, len(s.Done))
+func (s *BootstrapSidecar) DoneEntries() (map[string]BootstrapDoneEntry, error) {
+	out := make(map[string]BootstrapDoneEntry, len(s.Done))
 	for name := range s.Done {
-		var entry DoneEntry
+		var entry BootstrapDoneEntry
 		if _, err := s.Get(name, &entry); err != nil {
 			return nil, err
 		}
