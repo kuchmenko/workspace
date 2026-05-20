@@ -25,7 +25,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/setup"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -1564,7 +1563,7 @@ func newSetupCmd() *cobra.Command {
 			"agent:safety": "Interactive TUI — requires user interaction. Writes workspace.toml.",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m := setup.NewModel()
+			m := NewSetupModel()
 			p := tui.NewProgram(m, tui.WithAltScreen())
 
 			result, err := p.Run()
@@ -1572,7 +1571,7 @@ func newSetupCmd() *cobra.Command {
 				return fmt.Errorf("TUI crashed: %w", err)
 			}
 
-			final := result.(setup.Model)
+			final := result.(SetupModel)
 			r := final.GetResult()
 
 			if r.Err != nil {
