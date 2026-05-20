@@ -19,7 +19,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/add"
 	"github.com/kuchmenko/workspace/internal/agent"
 	"github.com/kuchmenko/workspace/internal/alias"
-	"github.com/kuchmenko/workspace/internal/aliasmgr"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/create"
 	"github.com/kuchmenko/workspace/internal/daemon"
@@ -322,13 +321,13 @@ func newAliasCmd() *cobra.Command {
 }
 
 func runAliasTUI(cmd *cobra.Command, args []string) error {
-	m := aliasmgr.New(ws, wsRoot)
+	m := alias.NewManagerModel(ws, wsRoot)
 	p := tui.NewProgram(m, tui.WithAltScreen())
 	res, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("TUI crashed: %w", err)
 	}
-	final := res.(aliasmgr.Model)
+	final := res.(alias.ManagerModel)
 	r := final.GetResult()
 	if r.Canceled || !r.Confirmed {
 		fmt.Println("Aliases unchanged.")
