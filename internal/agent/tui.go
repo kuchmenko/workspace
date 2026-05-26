@@ -27,7 +27,6 @@ const (
 	viewPromptInput
 	viewWhichKey
 	viewEditProject
-	viewChipAction
 )
 
 const (
@@ -65,7 +64,7 @@ type Model struct {
 
 	headerChips []Chip
 
-	chipTarget *Chip
+	sheet *sheet
 
 	sessCache *SessionCache
 	wtCache   *WorktreeCache
@@ -160,8 +159,8 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if m.mode == viewEditProject {
 			return m.updateEditProject(msg)
 		}
-		if m.mode == viewChipAction {
-			return m.updateChipAction(msg)
+		if m.sheet != nil {
+			return m.sheet.update(m, msg)
 		}
 		return m.updateList(msg)
 	}
@@ -181,8 +180,8 @@ func (m *Model) View() string {
 	if m.mode == viewEditProject {
 		return m.viewEditProject()
 	}
-	if m.mode == viewChipAction {
-		return m.viewChipAction()
+	if m.sheet != nil {
+		return m.sheet.view(m.width, m.height)
 	}
 	if m.mode == viewWhichKey {
 		return m.viewWhichKey()
@@ -261,24 +260,16 @@ func (m *Model) listHeight() int {
 }
 
 func (m *Model) footerHints() (actions, nav string) {
-	nav = "j/k:↕  tab:expand  s:find  S:all  ?:more"
+	nav = "j/k:↕  1-9:chip  s:find  S:all  ?:more"
 	item := m.currentItem()
 	if item == nil {
 		return "⏎:open  s:find  S:all", nav
 	}
 	switch item.kind {
 	case KindGroup:
-		actions = "⏎:claude  p:+prompt  l:shell"
+		actions = "⏎:sheet  tab:expand  p:+prompt  l:shell"
 	case KindProject:
-		actions = "⏎:claude  p:+prompt  w:worktree  e:edit  l:shell"
-	case KindWorktree:
-		if item.worktree != nil && !item.worktree.IsMain {
-			actions = "⏎:claude  p:+prompt  l:shell  m:promote  d:delete"
-		} else {
-			actions = "⏎:claude  p:+prompt  l:shell"
-		}
-	case KindPortal:
-		actions = "⏎:resume  p:+prompt"
+		actions = "⏎:sheet  p:+prompt  w:worktree  e:edit  l:shell"
 	default:
 		actions = "⏎:open"
 	}
@@ -343,9 +334,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 		idx := int(s[0] - '1')
 		if idx < len(m.headerChips) {
-			c := m.headerChips[idx]
-			m.chipTarget = &c
-			m.mode = viewChipAction
+			m.openSheetForChip(m.headerChips[idx])
 			return m, nil
 		}
 	}
@@ -370,11 +359,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		switch item.kind {
 		case KindGroup:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tui.Quit
+			m.sheet = newGroupSheet(m, item.group)
+			return m, nil
 		case KindProject:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tui.Quit
+			m.sheet = newProjectSheet(m, item.project, nil)
+			return m, nil
 		case KindWorktree:
 			m.Launch = &LaunchRequest{Cwd: item.path}
 			return m, tui.Quit
@@ -445,18 +434,10 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "h", "left":
 		if item != nil {
 			switch {
-			case item.kind == KindProject && m.expanded["proj:"+item.project.ID]:
-				m.expanded["proj:"+item.project.ID] = false
-				m.rebuildItems()
-				m.ensureVisible()
 			case item.kind == KindProject && item.project.Group != "":
 				m.expanded[item.project.Group] = false
 				m.rebuildItems()
 				m.jumpToGroup(item.project.Group)
-			case (item.kind == KindWorktree || item.kind == KindPortal) && item.parentProj != nil:
-				m.expanded["proj:"+item.parentProj.ID] = false
-				m.rebuildItems()
-				m.jumpToProject(item.parentProj.ID)
 			case item.kind == KindGroup && m.expanded[item.group]:
 				m.expanded[item.group] = false
 				m.rebuildItems()
@@ -466,16 +447,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	case "tab":
 
-		if item != nil {
-			switch item.kind {
-			case KindGroup:
-				m.toggleExpand(item.group)
-			case KindProject:
-				key := "proj:" + item.project.ID
-				m.expanded[key] = !m.expanded[key]
-				m.rebuildItems()
-				m.ensureVisible()
-			}
+		if item != nil && item.kind == KindGroup {
+			m.toggleExpand(item.group)
 		}
 
 	case "d":
@@ -1389,7 +1362,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	switch item.kind {
 	case KindGroup:
 		return []whichKeyAction{
-			{"⏎", "open claude"},
+			{"⏎", "open sheet"},
 			{"p", "+prompt"},
 			{"f", m.favoriteToggleLabelGroup(item.group)},
 			{"l", "shell"},
@@ -1399,32 +1372,12 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		}
 	case KindProject:
 		return []whichKeyAction{
-			{"⏎", "open claude"},
+			{"⏎", "open sheet"},
 			{"p", "+prompt"},
 			{"f", m.favoriteToggleLabel(item)},
 			{"w", "worktree ›"},
 			{"e", "edit"},
 			{"l", "shell"},
-			{"tab", "expand"},
-			{"", ""},
-			{"esc", "close"},
-		}
-	case KindWorktree:
-		actions := []whichKeyAction{
-			{"⏎", "open claude"},
-			{"p", "+prompt"},
-			{"l", "shell"},
-		}
-		if item.worktree != nil && !item.worktree.IsMain {
-			actions = append(actions, whichKeyAction{"d", "delete"})
-		}
-		actions = append(actions, whichKeyAction{"", ""})
-		actions = append(actions, whichKeyAction{"esc", "close"})
-		return actions
-	case KindPortal:
-		return []whichKeyAction{
-			{"⏎", "resume"},
-			{"p", "resume +prompt"},
 			{"", ""},
 			{"esc", "close"},
 		}
