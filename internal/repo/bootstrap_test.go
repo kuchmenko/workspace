@@ -1,12 +1,12 @@
-package bootstrap_test
+package repo_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/bootstrap"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -73,7 +73,7 @@ func TestScanPlan(t *testing.T) {
 		},
 	}
 
-	plan := bootstrap.ScanPlan(wsRoot, ws, nil)
+	plan := repo.ScanPlan(wsRoot, ws, nil)
 
 	// Archived project must be filtered out before classification.
 	for _, it := range plan.Items {
@@ -82,14 +82,14 @@ func TestScanPlan(t *testing.T) {
 		}
 	}
 
-	cases := map[string]bootstrap.State{
-		"present":      bootstrap.StatePresent,
-		"needsmigrate": bootstrap.StateNeedsMigrate,
-		"blocked":      bootstrap.StateBlocked,
-		"missing":      bootstrap.StateMissing,
+	cases := map[string]repo.State{
+		"present":      repo.StatePresent,
+		"needsmigrate": repo.StateNeedsMigrate,
+		"blocked":      repo.StateBlocked,
+		"missing":      repo.StateMissing,
 	}
 	for name, want := range cases {
-		var got bootstrap.State
+		var got repo.State
 		for _, it := range plan.Items {
 			if it.Name == name {
 				got = it.State
@@ -112,7 +112,7 @@ func TestScanPlan_OnlyFilter(t *testing.T) {
 			"c": {Path: "c", Status: config.StatusActive},
 		},
 	}
-	plan := bootstrap.ScanPlan(wsRoot, ws, []string{"b"})
+	plan := repo.ScanPlan(wsRoot, ws, []string{"b"})
 	if len(plan.Items) != 1 || plan.Items[0].Name != "b" {
 		t.Errorf("only-filter scan: got %v, want [b]", plan.Items)
 	}

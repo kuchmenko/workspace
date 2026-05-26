@@ -19,15 +19,12 @@ import (
 	"github.com/kuchmenko/workspace/internal/add"
 	"github.com/kuchmenko/workspace/internal/agent"
 	"github.com/kuchmenko/workspace/internal/alias"
-	"github.com/kuchmenko/workspace/internal/aliasmgr"
-	"github.com/kuchmenko/workspace/internal/auth"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/create"
 	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/doctor"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/setup"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -322,13 +319,13 @@ func newAliasCmd() *cobra.Command {
 }
 
 func runAliasTUI(cmd *cobra.Command, args []string) error {
-	m := aliasmgr.New(ws, wsRoot)
+	m := alias.NewManagerModel(ws, wsRoot)
 	p := tui.NewProgram(m, tui.WithAltScreen())
 	res, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("TUI crashed: %w", err)
 	}
-	final := res.(aliasmgr.Model)
+	final := res.(alias.ManagerModel)
 	r := final.GetResult()
 	if r.Canceled || !r.Confirmed {
 		fmt.Println("Aliases unchanged.")
@@ -521,23 +518,23 @@ func newAuthLoginCmd() *cobra.Command {
 			"agent:safety": "Interactive: requires user to complete GitHub device flow or paste a PAT.",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var token auth.Token
+			var token github.Token
 			var err error
 
 			if usePAT {
-				token, err = auth.PromptPAT()
+				token, err = github.PromptPAT()
 			} else {
-				token, err = auth.DeviceFlow()
+				token, err = github.DeviceFlow()
 			}
 			if err != nil {
 				return err
 			}
 
-			if err := auth.SaveToken(token); err != nil {
+			if err := github.SaveToken(token); err != nil {
 				return fmt.Errorf("saving token: %w", err)
 			}
 
-			path, _ := auth.TokenPath()
+			path, _ := github.TokenPath()
 			fmt.Printf("\n  Authenticated! Token saved to %s\n", path)
 			return nil
 		},
@@ -556,11 +553,11 @@ func newAuthLogoutCmd() *cobra.Command {
 			"agent:when": "Remove the stored GitHub token",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !auth.HasToken() {
+			if !github.HasToken() {
 				fmt.Println("  Not authenticated.")
 				return nil
 			}
-			if err := auth.DeleteToken(); err != nil {
+			if err := github.DeleteToken(); err != nil {
 				return err
 			}
 			fmt.Println("  Token removed.")
@@ -578,7 +575,7 @@ func newAuthStatusCmd() *cobra.Command {
 			"agent:when": "Check whether GitHub authentication is configured and valid",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			token, err := auth.LoadToken()
+			token, err := github.LoadToken()
 			if err != nil {
 				fmt.Println("  Not authenticated.")
 				fmt.Println("  Run 'ws auth login' to authenticate with GitHub.")
@@ -609,7 +606,7 @@ func newAuthStatusCmd() *cobra.Command {
 			}
 			json.NewDecoder(resp.Body).Decode(&user)
 
-			path, _ := auth.TokenPath()
+			path, _ := github.TokenPath()
 			fmt.Printf("  Authenticated as: %s\n", user.Login)
 			fmt.Printf("  Token: %s\n", path)
 			fmt.Printf("  Scopes: %s\n", token.Scope)
@@ -1030,7 +1027,7 @@ and leaves the action to the user.`,
 				}
 			}
 
-			r := &doctor.Runner{
+			r := &Runner{
 				WsRoot:     wsRoot,
 				WS:         ws,
 				Only:       only,
@@ -1040,8 +1037,8 @@ and leaves the action to the user.`,
 			streaming := !asJSON && !fix
 			if streaming {
 				first := true
-				r.OnScope = func(scope string, findings []doctor.Finding) {
-					doctor.WriteScope(os.Stdout, scope, findings, first)
+				r.OnScope = func(scope string, findings []Finding) {
+					WriteScope(os.Stdout, scope, findings, first)
 					first = false
 				}
 			}
@@ -1049,18 +1046,18 @@ and leaves the action to the user.`,
 
 			var fixesApplied int
 			if fix {
-				fixesApplied = doctor.ApplyFixes(report)
+				fixesApplied = ApplyFixes(report)
 			}
 
 			switch {
 			case asJSON:
-				if err := doctor.WriteJSON(os.Stdout, report); err != nil {
+				if err := WriteJSON(os.Stdout, report); err != nil {
 					return err
 				}
 			case streaming:
-				doctor.WriteFooter(os.Stdout, report, doctor.FixableCount(report))
+				WriteFooter(os.Stdout, report, FixableCount(report))
 			default:
-				doctor.WriteText(os.Stdout, report)
+				WriteText(os.Stdout, report)
 			}
 
 			os.Exit(exitCodeFor(report, fix, fixesApplied))
@@ -1075,11 +1072,11 @@ and leaves the action to the user.`,
 	return cmd
 }
 
-func exitCodeFor(rep *doctor.Report, fixRequested bool, fixesApplied int) int {
+func exitCodeFor(rep *Report, fixRequested bool, fixesApplied int) int {
 	if fixRequested && fixesApplied > 0 {
 		return exitDoctorFixApplied
 	}
-	if rep.MaxSeverity() >= doctor.Warn {
+	if rep.MaxSeverity() >= Warn {
 		return exitDoctorIssues
 	}
 	return exitDoctorOK
@@ -1566,7 +1563,7 @@ func newSetupCmd() *cobra.Command {
 			"agent:safety": "Interactive TUI — requires user interaction. Writes workspace.toml.",
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m := setup.NewModel()
+			m := NewSetupModel()
 			p := tui.NewProgram(m, tui.WithAltScreen())
 
 			result, err := p.Run()
@@ -1574,7 +1571,7 @@ func newSetupCmd() *cobra.Command {
 				return fmt.Errorf("TUI crashed: %w", err)
 			}
 
-			final := result.(setup.Model)
+			final := result.(SetupModel)
 			r := final.GetResult()
 
 			if r.Err != nil {

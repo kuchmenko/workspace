@@ -1,4 +1,4 @@
-package setup
+package cli
 
 import (
 	"fmt"
@@ -19,7 +19,7 @@ const (
 	stepConfirm
 )
 
-type Result struct {
+type SetupResult struct {
 	Confirmed bool
 	Canceled  bool
 	Err       error
@@ -38,13 +38,13 @@ type fetchDoneMsg struct {
 	err      error
 }
 
-type Model struct {
+type SetupModel struct {
 	step          step
 	width         int
 	height        int
 	spinner       tui.Spinner
 	err           error
-	result        Result
+	result        SetupResult
 	username      string
 	stepChangedAt time.Time
 
@@ -53,18 +53,18 @@ type Model struct {
 	confirmModel confirmModel
 }
 
-func NewModel() Model {
+func NewSetupModel() SetupModel {
 	s := tui.NewSpinner()
 	s.SetStyle(tui.DotSpinner)
 	s.SetTextStyle(tui.NewStyle().Foreground("6"))
 
-	return Model{
+	return SetupModel{
 		step:    stepLoading,
 		spinner: s,
 	}
 }
 
-func (m Model) Init() tui.Cmd {
+func (m SetupModel) Init() tui.Cmd {
 	return tui.Batch(m.spinner.Tick, fetchRepos)
 }
 
@@ -73,7 +73,7 @@ func fetchRepos() tui.Msg {
 	return fetchDoneMsg{repos: repos, username: username, err: err}
 }
 
-func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m SetupModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case tui.WindowSizeMsg:
 		m.width = msg.Width
@@ -93,7 +93,7 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c":
-			m.result = Result{Canceled: true}
+			m.result = SetupResult{Canceled: true}
 			return m, tui.Quit
 		}
 	}
@@ -112,11 +112,11 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateLoading(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m SetupModel) updateLoading(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case fetchDoneMsg:
 		if msg.err != nil {
-			m.result = Result{Err: msg.err}
+			m.result = SetupResult{Err: msg.err}
 			return m, tui.Quit
 		}
 		m.username = msg.username
@@ -132,7 +132,7 @@ func (m Model) updateLoading(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateSelect(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m SetupModel) updateSelect(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if key, ok := msg.(tui.KeyMsg); ok && key.String() == "enter" {
 		selected := m.selectModel.selected()
 		if len(selected) == 0 {
@@ -144,7 +144,7 @@ func (m Model) updateSelect(msg tui.Msg) (tui.Model, tui.Cmd) {
 		return m, nil
 	}
 	if key, ok := msg.(tui.KeyMsg); ok && key.String() == "escape" {
-		m.result = Result{Canceled: true}
+		m.result = SetupResult{Canceled: true}
 		return m, tui.Quit
 	}
 
@@ -153,7 +153,7 @@ func (m Model) updateSelect(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateGroup(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m SetupModel) updateGroup(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
@@ -180,18 +180,18 @@ func (m Model) updateGroup(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m SetupModel) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
-			m.result = Result{
+			m.result = SetupResult{
 				Confirmed: true,
 				Groups:    m.confirmModel.groups,
 				Username:  m.username,
 			}
 			return m, tui.Quit
 		case "n", "N":
-			m.result = Result{Canceled: true}
+			m.result = SetupResult{Canceled: true}
 			return m, tui.Quit
 		case "escape":
 			m.step = stepGroup
@@ -202,7 +202,7 @@ func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m SetupModel) View() string {
 	switch m.step {
 	case stepLoading:
 		if m.err != nil {
@@ -219,7 +219,7 @@ func (m Model) View() string {
 	return ""
 }
 
-func (m Model) GetResult() Result {
+func (m SetupModel) GetResult() SetupResult {
 	return m.result
 }
 
@@ -879,7 +879,7 @@ func (m selectModel) view() string {
 			name = selectedStyle.Render(name)
 		}
 
-		pushed := humanizeTime(item.repo.PushedAt)
+		pushed := humanizeTimeShort(item.repo.PushedAt)
 		activity := activityBar(item.repo.Activity)
 
 		privLabel := ""
@@ -929,7 +929,7 @@ func activityBar(count int) string {
 	return selectedStyle.Render(bar)
 }
 
-func humanizeTime(t time.Time) string {
+func humanizeTimeShort(t time.Time) string {
 	if t.IsZero() {
 		return "     -"
 	}

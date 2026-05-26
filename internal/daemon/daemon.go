@@ -18,9 +18,9 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
-	"github.com/kuchmenko/workspace/internal/auth"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/github"
 )
 
 type Daemon struct {
@@ -315,7 +315,7 @@ type DaemonConfig struct {
 }
 
 func ConfigDir() (string, error) {
-	return auth.ConfigDir()
+	return github.ConfigDir()
 }
 
 func ConfigPath() (string, error) {

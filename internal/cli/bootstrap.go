@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/bootstrap"
-	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -51,19 +50,19 @@ Examples:
 }
 
 func runBootstrap(args []string, dryRun bool) error {
-	plan := bootstrap.ScanPlan(wsRoot, ws, args)
+	plan := repo.ScanPlan(wsRoot, ws, args)
 	if len(plan.Items) == 0 {
 		fmt.Println("No active projects to bootstrap.")
 		return nil
 	}
 
-	existing, err := bootstrap.Load(wsRoot)
+	existing, err := repo.LoadBootstrapSidecar(wsRoot)
 	if err != nil {
 		return fmt.Errorf("read sidecar: %w", err)
 	}
-	resumeFrom := map[string]bootstrap.DoneEntry{}
+	resumeFrom := map[string]repo.BootstrapDoneEntry{}
 	if existing != nil {
-		if bootstrap.IsAlive(existing) {
+		if repo.BootstrapSidecarIsAlive(existing) {
 			return fmt.Errorf("bootstrap already running (pid %d, started %s)",
 				existing.Meta.PID, existing.Meta.Started.Local().Format(time.RFC3339))
 		}
@@ -81,7 +80,7 @@ func runBootstrap(args []string, dryRun bool) error {
 				return fmt.Errorf("read sidecar entries: %w", err)
 			}
 		case "d", "discard":
-			if err := bootstrap.Delete(wsRoot); err != nil {
+			if err := repo.DeleteBootstrapSidecar(wsRoot); err != nil {
 				return err
 			}
 		default:
@@ -95,8 +94,8 @@ func runBootstrap(args []string, dryRun bool) error {
 		return nil
 	}
 
-	toClone := []bootstrap.PlanItem{}
-	for _, it := range plan.Bucket(bootstrap.StateMissing) {
+	toClone := []repo.PlanItem{}
+	for _, it := range plan.Bucket(repo.StateMissing) {
 		if _, done := resumeFrom[it.Name]; done {
 			continue
 		}
@@ -137,7 +136,7 @@ func runBootstrap(args []string, dryRun bool) error {
 			return fmt.Errorf("commit bootstrap: %w", err)
 		}
 
-		if err := bootstrap.Delete(wsRoot); err != nil {
+		if err := repo.DeleteBootstrapSidecar(wsRoot); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not remove sidecar: %v\n", err)
 		}
 	}
@@ -147,10 +146,10 @@ func runBootstrap(args []string, dryRun bool) error {
 	total := cloned + failed
 	fmt.Printf("\nBootstrap complete: %d cloned, %d failed (of %d planned).\n", cloned, failed, total)
 	if failed > 0 {
-		conflict.Notify("ws: bootstrap finished with errors",
+		daemon.Notify("ws: bootstrap finished with errors",
 			fmt.Sprintf("%d/%d cloned — see terminal", cloned, total))
 	} else if cloned > 0 {
-		conflict.Notify("ws: bootstrap finished",
+		daemon.Notify("ws: bootstrap finished",
 			fmt.Sprintf("%d projects cloned", cloned))
 	}
 
@@ -160,7 +159,7 @@ func runBootstrap(args []string, dryRun bool) error {
 	return nil
 }
 
-func commitBootstrap(sc *bootstrap.Sidecar) error {
+func commitBootstrap(sc *repo.BootstrapSidecar) error {
 	freshWS, err := config.Load(wsRoot)
 	if err != nil {
 		return err
@@ -184,14 +183,14 @@ func commitBootstrap(sc *bootstrap.Sidecar) error {
 	return saveWorkspace()
 }
 
-func printPlanText(plan *bootstrap.Plan) {
+func printPlanText(plan *repo.Plan) {
 	fmt.Println("Bootstrap plan:")
-	for _, s := range []bootstrap.State{
-		bootstrap.StateMissing,
-		bootstrap.StatePresent,
-		bootstrap.StateNeedsMigrate,
-		bootstrap.StateBlocked,
-		bootstrap.StateSelf,
+	for _, s := range []repo.State{
+		repo.StateMissing,
+		repo.StatePresent,
+		repo.StateNeedsMigrate,
+		repo.StateBlocked,
+		repo.StateSelf,
 	} {
 		items := plan.Bucket(s)
 		if len(items) == 0 {
@@ -228,17 +227,17 @@ type bootstrapModel struct {
 	width         int
 	height        int
 
-	plan      *bootstrap.Plan
-	toClone   []bootstrap.PlanItem
+	plan      *repo.Plan
+	toClone   []repo.PlanItem
 	current   int
 	successes []string
 	errors    []bootstrapError
 	canceled  bool
 
 	spinner tui.Spinner
-	sidecar *bootstrap.Sidecar
+	sidecar *repo.BootstrapSidecar
 
-	branchPrompt branchprompt.Model
+	branchPrompt tui.BranchPromptModel
 	branchAnswer chan branchAnswer
 }
 
@@ -263,12 +262,12 @@ type allDoneMsg struct{}
 
 var program *tui.Program
 
-func newBootstrapModel(plan *bootstrap.Plan, toClone []bootstrap.PlanItem, resume map[string]bootstrap.DoneEntry) bootstrapModel {
+func newBootstrapModel(plan *repo.Plan, toClone []repo.PlanItem, resume map[string]repo.BootstrapDoneEntry) bootstrapModel {
 	sp := tui.NewSpinner()
 	sp.SetStyle(tui.DotSpinner)
 	sp.SetTextStyle(tui.NewStyle().Foreground("6"))
 
-	sc := bootstrap.New(wsRoot)
+	sc := repo.NewBootstrapSidecar(wsRoot)
 	for k, v := range resume {
 		_ = sc.Set(k, v)
 	}
@@ -328,11 +327,11 @@ func (m bootstrapModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				return m, tui.Quit
 			}
 
-			if err := bootstrap.Save(m.sidecar); err != nil {
+			if err := repo.SaveBootstrapSidecar(m.sidecar); err != nil {
 				m.errors = append(m.errors, bootstrapError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
-			conflict.Notify("ws: bootstrap started",
+			daemon.Notify("ws: bootstrap started",
 				fmt.Sprintf("%s: cloning %d projects", wsRoot, len(m.toClone)))
 			m.step = bsStepCloning
 			m.stepChangedAt = time.Now()
@@ -384,7 +383,7 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 		m.step = bsStepBranchPrompt
 		m.stepChangedAt = time.Now()
-		m.branchPrompt = branchprompt.NewModel(msg.project, msg.candidates)
+		m.branchPrompt = tui.NewBranchPromptModel(msg.project, msg.candidates)
 		m.branchAnswer = msg.answer
 		return m, m.branchPrompt.Init()
 
@@ -396,13 +395,13 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 			if msg.res != nil {
 				_ = m.sidecar.MarkDone(msg.project, msg.res.DefaultBranch)
-				_ = bootstrap.Save(m.sidecar)
+				_ = repo.SaveBootstrapSidecar(m.sidecar)
 			}
 		}
 		m.current = msg.index + 1
 
 		if m.current > 0 && m.current%5 == 0 && m.current < len(m.toClone) {
-			conflict.Notify("ws: bootstrap progress",
+			daemon.Notify("ws: bootstrap progress",
 				fmt.Sprintf("%d/%d cloned", m.current, len(m.toClone)))
 		}
 		if m.current >= len(m.toClone) {
@@ -420,12 +419,12 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 
 func (m bootstrapModel) updateBranchPrompt(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
-	case branchprompt.PickedMsg:
+	case tui.BranchPromptPickedMsg:
 		m.resolveBranch(msg.Branch, nil)
 		m.step = bsStepCloning
 		m.stepChangedAt = time.Now()
 		return m, nil
-	case branchprompt.CancelledMsg:
+	case tui.BranchPromptCancelledMsg:
 
 		m.resolveBranch("", errors.New("user canceled branch selection"))
 		m.step = bsStepCloning
@@ -468,15 +467,15 @@ func (m bootstrapModel) viewPlan() string {
 	b.WriteString("\n\n")
 
 	rows := []struct {
-		state bootstrap.State
+		state repo.State
 		label string
 		mark  string
 	}{
-		{bootstrap.StateMissing, "will clone", bsArrowStyle.Render("→")},
-		{bootstrap.StatePresent, "already present", bsCheckStyle.Render("✓")},
-		{bootstrap.StateNeedsMigrate, "needs migration", bsWarnStyle.Render("⚠")},
-		{bootstrap.StateBlocked, "path blocked", bsErrStyle.Render("✗")},
-		{bootstrap.StateSelf, "self (skipped)", bsDimStyle.Render("⊘")},
+		{repo.StateMissing, "will clone", bsArrowStyle.Render("→")},
+		{repo.StatePresent, "already present", bsCheckStyle.Render("✓")},
+		{repo.StateNeedsMigrate, "needs migration", bsWarnStyle.Render("⚠")},
+		{repo.StateBlocked, "path blocked", bsErrStyle.Render("✗")},
+		{repo.StateSelf, "self (skipped)", bsDimStyle.Render("⊘")},
 	}
 	for _, row := range rows {
 		items := m.plan.Bucket(row.state)

@@ -1,4 +1,4 @@
-package migrate_test
+package repo_test
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/migrate"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -28,7 +28,7 @@ func TestMigrateProject_HappyPath(t *testing.T) {
 		Status: config.StatusActive,
 	}
 
-	res, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{
+	res, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{
 		Machine: "ci",
 		Logf:    t.Logf,
 	})
@@ -160,7 +160,7 @@ func TestMigrateProject_DirtyAbortsWithoutWIP(t *testing.T) {
 	testutil.AddDirty(t, plainPath)
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	_, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"})
+	_, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{Machine: "ci"})
 	if err == nil {
 		t.Fatal("expected error for dirty tree without WIP")
 	}
@@ -178,7 +178,7 @@ func TestMigrateProject_DirtyWithWIP(t *testing.T) {
 	testutil.AddDirty(t, plainPath)
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	res, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{
+	res, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{
 		WIP: true, Machine: "ci", Logf: t.Logf,
 	})
 	if err != nil {
@@ -209,7 +209,7 @@ func TestMigrateProject_StashAbortsWithoutFlag(t *testing.T) {
 	testutil.AddStash(t, plainPath)
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	_, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"})
+	_, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{Machine: "ci"})
 	if err == nil {
 		t.Fatal("expected error for stash without StashBranch")
 	}
@@ -227,7 +227,7 @@ func TestMigrateProject_StashWithBranch(t *testing.T) {
 	testutil.AddStash(t, plainPath)
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	res, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{
+	res, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{
 		StashBranch: true, Machine: "ci", Logf: t.Logf,
 	})
 	if err != nil {
@@ -254,7 +254,7 @@ func TestMigrateProject_DetachedAbortsWithoutFlag(t *testing.T) {
 	testutil.RunGit(t, plainPath, "checkout", "--detach", head)
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	_, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"})
+	_, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{Machine: "ci"})
 	if err == nil {
 		t.Fatal("expected error for detached HEAD without CheckoutDefault")
 	}
@@ -276,7 +276,7 @@ func TestMigrateProject_DetachedWithCheckout(t *testing.T) {
 		Remote: plainPath, Path: "myapp", Status: config.StatusActive,
 		DefaultBranch: "main",
 	}
-	res, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{
+	res, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{
 		CheckoutDefault: true, Machine: "ci", Logf: t.Logf,
 	})
 	if err != nil {
@@ -311,7 +311,7 @@ func TestMigrateProject_DetachedPreservesOrphan(t *testing.T) {
 		Remote: plainPath, Path: "myapp", Status: config.StatusActive,
 		DefaultBranch: "main",
 	}
-	res, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{
+	res, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{
 		CheckoutDefault: true, Machine: "ci", Logf: t.Logf,
 	})
 	if err != nil {
@@ -332,12 +332,12 @@ func TestMigrateProject_AlreadyMigrated(t *testing.T) {
 	plainPath := testutil.InitFakePlainCheckout(t, wsRoot, "myapp", []string{"main"})
 
 	proj := &config.Project{Remote: plainPath, Path: "myapp", Status: config.StatusActive}
-	if _, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"}); err != nil {
+	if _, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{Machine: "ci"}); err != nil {
 		t.Fatalf("first migrate: %v", err)
 	}
 
-	_, err := migrate.MigrateProject(wsRoot, "myapp", proj, migrate.Options{Machine: "ci"})
-	if !errors.Is(err, migrate.ErrAlreadyMigrated) {
+	_, err := repo.MigrateProject(wsRoot, "myapp", proj, repo.MigrateOptions{Machine: "ci"})
+	if !errors.Is(err, repo.ErrAlreadyMigrated) {
 		t.Errorf("second migrate: got %v, want ErrAlreadyMigrated", err)
 	}
 }

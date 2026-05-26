@@ -13,8 +13,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/kuchmenko/workspace/internal/auth"
 )
 
 type GhAppProvider struct{}
@@ -513,7 +511,7 @@ func oauthProbeNetwork(c Client) bool {
 
 var (
 	loadOAuthToken = func() (string, error) {
-		token, err := auth.LoadToken()
+		token, err := LoadToken()
 		if err != nil {
 			return "", err
 		}
@@ -607,7 +605,7 @@ func (noopProvider) SuggestRepos(_ context.Context, _ int) ([]Repo, error) {
 }
 
 func ResolveClient() (Client, error) {
-	token, err := auth.LoadToken()
+	token, err := LoadToken()
 	if err == nil && token.AccessToken != "" {
 		return NewHTTPClient(token.AccessToken), nil
 	}

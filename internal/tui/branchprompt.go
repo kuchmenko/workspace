@@ -11,48 +11,46 @@
 // or cancels, the model emits PickedMsg / CancelledMsg; the parent is
 // responsible for unblocking whichever goroutine is waiting on the answer
 // (typically via a channel passed into clone.Options.PromptDefaultBranch).
-package branchprompt
+package tui
 
 import (
 	"fmt"
 	"strings"
-
-	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-type PickedMsg struct {
+type BranchPromptPickedMsg struct {
 	Project string
 	Branch  string
 }
 
-type CancelledMsg struct {
+type BranchPromptCancelledMsg struct {
 	Project string
 }
 
-type Model struct {
+type BranchPromptModel struct {
 	project    string
 	candidates []string
 	cursor     int
 	inputMode  bool
-	input      tui.TextInput
+	input      TextInput
 }
 
-func NewModel(project string, candidates []string) Model {
-	ti := tui.NewTextInput()
+func NewBranchPromptModel(project string, candidates []string) BranchPromptModel {
+	ti := NewTextInput()
 	ti.SetPlaceholder("branch name")
 	ti.SetCharLimit(80)
 	ti.Focus()
-	return Model{
+	return BranchPromptModel{
 		project:    project,
 		candidates: candidates,
 		input:      ti,
 	}
 }
 
-func (m Model) Init() tui.Cmd { return nil }
+func (m BranchPromptModel) Init() Cmd { return nil }
 
-func (m Model) Update(msg tui.Msg) (Model, tui.Cmd) {
-	key, ok := msg.(tui.KeyMsg)
+func (m BranchPromptModel) Update(msg Msg) (BranchPromptModel, Cmd) {
+	key, ok := msg.(KeyMsg)
 	if !ok {
 		return m, nil
 	}
@@ -62,7 +60,7 @@ func (m Model) Update(msg tui.Msg) (Model, tui.Cmd) {
 	return m.updateListMode(key)
 }
 
-func (m Model) updateInputMode(msg tui.Msg, key tui.KeyMsg) (Model, tui.Cmd) {
+func (m BranchPromptModel) updateInputMode(msg Msg, key KeyMsg) (BranchPromptModel, Cmd) {
 	switch key.String() {
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
@@ -74,12 +72,12 @@ func (m Model) updateInputMode(msg tui.Msg, key tui.KeyMsg) (Model, tui.Cmd) {
 		m.inputMode = false
 		return m, nil
 	}
-	var cmd tui.Cmd
+	var cmd Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
 
-func (m Model) updateListMode(key tui.KeyMsg) (Model, tui.Cmd) {
+func (m BranchPromptModel) updateListMode(key KeyMsg) (BranchPromptModel, Cmd) {
 	switch key.String() {
 	case "up", "k":
 		if m.cursor > 0 {
@@ -100,7 +98,7 @@ func (m Model) updateListMode(key tui.KeyMsg) (Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) confirmListSelection() (Model, tui.Cmd) {
+func (m BranchPromptModel) confirmListSelection() (BranchPromptModel, Cmd) {
 	if len(m.candidates) == 0 {
 		m.inputMode = true
 		return m, m.input.Focus()
@@ -108,19 +106,19 @@ func (m Model) confirmListSelection() (Model, tui.Cmd) {
 	return m, emitPickedCmd(m.project, m.candidates[m.cursor])
 }
 
-func emitPickedCmd(project, branch string) tui.Cmd {
-	picked := PickedMsg{Project: project, Branch: branch}
-	return func() tui.Msg { return picked }
+func emitPickedCmd(project, branch string) Cmd {
+	picked := BranchPromptPickedMsg{Project: project, Branch: branch}
+	return func() Msg { return picked }
 }
 
-func emitCancelledCmd(project string) tui.Cmd {
-	canceled := CancelledMsg{Project: project}
-	return func() tui.Msg { return canceled }
+func emitCancelledCmd(project string) Cmd {
+	canceled := BranchPromptCancelledMsg{Project: project}
+	return func() Msg { return canceled }
 }
 
-func (m Model) Project() string { return m.project }
+func (m BranchPromptModel) Project() string { return m.project }
 
-func (m Model) View() string {
+func (m BranchPromptModel) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(" Default branch needed "))
 	b.WriteString("\n\n")
@@ -154,26 +152,26 @@ func (m Model) View() string {
 }
 
 var (
-	titleStyle = tui.NewStyle().
+	titleStyle = NewStyle().
 			Bold(true).
-			Foreground(tui.Color("15")).
-			Background(tui.Color("6")).
+			Foreground(Color("15")).
+			Background(Color("6")).
 			Padding(0, 1)
 
-	headerStyle = tui.NewStyle().
-			Foreground(tui.Color("6")).
+	headerStyle = NewStyle().
+			Foreground(Color("6")).
 			Bold(true)
 
-	dimStyle = tui.NewStyle().
-			Foreground(tui.Color("8"))
+	dimStyle = NewStyle().
+			Foreground(Color("8"))
 
-	helpStyle = tui.NewStyle().
-			Foreground(tui.Color("8"))
+	helpStyle = NewStyle().
+			Foreground(Color("8"))
 
-	cursorStyle = tui.NewStyle().
-			Foreground(tui.Color("6")).
+	cursorStyle = NewStyle().
+			Foreground(Color("6")).
 			Bold(true)
 
-	selectedStyle = tui.NewStyle().
-			Foreground(tui.Color("6"))
+	selectedStyle = NewStyle().
+			Foreground(Color("6"))
 )

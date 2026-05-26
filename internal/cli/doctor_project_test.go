@@ -1,4 +1,4 @@
-package doctor
+package cli
 
 import (
 	"os"
