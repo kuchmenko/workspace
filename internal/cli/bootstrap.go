@@ -52,7 +52,7 @@ Examples:
 func runBootstrap(args []string, dryRun bool) error {
 	plan := repo.ScanPlan(wsRoot, ws, args)
 	if len(plan.Items) == 0 {
-		fmt.Println("No active projects to repo.")
+		fmt.Println("No active projects to bootstrap.")
 		return nil
 	}
 

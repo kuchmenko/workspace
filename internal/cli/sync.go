@@ -172,6 +172,12 @@ func handleConflict(c daemon.Conflict) (bool, error) {
 		return resolveBranchOrphan(c)
 	case daemon.KindNeedsMigration:
 		return resolveNeedsMigration(c)
+	case daemon.KindNeedsBootstrap:
+		return resolveNeedsBootstrap(c)
+	case daemon.KindPathBlocked:
+		return resolvePathBlocked(c)
+	case daemon.KindCloneFailed:
+		return resolveCloneFailed(c)
 	}
 	fmt.Println("Unknown conflict kind. Press enter to continue.")
 	_ = readLine()
@@ -198,6 +204,36 @@ func resolveNeedsMigration(c daemon.Conflict) (bool, error) {
 	fmt.Println("This project needs migration. Run:")
 	fmt.Printf("  ws migrate %s\n", c.Project)
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
+	_ = readLine()
+	return false, nil
+}
+
+func resolveNeedsBootstrap(c daemon.Conflict) (bool, error) {
+	fmt.Println("This project needs to be cloned on this machine. Run:")
+	fmt.Printf("  ws bootstrap %s\n", c.Project)
+	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
+	_ = readLine()
+	return false, nil
+}
+
+func resolvePathBlocked(c daemon.Conflict) (bool, error) {
+	fmt.Println("The target path is already taken by something else.")
+	if len(c.Details) > 0 {
+		fmt.Printf("  details: %s\n", string(c.Details))
+	}
+	fmt.Println("Move or remove the blocking path, then re-run `ws sync`.")
+	fmt.Println("Press enter to continue.")
+	_ = readLine()
+	return false, nil
+}
+
+func resolveCloneFailed(c daemon.Conflict) (bool, error) {
+	fmt.Println("Clone failed for this project.")
+	if len(c.Details) > 0 {
+		fmt.Printf("  details: %s\n", string(c.Details))
+	}
+	fmt.Println("Check credentials and network, then re-run `ws bootstrap` or `ws sync`.")
+	fmt.Println("Press enter to continue.")
 	_ = readLine()
 	return false, nil
 }

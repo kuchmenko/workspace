@@ -164,7 +164,7 @@ The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
 					if skippedMissing > 0 || skippedAlready > 0 {
 						fmt.Printf("Nothing to migrate (%d already migrated, %d not cloned on this machine).\n", skippedAlready, skippedMissing)
 					} else {
-						fmt.Println("No active projects to repo.")
+						fmt.Println("No active projects to migrate.")
 					}
 				} else {
 					fmt.Printf("Migrated %d project(s); skipped %d already migrated, %d not cloned locally.\n", migratedCount, skippedAlready, skippedMissing)
@@ -549,7 +549,7 @@ func runMigrateTUI(args []string) error {
 
 	plan := buildMigratePlan(args)
 	if len(plan.Items) == 0 {
-		fmt.Println("No active projects to repo.")
+		fmt.Println("No active projects to migrate.")
 		return nil
 	}
 
