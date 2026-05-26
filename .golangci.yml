@@ -186,9 +186,10 @@ linters:
           - gocognit
           - funlen
       # Bubble Tea reducer-style update funcs are switch-heavy by
-      # design. Path glob covers every TUI file: agent, aliasmgr,
-      # add, create, setup, migrate, bootstrap.
-      - path: internal/(agent|aliasmgr|add|create|setup|migrate)/.*\.go
+      # design. Path glob covers every TUI-bearing package after the
+      # folder dissolution: agent, add, alias (manager.go), create,
+      # repo (bootstrap.go orchestration), tui.
+      - path: internal/(agent|add|alias|create|repo|tui)/.*\.go
         linters:
           - gocyclo
           - gocognit
@@ -202,7 +203,7 @@ linters:
           - gocyclo
           - gocognit
           - funlen
-      - path: internal/cli/(bootstrap|migrate_tui)\.go
+      - path: internal/cli/(bootstrap|migrate|setup)\.go
         linters:
           - gocyclo
           - gocognit
@@ -213,7 +214,7 @@ linters:
       # every project state class to its handler in a single switch.
       # Both have inline comments explaining each case; refactoring
       # for cognitive complexity alone would obscure the logic.
-      - path: internal/migrate/migrate\.go
+      - path: internal/repo/migrate\.go
         linters:
           - gocyclo
           - gocognit

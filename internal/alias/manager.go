@@ -1,4 +1,4 @@
-package aliasmgr
+package alias
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -33,13 +32,13 @@ type item struct {
 	checked bool
 }
 
-type Result struct {
+type ManagerResult struct {
 	Confirmed bool
 	Canceled  bool
 	Aliases   map[string]string
 }
 
-type Model struct {
+type ManagerModel struct {
 	ws            *config.Workspace
 	root          string
 	step          step
@@ -52,11 +51,11 @@ type Model struct {
 	editing       bool
 	editInput     tui.TextInput
 	editTarget    int
-	result        Result
+	result        ManagerResult
 	stepChangedAt time.Time
 }
 
-func New(ws *config.Workspace, root string) Model {
+func NewManagerModel(ws *config.Workspace, root string) ManagerModel {
 	items := buildItems(ws)
 
 	search := tui.NewTextInput()
@@ -66,7 +65,7 @@ func New(ws *config.Workspace, root string) Model {
 	edit := tui.NewTextInput()
 	edit.SetCharLimit(32)
 
-	return Model{
+	return ManagerModel{
 		ws:        ws,
 		root:      root,
 		items:     items,
@@ -84,9 +83,9 @@ func buildItems(ws *config.Workspace) []item {
 	var items []item
 
 	{
-		rootAlias := aliasFor[alias.RootTarget]
+		rootAlias := aliasFor[RootTarget]
 		items = append(items, item{
-			name:    alias.RootTarget,
+			name:    RootTarget,
 			kind:    kindRoot,
 			alias:   rootAlias,
 			checked: rootAlias != "",
@@ -130,11 +129,11 @@ func buildItems(ws *config.Workspace) []item {
 	return items
 }
 
-func (m Model) Init() tui.Cmd {
+func (m ManagerModel) Init() tui.Cmd {
 	return m.search.Focus()
 }
 
-func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m ManagerModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch msg := msg.(type) {
 	case tui.WindowSizeMsg:
 		m.width = msg.Width
@@ -145,7 +144,7 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		if msg.String() == "ctrl+c" {
-			m.result = Result{Canceled: true}
+			m.result = ManagerResult{Canceled: true}
 			return m, tui.Quit
 		}
 	}
@@ -159,7 +158,7 @@ func (m Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) View() string {
+func (m ManagerModel) View() string {
 	switch m.step {
 	case stepManage:
 		return m.viewManage()
@@ -169,7 +168,7 @@ func (m Model) View() string {
 	return ""
 }
 
-func (m Model) GetResult() Result { return m.result }
+func (m ManagerModel) GetResult() ManagerResult { return m.result }
 
 func (it item) generationSeed() string {
 	if it.kind == kindRoot {
@@ -178,7 +177,7 @@ func (it item) generationSeed() string {
 	return it.name
 }
 
-func (m Model) buildAliasMap() map[string]string {
+func (m ManagerModel) buildAliasMap() map[string]string {
 	out := make(map[string]string)
 	taken := make(map[string]struct{})
 
@@ -194,7 +193,7 @@ func (m Model) buildAliasMap() map[string]string {
 		if !it.checked || it.alias != "" {
 			continue
 		}
-		gen := alias.Generate(it.generationSeed(), taken)
+		gen := Generate(it.generationSeed(), taken)
 		taken[gen] = struct{}{}
 		out[gen] = it.name
 	}
@@ -219,17 +218,17 @@ var (
 	rootNameStyle  = tui.NewStyle().Foreground(tui.Color("5")).Bold(true)
 )
 
-func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m ManagerModel) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "y", "Y", "enter":
-			m.result = Result{
+			m.result = ManagerResult{
 				Confirmed: true,
 				Aliases:   m.buildAliasMap(),
 			}
 			return m, tui.Quit
 		case "n", "N":
-			m.result = Result{Canceled: true}
+			m.result = ManagerResult{Canceled: true}
 			return m, tui.Quit
 		case "esc":
 			m.step = stepManage
@@ -240,7 +239,7 @@ func (m Model) updateConfirm(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m Model) viewConfirm() string {
+func (m ManagerModel) viewConfirm() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(" ws alias "))
 	b.WriteString("  Confirm\n\n")
@@ -261,7 +260,7 @@ func (m Model) viewConfirm() string {
 		Groups:   m.ws.Groups,
 		Aliases:  aliases,
 	}
-	resolved := alias.ResolveAll(tmp, m.root)
+	resolved := ResolveAll(tmp, m.root)
 
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
 
@@ -269,10 +268,10 @@ func (m Model) viewConfirm() string {
 		nameCol := selectedStyle.Render(fmt.Sprintf("%-12s", r.Name))
 		path := r.Path
 		warning := ""
-		if r.Kind == alias.TargetUnknown {
+		if r.Kind == TargetUnknown {
 			path = errStyle.Render("(broken target)")
 		}
-		if conflictPath, conflict := alias.ShellConflict(r.Name); conflict {
+		if conflictPath, conflict := ShellConflict(r.Name); conflict {
 			warning = warnStyle.Render(fmt.Sprintf("  ⚠ shadows %s", conflictPath))
 		}
 		fmt.Fprintf(&b, "  %s  →  %s%s\n",
@@ -293,7 +292,7 @@ type treeRow struct {
 	prefix  string
 }
 
-func (m Model) itemIndex() map[string]int {
+func (m ManagerModel) itemIndex() map[string]int {
 	out := make(map[string]int, len(m.items))
 	for i, it := range m.items {
 		out[itemKey(it.kind, it.name)] = i
@@ -305,7 +304,7 @@ func itemKey(k itemKind, name string) string {
 	return fmt.Sprintf("%d/%s", k, name)
 }
 
-func (m Model) buildTree() []treeRow {
+func (m ManagerModel) buildTree() []treeRow {
 	idx := m.itemIndex()
 	q := strings.ToLower(strings.TrimSpace(m.search.Value()))
 
@@ -339,7 +338,7 @@ func (m Model) buildTree() []treeRow {
 	}
 
 	var rows []treeRow
-	rootIdx, hasRoot := idx[itemKey(kindRoot, alias.RootTarget)]
+	rootIdx, hasRoot := idx[itemKey(kindRoot, RootTarget)]
 	if hasRoot {
 		rows = append(rows, treeRow{itemIdx: rootIdx, prefix: ""})
 	}
@@ -418,7 +417,7 @@ func (m Model) buildTree() []treeRow {
 	return rows
 }
 
-func (m Model) maxVisible() int {
+func (m ManagerModel) maxVisible() int {
 	h := m.height - 8
 	if h < 5 {
 		h = 5
@@ -426,7 +425,7 @@ func (m Model) maxVisible() int {
 	return h
 }
 
-func (m Model) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m ManagerModel) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if m.editing {
 		return m.updateEditing(msg)
 	}
@@ -435,7 +434,7 @@ func (m Model) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
 		rows := m.buildTree()
 		switch key.String() {
 		case "esc":
-			m.result = Result{Canceled: true}
+			m.result = ManagerResult{Canceled: true}
 			return m, tui.Quit
 		case "enter":
 			m.step = stepConfirm
@@ -474,7 +473,7 @@ func (m Model) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
 				cur := m.items[idx].alias
 				if cur == "" {
 					taken := m.takenNames(idx)
-					cur = alias.Generate(m.items[idx].generationSeed(), taken)
+					cur = Generate(m.items[idx].generationSeed(), taken)
 				}
 				m.editInput.SetValue(cur)
 				m.editInput.CursorEnd()
@@ -494,7 +493,7 @@ func (m Model) updateManage(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateEditing(msg tui.Msg) (tui.Model, tui.Cmd) {
+func (m ManagerModel) updateEditing(msg tui.Msg) (tui.Model, tui.Cmd) {
 	if key, ok := msg.(tui.KeyMsg); ok {
 		switch key.String() {
 		case "enter":
@@ -515,7 +514,7 @@ func (m Model) updateEditing(msg tui.Msg) (tui.Model, tui.Cmd) {
 	return m, cmd
 }
 
-func (m Model) takenNames(skip int) map[string]struct{} {
+func (m ManagerModel) takenNames(skip int) map[string]struct{} {
 	taken := make(map[string]struct{})
 	for i, it := range m.items {
 		if i == skip || !it.checked || it.alias == "" {
@@ -526,7 +525,7 @@ func (m Model) takenNames(skip int) map[string]struct{} {
 	return taken
 }
 
-func (m Model) viewManage() string {
+func (m ManagerModel) viewManage() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.Render(" ws alias "))
@@ -570,7 +569,7 @@ func (m Model) viewManage() string {
 			aliasStyled = padRight(selectedStyle.Render(aliasRaw), aliasW, len(aliasRaw))
 		case it.checked:
 
-			aliasRaw = alias.Generate(it.generationSeed(), m.takenNames(idx))
+			aliasRaw = Generate(it.generationSeed(), m.takenNames(idx))
 			aliasStyled = padRight(dimStyle.Render(aliasRaw), aliasW, len(aliasRaw))
 		default:
 			aliasRaw = "(auto)"

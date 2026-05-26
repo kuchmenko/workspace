@@ -1,4 +1,4 @@
-package doctor
+package cli
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
@@ -92,16 +92,16 @@ func TestCheckConflicts_Mine(t *testing.T) {
 	isolateState(t)
 	wsRoot := t.TempDir()
 
-	store, err := conflict.Open()
+	store, err := daemon.OpenConflictStore()
 	if err != nil {
-		t.Fatalf("conflict.Open: %v", err)
+		t.Fatalf("daemon.OpenConflictStore: %v", err)
 	}
 	absWsRoot, _ := filepath.Abs(wsRoot)
-	if _, err := store.Record(conflict.Conflict{
+	if _, err := store.Record(daemon.Conflict{
 		Workspace: absWsRoot,
 		Project:   "demo",
 		Branch:    "wt/test/foo",
-		Kind:      conflict.KindBranchOrphan,
+		Kind:      daemon.KindBranchOrphan,
 		Details:   json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -121,14 +121,14 @@ func TestCheckConflicts_OtherWorkspaceIgnored(t *testing.T) {
 	wsRoot := t.TempDir()
 	other := t.TempDir()
 
-	store, err := conflict.Open()
+	store, err := daemon.OpenConflictStore()
 	if err != nil {
-		t.Fatalf("conflict.Open: %v", err)
+		t.Fatalf("daemon.OpenConflictStore: %v", err)
 	}
 	absOther, _ := filepath.Abs(other)
-	if _, err := store.Record(conflict.Conflict{
+	if _, err := store.Record(daemon.Conflict{
 		Workspace: absOther,
-		Kind:      conflict.KindTOMLMerge,
+		Kind:      daemon.KindTOMLMerge,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestCheckConfig_Invalid(t *testing.T) {
 	// surface, but we don't want to pin on exact count — just >= 3.
 	// Smoke-check one phrase per class.
 	for _, needle := range []string{"missing remote", "missing path", "unknown status", "not a valid duration"} {
-		if !contains(f.Message, needle) {
+		if !containsSubstr(f.Message, needle) {
 			t.Errorf("Message missing %q: %s", needle, f.Message)
 		}
 	}
@@ -232,7 +232,7 @@ func TestSidecarFixtureRoundtrip(t *testing.T) {
 	}
 }
 
-func contains(haystack, needle string) bool {
+func containsSubstr(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
 }
 

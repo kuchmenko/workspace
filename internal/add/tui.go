@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/branchprompt"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -51,7 +50,7 @@ type AddModel struct {
 	currentIdx   int
 	branchAnswer chan branchAnswer
 
-	branchPrompt branchprompt.Model
+	branchPrompt tui.BranchPromptModel
 
 	added   []config.Project
 	skipped []SkipReason

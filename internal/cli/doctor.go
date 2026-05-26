@@ -1,4 +1,4 @@
-package doctor
+package cli
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/daemon"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
@@ -758,8 +757,8 @@ func checkConflicts(wsRoot string) Finding {
 	}
 }
 
-func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
-	store, err := conflict.Open()
+func loadProjectConflicts(wsRoot string) ([]daemon.Conflict, error) {
+	store, err := daemon.OpenConflictStore()
 	if err != nil {
 		return nil, fmt.Errorf("cannot read conflict store: %w", err)
 	}
@@ -768,7 +767,7 @@ func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
 		return nil, fmt.Errorf("cannot list conflicts: %w", err)
 	}
 	absWsRoot, _ := filepath.Abs(wsRoot)
-	var mine []conflict.Conflict
+	var mine []daemon.Conflict
 	for _, c := range all {
 		abs, _ := filepath.Abs(c.Workspace)
 		if abs == absWsRoot {
@@ -778,7 +777,7 @@ func loadProjectConflicts(wsRoot string) ([]conflict.Conflict, error) {
 	return mine, nil
 }
 
-func oldestConflict(conflicts []conflict.Conflict) conflict.Conflict {
+func oldestConflict(conflicts []daemon.Conflict) daemon.Conflict {
 	oldest := conflicts[0]
 	for _, c := range conflicts[1:] {
 		if c.DetectedAt.Before(oldest.DetectedAt) {
@@ -788,7 +787,7 @@ func oldestConflict(conflicts []conflict.Conflict) conflict.Conflict {
 	return oldest
 }
 
-func projectOrGlobal(c conflict.Conflict) string {
+func projectOrGlobal(c daemon.Conflict) string {
 	if c.Project != "" {
 		return c.Project
 	}

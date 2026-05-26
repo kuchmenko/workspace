@@ -4,7 +4,7 @@
 // inspect them via `ws sync resolve`. The reconciler is the only writer; the
 // resolve CLI is the only reader/mutator. There is no IPC between them — they
 // coordinate via the file alone, with a best-effort O_EXCL lock.
-package conflict
+package daemon
 
 import (
 	"encoding/json"
@@ -36,18 +36,18 @@ func NotifyNew(c Conflict) {
 	Notify(title, body)
 }
 
-type Kind string
+type ConflictKind string
 
 const (
-	KindTOMLMerge       Kind = "toml-merge"
-	KindTOMLPushFailed  Kind = "toml-push-failed"
-	KindMainDivergence  Kind = "main-divergence"
-	KindNeedsMigration  Kind = "needs-migration"
-	KindNeedsBootstrap  Kind = "needs-bootstrap"
-	KindPathBlocked     Kind = "path-blocked"
-	KindCloneFailed     Kind = "clone-failed"
-	KindBranchDuplicate Kind = "branch-duplicate"
-	KindBranchOrphan    Kind = "branch-orphan"
+	KindTOMLMerge       ConflictKind = "toml-merge"
+	KindTOMLPushFailed  ConflictKind = "toml-push-failed"
+	KindMainDivergence  ConflictKind = "main-divergence"
+	KindNeedsMigration  ConflictKind = "needs-migration"
+	KindNeedsBootstrap  ConflictKind = "needs-bootstrap"
+	KindPathBlocked     ConflictKind = "path-blocked"
+	KindCloneFailed     ConflictKind = "clone-failed"
+	KindBranchDuplicate ConflictKind = "branch-duplicate"
+	KindBranchOrphan    ConflictKind = "branch-orphan"
 )
 
 type Conflict struct {
@@ -55,16 +55,16 @@ type Conflict struct {
 	Workspace  string          `json:"workspace"`
 	Project    string          `json:"project,omitempty"`
 	Branch     string          `json:"branch,omitempty"`
-	Kind       Kind            `json:"kind"`
+	Kind       ConflictKind    `json:"kind"`
 	DetectedAt time.Time       `json:"detected_at"`
 	Details    json.RawMessage `json:"details,omitempty"`
 }
 
-type Store struct {
+type ConflictStore struct {
 	path string
 }
 
-func Path() (string, error) {
+func ConflictPath() (string, error) {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ws", "conflicts.json"), nil
 	}
@@ -75,19 +75,19 @@ func Path() (string, error) {
 	return filepath.Join(home, ".local", "state", "ws", "conflicts.json"), nil
 }
 
-func Open() (*Store, error) {
-	p, err := Path()
+func OpenConflictStore() (*ConflictStore, error) {
+	p, err := ConflictPath()
 	if err != nil {
 		return nil, err
 	}
-	return &Store{path: p}, nil
+	return &ConflictStore{path: p}, nil
 }
 
 type fileShape struct {
 	Conflicts []Conflict `json:"conflicts"`
 }
 
-func (s *Store) load() (*fileShape, error) {
+func (s *ConflictStore) load() (*fileShape, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -105,7 +105,7 @@ func (s *Store) load() (*fileShape, error) {
 	return &f, nil
 }
 
-func (s *Store) save(f *fileShape) error {
+func (s *ConflictStore) save(f *fileShape) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
@@ -120,7 +120,7 @@ func (s *Store) save(f *fileShape) error {
 	return os.Rename(tmp, s.path)
 }
 
-func (s *Store) List() ([]Conflict, error) {
+func (s *ConflictStore) List() ([]Conflict, error) {
 	f, err := s.load()
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func matchKey(c Conflict) string {
 	return string(c.Kind) + "|" + c.Workspace + "|" + c.Project + "|" + c.Branch
 }
 
-func (s *Store) Record(c Conflict) (bool, error) {
+func (s *ConflictStore) Record(c Conflict) (bool, error) {
 	c = ensureRecordDefaults(c)
 	f, err := s.load()
 	if err != nil {
@@ -173,7 +173,7 @@ func refreshExisting(existing *Conflict, fresh Conflict) {
 	}
 }
 
-func (s *Store) Clear(workspace, project, branch string, kind Kind) error {
+func (s *ConflictStore) Clear(workspace, project, branch string, kind ConflictKind) error {
 	f, err := s.load()
 	if err != nil {
 		return err
@@ -190,7 +190,7 @@ func (s *Store) Clear(workspace, project, branch string, kind Kind) error {
 	return s.save(f)
 }
 
-func (s *Store) Remove(id string) error {
+func (s *ConflictStore) Remove(id string) error {
 	f, err := s.load()
 	if err != nil {
 		return err

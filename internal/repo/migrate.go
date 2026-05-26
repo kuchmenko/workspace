@@ -1,4 +1,4 @@
-package migrate
+package repo
 
 import (
 	"errors"
@@ -135,7 +135,7 @@ func copyFilePreservingMode(src, dst string) error {
 	return out.Close()
 }
 
-type Options struct {
+type MigrateOptions struct {
 	WIP bool
 
 	StashBranch bool
@@ -149,13 +149,13 @@ type Options struct {
 	Logf func(format string, args ...interface{})
 }
 
-func (o Options) logf(format string, args ...interface{}) {
+func (o MigrateOptions) logf(format string, args ...interface{}) {
 	if o.Logf != nil {
 		o.Logf(format, args...)
 	}
 }
 
-type Result struct {
+type MigrateResult struct {
 	Project        string
 	BarePath       string
 	MainWorktree   string
@@ -170,7 +170,7 @@ type Result struct {
 
 var ErrAlreadyMigrated = errors.New("project already migrated")
 
-func MigrateProject(wsRoot string, name string, proj *config.Project, opts Options) (*Result, error) {
+func MigrateProject(wsRoot string, name string, proj *config.Project, opts MigrateOptions) (*MigrateResult, error) {
 	mainPath := filepath.Join(wsRoot, proj.Path)
 	barePath := layout.BarePath(mainPath)
 
@@ -420,7 +420,7 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Optio
 
 	opts.logf("migrate %s: done", name)
 
-	return &Result{
+	return &MigrateResult{
 		Project:        name,
 		BarePath:       barePath,
 		MainWorktree:   mainPath,
@@ -454,7 +454,7 @@ func commitReachableFromAnyBranch(repoPath, sha string) (bool, error) {
 	return false, nil
 }
 
-func resolveDefaultBranch(name string, proj *config.Project, mainPath string, opts Options) (string, error) {
+func resolveDefaultBranch(name string, proj *config.Project, mainPath string, opts MigrateOptions) (string, error) {
 	if proj.DefaultBranch != "" {
 		return proj.DefaultBranch, nil
 	}
@@ -488,56 +488,56 @@ func resolveDefaultBranch(name string, proj *config.Project, mainPath string, op
 	return picked, nil
 }
 
-type DoneEntry struct {
+type MigrateDoneEntry struct {
 	DefaultBranch string    `json:"default_branch"`
 	MigratedAt    time.Time `json:"migrated_at"`
 }
 
-type Sidecar struct {
+type MigrateSidecar struct {
 	*sidecar.Sidecar
 }
 
-func New(wsRoot string) *Sidecar {
-	return &Sidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindMigrate)}
+func NewMigrateSidecar(wsRoot string) *MigrateSidecar {
+	return &MigrateSidecar{Sidecar: sidecar.New(wsRoot, sidecar.KindMigrate)}
 }
 
-func Load(wsRoot string) (*Sidecar, error) {
+func LoadMigrateSidecar(wsRoot string) (*MigrateSidecar, error) {
 	sc, err := sidecar.Load(wsRoot, sidecar.KindMigrate)
 	if err != nil || sc == nil {
 		return nil, err
 	}
-	return &Sidecar{Sidecar: sc}, nil
+	return &MigrateSidecar{Sidecar: sc}, nil
 }
 
-func Save(sc *Sidecar) error {
+func SaveMigrateSidecar(sc *MigrateSidecar) error {
 	if sc == nil {
 		return nil
 	}
 	return sidecar.Save(sc.Sidecar)
 }
 
-func Delete(wsRoot string) error {
+func DeleteMigrateSidecar(wsRoot string) error {
 	return sidecar.Delete(wsRoot, sidecar.KindMigrate)
 }
 
-func IsAlive(sc *Sidecar) bool {
+func MigrateSidecarIsAlive(sc *MigrateSidecar) bool {
 	if sc == nil {
 		return false
 	}
 	return sidecar.IsAlive(sc.Sidecar)
 }
 
-func (s *Sidecar) MarkDone(name, defaultBranch string) error {
-	return s.Set(name, DoneEntry{
+func (s *MigrateSidecar) MarkDone(name, defaultBranch string) error {
+	return s.Set(name, MigrateDoneEntry{
 		DefaultBranch: defaultBranch,
 		MigratedAt:    time.Now().UTC(),
 	})
 }
 
-func (s *Sidecar) DoneEntries() (map[string]DoneEntry, error) {
-	out := make(map[string]DoneEntry, len(s.Done))
+func (s *MigrateSidecar) DoneEntries() (map[string]MigrateDoneEntry, error) {
+	out := make(map[string]MigrateDoneEntry, len(s.Done))
 	for name := range s.Done {
-		var entry DoneEntry
+		var entry MigrateDoneEntry
 		if _, err := s.Get(name, &entry); err != nil {
 			return nil, err
 		}

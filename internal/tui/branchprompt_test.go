@@ -1,33 +1,32 @@
-package branchprompt
+package tui
 
 import (
-	"github.com/kuchmenko/workspace/internal/tui"
 	"testing"
 )
 
 // keyMsg constructs a tea.KeyMsg from a single-key string shortcut that
 // the model accepts ("up", "down", "enter", "esc", "i", "k", "j").
 // Text input in free-text mode uses KeyMsg with Runes populated.
-func keyMsg(s string) tui.KeyMsg {
+func keyMsg(s string) KeyMsg {
 	switch s {
 	case "up":
-		return tui.KeyMsg{Type: tui.KeyUp}
+		return KeyMsg{Type: KeyUp}
 	case "down":
-		return tui.KeyMsg{Type: tui.KeyDown}
+		return KeyMsg{Type: KeyDown}
 	case "enter":
-		return tui.KeyMsg{Type: tui.KeyEnter}
+		return KeyMsg{Type: KeyEnter}
 	case "esc":
-		return tui.KeyMsg{Type: tui.KeyEscape}
+		return KeyMsg{Type: KeyEscape}
 	default:
-		return tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune(s)}
+		return KeyMsg{Type: KeyRunes, Runes: []rune(s)}
 	}
 }
 
 // collectMsg runs cmd and returns the tea.Msg it produces, or nil.
 // Mirrors how the bubbletea runtime dispatches the returned cmd back
 // through Update — good enough for asserting the "one-shot message"
-// emissions PickedMsg / CancelledMsg.
-func collectMsg(cmd tui.Cmd) tui.Msg {
+// emissions BranchPromptPickedMsg / BranchPromptCancelledMsg.
+func collectMsg(cmd Cmd) Msg {
 	if cmd == nil {
 		return nil
 	}
@@ -35,7 +34,7 @@ func collectMsg(cmd tui.Cmd) tui.Msg {
 }
 
 func TestModel_PickFromCandidates_Enter(t *testing.T) {
-	m := NewModel("acme-api", []string{"main", "master", "trunk"})
+	m := NewBranchPromptModel("acme-api", []string{"main", "master", "trunk"})
 
 	// Arrow down once: cursor on "master".
 	m, _ = m.Update(keyMsg("down"))
@@ -47,9 +46,9 @@ func TestModel_PickFromCandidates_Enter(t *testing.T) {
 	_, cmd := m.Update(keyMsg("enter"))
 	msg := collectMsg(cmd)
 
-	picked, ok := msg.(PickedMsg)
+	picked, ok := msg.(BranchPromptPickedMsg)
 	if !ok {
-		t.Fatalf("expected PickedMsg, got %T", msg)
+		t.Fatalf("expected BranchPromptPickedMsg, got %T", msg)
 	}
 	if picked.Project != "acme-api" || picked.Branch != "master" {
 		t.Errorf("picked = %+v", picked)
@@ -57,7 +56,7 @@ func TestModel_PickFromCandidates_Enter(t *testing.T) {
 }
 
 func TestModel_CursorClamps(t *testing.T) {
-	m := NewModel("x", []string{"main", "master"})
+	m := NewBranchPromptModel("x", []string{"main", "master"})
 
 	// Up at 0 stays at 0.
 	m, _ = m.Update(keyMsg("up"))
@@ -75,7 +74,7 @@ func TestModel_CursorClamps(t *testing.T) {
 }
 
 func TestModel_EnterEmptyCandidates_FlipsToInputMode(t *testing.T) {
-	m := NewModel("x", nil)
+	m := NewBranchPromptModel("x", nil)
 
 	m, _ = m.Update(keyMsg("enter"))
 	if !m.inputMode {
@@ -84,7 +83,7 @@ func TestModel_EnterEmptyCandidates_FlipsToInputMode(t *testing.T) {
 }
 
 func TestModel_IKey_FlipsToInputMode(t *testing.T) {
-	m := NewModel("x", []string{"main"})
+	m := NewBranchPromptModel("x", []string{"main"})
 
 	m, _ = m.Update(keyMsg("i"))
 	if !m.inputMode {
@@ -93,10 +92,10 @@ func TestModel_IKey_FlipsToInputMode(t *testing.T) {
 }
 
 func TestModel_InputMode_EnterEmpty_NoEmit(t *testing.T) {
-	m := NewModel("x", nil)
+	m := NewBranchPromptModel("x", nil)
 	m, _ = m.Update(keyMsg("enter"))
 	// Now in input mode, empty value.
-	var cmd tui.Cmd
+	var cmd Cmd
 	m, cmd = m.Update(keyMsg("enter"))
 	if msg := collectMsg(cmd); msg != nil {
 		t.Fatalf("expected no msg for empty enter, got %T", msg)
@@ -107,7 +106,7 @@ func TestModel_InputMode_EnterEmpty_NoEmit(t *testing.T) {
 }
 
 func TestModel_InputMode_EscExits(t *testing.T) {
-	m := NewModel("x", []string{"main"})
+	m := NewBranchPromptModel("x", []string{"main"})
 	m, _ = m.Update(keyMsg("i"))
 	m, _ = m.Update(keyMsg("esc"))
 	if m.inputMode {
@@ -116,18 +115,18 @@ func TestModel_InputMode_EscExits(t *testing.T) {
 }
 
 func TestModel_InputMode_EnterEmitsPicked(t *testing.T) {
-	m := NewModel("demo", nil)
+	m := NewBranchPromptModel("demo", nil)
 	m, _ = m.Update(keyMsg("enter")) // → inputMode
 	// Simulate typing: feed the runes through the underlying textinput.
-	// textinput.Model handles KeyRunes internally.
+	// textinput.BranchPromptModel handles KeyRunes internally.
 	m, _ = m.Update(keyMsg("develop"))
 
 	_, cmd := m.Update(keyMsg("enter"))
 	msg := collectMsg(cmd)
 
-	picked, ok := msg.(PickedMsg)
+	picked, ok := msg.(BranchPromptPickedMsg)
 	if !ok {
-		t.Fatalf("expected PickedMsg, got %T", msg)
+		t.Fatalf("expected BranchPromptPickedMsg, got %T", msg)
 	}
 	if picked.Project != "demo" || picked.Branch != "develop" {
 		t.Errorf("picked = %+v", picked)
@@ -135,14 +134,14 @@ func TestModel_InputMode_EnterEmitsPicked(t *testing.T) {
 }
 
 func TestModel_Escape_EmitsCancelled(t *testing.T) {
-	m := NewModel("proj", []string{"main", "master"})
-	var cmd tui.Cmd
+	m := NewBranchPromptModel("proj", []string{"main", "master"})
+	var cmd Cmd
 	_, cmd = m.Update(keyMsg("esc"))
 	msg := collectMsg(cmd)
 
-	canceled, ok := msg.(CancelledMsg)
+	canceled, ok := msg.(BranchPromptCancelledMsg)
 	if !ok {
-		t.Fatalf("expected CancelledMsg, got %T", msg)
+		t.Fatalf("expected BranchPromptCancelledMsg, got %T", msg)
 	}
 	if canceled.Project != "proj" {
 		t.Errorf("canceled = %+v", canceled)
@@ -150,7 +149,7 @@ func TestModel_Escape_EmitsCancelled(t *testing.T) {
 }
 
 func TestModel_NonKeyMsg_NoOp(t *testing.T) {
-	m := NewModel("x", []string{"main"})
+	m := NewBranchPromptModel("x", []string{"main"})
 
 	// Random non-key message type.
 	type weirdMsg struct{}
@@ -164,7 +163,7 @@ func TestModel_NonKeyMsg_NoOp(t *testing.T) {
 }
 
 func TestModel_View_ContainsProjectAndCandidates(t *testing.T) {
-	m := NewModel("acme", []string{"main", "trunk"})
+	m := NewBranchPromptModel("acme", []string{"main", "trunk"})
 	out := m.View()
 	if !contains(out, "acme") {
 		t.Error("View missing project name")
@@ -175,7 +174,7 @@ func TestModel_View_ContainsProjectAndCandidates(t *testing.T) {
 }
 
 func TestModel_View_EmptyCandidates_ShowsHint(t *testing.T) {
-	m := NewModel("x", nil)
+	m := NewBranchPromptModel("x", nil)
 	out := m.View()
 	if !contains(out, "No candidates") {
 		t.Error("View missing empty-candidates hint")
@@ -183,7 +182,7 @@ func TestModel_View_EmptyCandidates_ShowsHint(t *testing.T) {
 }
 
 func TestModel_View_InputMode_ShowsInput(t *testing.T) {
-	m := NewModel("x", nil)
+	m := NewBranchPromptModel("x", nil)
 	m, _ = m.Update(keyMsg("enter")) // → input mode
 	out := m.View()
 	if !contains(out, "Enter branch name") {
