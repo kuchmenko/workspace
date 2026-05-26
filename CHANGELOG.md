@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.7.0](https://github.com/kuchmenko/workspace/compare/v0.6.0...v0.7.0) (2026-05-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **worktree:** user-typed branches, no daemon auto-push of projects
+* `ws add <url>` no longer creates a plain checkout. The on-disk shape is now `personal/<name>.bare/` + `personal/<name>/` worktree, identical to what `ws bootstrap` produces. Tooling that specifically expected `personal/<name>/.git/` as a real directory (rather than a worktree pointer file) needs to handle the worktree case.
+* `ws group` CLI subcommands no longer exist. Edit workspace.toml directly or use `ws setup` to manage groups.
+* `ws list` no longer exists. Use `ws status` (with `--filter` if you need a subset).
+* `ws archive`, `ws restore`, and `ws clean` no longer exist. Use `git clean -xfd` or rm -rf for dep caches; worktree-aware archive support is deferred to a future rewrite if ever needed.
+* `ws pulse` no longer exists. No replacement planned.
+
+### Features
+
+* **add:** bubbletea TUI for `ws add` interactive flow ([0b8eba6](https://github.com/kuchmenko/workspace/commit/0b8eba67e43e1a1053e32adccb61575e092fdd60))
+* **add:** cache GitHub repos + stream gather sources progressively ([45c42eb](https://github.com/kuchmenko/workspace/commit/45c42eb5edefaaa8319ae1567a820037ffcf4e7f))
+* **add:** internal/add core with sidecar coordination ([18a9b61](https://github.com/kuchmenko/workspace/commit/18a9b61c2cf05f106730f3c752e4e474f364de7d))
+* **add:** multi-select bulk add in ws add TUI ([3444a75](https://github.com/kuchmenko/workspace/commit/3444a75553ff067e9bb8eb7d490eb53a85d7cd93))
+* **add:** real source implementations — disk, clipboard, github ([0071290](https://github.com/kuchmenko/workspace/commit/0071290746d14c7721770bba26c3ae617428711d))
+* **add:** show repo description on selected row + search across description ([da95294](https://github.com/kuchmenko/workspace/commit/da9529449b78a455041b783aaaa03ce01175f55a))
+* **add:** tree view by org + highlight already-cloned suggestions ([60452d2](https://github.com/kuchmenko/workspace/commit/60452d2d2dc58643a42d9a0f793214b7dc9bed67))
+* **add:** wire add.Run into the live TUI ([731bbb6](https://github.com/kuchmenko/workspace/commit/731bbb6cdf56e9cbf73acd29fac1c2bb63865ec5))
+* **agent:** add favorites and recent-projects quick-nav header ([#46](https://github.com/kuchmenko/workspace/issues/46)) ([32b9032](https://github.com/kuchmenko/workspace/commit/32b9032c9b2526619c838faba76a2e305b5bba24))
+* **agent:** edit project group/category from ws agent TUI ([f52ee42](https://github.com/kuchmenko/workspace/commit/f52ee42ca2abade741b36274ff5e5c3169180496))
+* **config:** introduce BranchMeta schema with legacy autopush migration ([facb2d8](https://github.com/kuchmenko/workspace/commit/facb2d88cc0c78883beb4be377a825f77eff999e))
+* **create:** bootstrap GitHub repos via gh + register + clone in one shot ([4edd025](https://github.com/kuchmenko/workspace/commit/4edd02568b6e5b2a8e5fe4c20a761bde7b881490))
+* **create:** bootstrap GitHub repos via gh + register + clone in one shot ([80b5735](https://github.com/kuchmenko/workspace/commit/80b573556cc430a58bf92fe4477e3535cf533258))
+* **daemon:** coalesce workspace.toml auto-sync commits via push cooldown ([#47](https://github.com/kuchmenko/workspace/issues/47)) ([730b8e7](https://github.com/kuchmenko/workspace/commit/730b8e769de2ebe6e4079979a947bde3b739367f))
+* edit project metadata + bulk add in TUI ([47f01ac](https://github.com/kuchmenko/workspace/commit/47f01ac48f97cc20d7fe7edd360ebc62e1d71ecc))
+* **github:** add Provider interface for suggestion sources ([9d2a009](https://github.com/kuchmenko/workspace/commit/9d2a0092ac9e1c431290f809b8922e54d88ae129))
+* **path:** resolve project name to absolute path for shell substitution ([b491f3c](https://github.com/kuchmenko/workspace/commit/b491f3cc08439301fbadee114dd150bacae39b8b))
+* **path:** resolve project name to absolute path for shell substitution ([7ff4056](https://github.com/kuchmenko/workspace/commit/7ff40563295f4f34c66324fc33cfd8afcf7ad39c)), closes [#28](https://github.com/kuchmenko/workspace/issues/28)
+* remove ws archive / restore / clean ([c383e09](https://github.com/kuchmenko/workspace/commit/c383e099eb344927f0abf1539cc19736ee03c43c))
+* remove ws group CLI subcommands ([34a5857](https://github.com/kuchmenko/workspace/commit/34a58578baa1c17b025592051d6ff01043011703))
+* remove ws list ([e3d304d](https://github.com/kuchmenko/workspace/commit/e3d304d5fb903fe0cf73a6177eae84954913dbe0))
+* remove ws pulse command ([0c5de41](https://github.com/kuchmenko/workspace/commit/0c5de41e5eeba5f53617ff5c1121e7cea8710ae6))
+* **worktree:** user-typed branches, no daemon auto-push of projects ([644a471](https://github.com/kuchmenko/workspace/commit/644a471921920edef45357aa1501b22402c29323))
+* ws add now clones as bare+worktree ([28f1095](https://github.com/kuchmenko/workspace/commit/28f1095ecb433e820f3d933afe7344883dc55037))
+
+
+### Bug Fixes
+
+* **add:** align cursor index with rendered tree order; highlight selected row ([aa6e83b](https://github.com/kuchmenko/workspace/commit/aa6e83b90f473fc86c74f6fe4f29cebabedc02c7))
+* **add:** raise gather timeout to 10s, surface error reason in chip ([45bd31f](https://github.com/kuchmenko/workspace/commit/45bd31faf1929f6526579211b23cadcc250a1cf7))
+* **agent:** mirror CLI's fetch-then-attach flow in TUI worktree create ([27886fd](https://github.com/kuchmenko/workspace/commit/27886fdcdd518e59a4eb3e7ca2e943cf446ba9a6))
+* **github,add:** probe OAuth token, fall back to gh CLI on 401; clearer chip hints ([120ccd2](https://github.com/kuchmenko/workspace/commit/120ccd26efd1255a1684474d3f8846e9d7d5a296))
+* **github:** reject malformed cache entries on read ([05fc4e1](https://github.com/kuchmenko/workspace/commit/05fc4e1cc979ba6d46436275688de5583d48eb38))
+* **reconciler:** use last_pushed_at for orphan detection, not last_active_at ([bac394f](https://github.com/kuchmenko/workspace/commit/bac394f6f0fe552720a1a71963b0cc9347ea3846))
+* **worktree:** re-register existing checkouts; release branch on TUI delete ([8759322](https://github.com/kuchmenko/workspace/commit/875932232d9637ef4cd4f112908a7cd0501cbfd0))
+* **worktree:** refuse to remove main worktree by branch ([5a987d9](https://github.com/kuchmenko/workspace/commit/5a987d9642d2fb053571ac83933ce58400803f58))
+* **worktree:** repair fetch refspec on add; allow dropping orphan without worktree ([7e4844b](https://github.com/kuchmenko/workspace/commit/7e4844b57c726353ea51531d33c65a53ea0203de))
+* **worktree:** stop force-fetch over local branches; persist keep-local ([310d74d](https://github.com/kuchmenko/workspace/commit/310d74d942c8e1b6703da9ad301066b4c11c72a7))
+
 ## [0.6.0](https://github.com/kuchmenko/workspace/compare/v0.5.0...v0.6.0) (2026-04-17)
 
 
