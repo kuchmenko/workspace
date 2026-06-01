@@ -116,6 +116,8 @@ type Runner struct {
 
 	WS *config.Workspace
 
+	ConfigLoadErr error
+
 	Only string
 
 	SkipRemote bool
@@ -141,6 +143,9 @@ func (r *Runner) Run() *Report {
 }
 
 func (r *Runner) projectNames() []string {
+	if r.WS == nil {
+		return nil
+	}
 	var names []string
 	for name, p := range r.WS.Projects {
 		if p.Status != config.StatusActive {
@@ -648,7 +653,7 @@ func (r *Runner) systemChecks() []Finding {
 		checkDaemon(),
 		checkStaleSidecars(r.WsRoot),
 		checkConflicts(r.WsRoot),
-		checkConfig(r.WS),
+		checkConfig(r.WsRoot, r.WS, r.ConfigLoadErr),
 	}
 }
 
@@ -807,7 +812,17 @@ func humanizeAge(d time.Duration) string {
 	}
 }
 
-func checkConfig(ws *config.Workspace) Finding {
+func checkConfig(wsRoot string, ws *config.Workspace, loadErr error) Finding {
+	if loadErr != nil {
+		return Finding{
+			Scope:    "system",
+			Check:    "config",
+			Severity: Error,
+			Message:  loadErr.Error(),
+			FixHint:  "repair duplicated branch keys in workspace.toml",
+			Fix:      func() error { return repairWorkspaceTOML(wsRoot) },
+		}
+	}
 	if ws == nil {
 		return Finding{
 			Scope:    "system",

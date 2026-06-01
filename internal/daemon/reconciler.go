@@ -432,6 +432,10 @@ func (r *Reconciler) syncTOML() (bool, error) {
 	}
 
 	if ahead > 0 || behind > 0 {
+		if err := r.validateWorkspaceTOMLForPush(); err != nil {
+			r.recordTOMLConflict(repoRoot, KindTOMLMerge, err)
+			return false, err
+		}
 		if r.shouldHoldPush(repoRoot, autoSyncMsg, ahead) {
 			r.logger.Printf("reconciler: %s holding auto-sync commit for amend (cooldown %s)", repoRoot, r.pushCooldown)
 		} else if err := git.Push(repoRoot); err != nil {
@@ -448,6 +452,13 @@ func (r *Reconciler) syncTOML() (bool, error) {
 
 	newHead := git.RevParse(repoRoot, "HEAD")
 	return newHead != originalHead, nil
+}
+
+func (r *Reconciler) validateWorkspaceTOMLForPush() error {
+	if _, err := config.Load(r.root); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *Reconciler) shouldHoldPush(repoRoot, autoSyncMsg string, ahead int) bool {

@@ -31,8 +31,9 @@ import (
 )
 
 var (
-	wsRoot string
-	ws     *config.Workspace
+	wsRoot    string
+	ws        *config.Workspace
+	wsLoadErr error
 )
 
 func NewRootCmd() *cobra.Command {
@@ -51,6 +52,18 @@ func NewRootCmd() *cobra.Command {
 				return nil
 			}
 			if cmd.Parent() != nil && cmd.Parent().Name() == "auth" {
+				return nil
+			}
+
+			if cmd.Name() == "doctor" {
+				var err error
+				if wsRoot == "" {
+					wsRoot, err = config.FindRoot()
+					if err != nil {
+						return err
+					}
+				}
+				ws, wsLoadErr = config.Load(wsRoot)
 				return nil
 			}
 
@@ -77,6 +90,7 @@ func NewRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			wsLoadErr = nil
 			return nil
 		},
 
@@ -1022,16 +1036,19 @@ and leaves the action to the user.`,
 			only := ""
 			if len(args) == 1 {
 				only = args[0]
-				if _, ok := ws.Projects[only]; !ok {
-					return fmt.Errorf("unknown project %q", only)
+				if ws != nil {
+					if _, ok := ws.Projects[only]; !ok {
+						return fmt.Errorf("unknown project %q", only)
+					}
 				}
 			}
 
 			r := &Runner{
-				WsRoot:     wsRoot,
-				WS:         ws,
-				Only:       only,
-				SkipRemote: skipRemote,
+				WsRoot:        wsRoot,
+				WS:            ws,
+				ConfigLoadErr: wsLoadErr,
+				Only:          only,
+				SkipRemote:    skipRemote,
 			}
 
 			streaming := !asJSON && !fix
