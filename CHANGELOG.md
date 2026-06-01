@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/kuchmenko/workspace/compare/v0.7.0...v0.8.0) (2026-06-01)
+
+
+### Features
+
+* **explorer:** unified launch sheet for chips, projects, and groups ([a116f5e](https://github.com/kuchmenko/workspace/commit/a116f5ed6dc781be2c0f09e68aa71e931c2e99ab))
+
+
+### Bug Fixes
+
+* **doctor:** repair malformed workspace toml ([#53](https://github.com/kuchmenko/workspace/issues/53)) ([9136ada](https://github.com/kuchmenko/workspace/commit/9136ada7e6278e001973e650866f68a642a9155d))
+
 ## [0.7.0](https://github.com/kuchmenko/workspace/compare/v0.6.0...v0.7.0) (2026-05-26)
 
 
