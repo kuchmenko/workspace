@@ -269,9 +269,8 @@ func setupSyncTOMLRepo(t *testing.T) (string, string) {
 	testutil.RunGit(t, wsRoot, "config", "commit.gpgsign", "false")
 	testutil.RunGit(t, wsRoot, "config", "tag.gpgsign", "false")
 
-	// Seed workspace.toml so syncTOML has a tracked file to watch.
 	tomlPath := filepath.Join(wsRoot, "workspace.toml")
-	if err := os.WriteFile(tomlPath, []byte("# seeded workspace.toml\n"), 0o644); err != nil {
+	if err := os.WriteFile(tomlPath, []byte(seedWorkspaceTOML()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	testutil.RunGit(t, wsRoot, "add", "workspace.toml")
@@ -279,6 +278,47 @@ func setupSyncTOMLRepo(t *testing.T) (string, string) {
 	testutil.RunGit(t, wsRoot, "push", "-u", "origin", "main")
 
 	return wsRoot, bareDir
+}
+
+func TestSyncTOMLRefusesToPushInvalidWorkspaceTOML(t *testing.T) {
+	wsRoot, bareDir := setupSyncTOMLRepo(t)
+	r := NewReconciler(wsRoot, 5*time.Minute, log.New(io.Discard, "", 0))
+
+	remoteHead := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main")
+	appendFile(t, filepath.Join(wsRoot, "workspace.toml"), `
+[[projects.app.branches]]
+  name = "main"
+  machines = ["linux"]
+  name = "feat/stp"
+  machines = ["archlinux"]
+`)
+
+	if _, err := r.syncTOML(); err == nil {
+		t.Fatal("syncTOML should reject invalid workspace.toml")
+	}
+	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != remoteHead {
+		t.Fatalf("invalid workspace.toml was pushed; remote moved from %s to %s", remoteHead, got)
+	}
+}
+
+func seedWorkspaceTOML() string {
+	return `
+[meta]
+version = 1
+root = "/tmp/ws"
+
+[daemon]
+poll_interval = "5m"
+stale_threshold = "30d"
+auto_sync = true
+watch_dirs = true
+
+[projects.app]
+remote = "git@example.com:app.git"
+path = "personal/app"
+status = "active"
+category = "personal"
+`
 }
 
 func appendFile(t *testing.T, path, s string) {

@@ -161,7 +161,7 @@ func (s *sheet) applyFilter() {
 	}
 
 	// Re-add worktree headers whose sessions matched.
-	var lastWt int = -1
+	lastWt := -1
 	for i, r := range s.rows {
 		if r.kind == rowWorktree {
 			lastWt = i
@@ -475,13 +475,6 @@ func favoriteLabel(p *Project) string {
 
 // ---------- update ----------
 
-type sheetResult struct {
-	closeSheet  bool   // pop this sheet (esc / dispatch)
-	closeAll    bool   // pop entire stack back to tree
-	openSearch  bool   // exit sheet stack and open global flash-search
-	openSubProj *Project
-}
-
 func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if s.filterMode {
 		return s.updateFilterMode(m, msg)
@@ -619,10 +612,6 @@ func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 	}
 	m.sheet = nil
 	return m, nil
-}
-
-func (s *sheet) closeAll(m *Model) {
-	m.sheet = nil
 }
 
 // ---------- dispatch ----------
