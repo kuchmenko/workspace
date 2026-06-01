@@ -154,7 +154,7 @@ func TestCheckConfig_Valid(t *testing.T) {
 			StaleThreshold: "30d",
 		},
 	}
-	f := checkConfig(ws)
+	f := checkConfig(t.TempDir(), ws, nil)
 	if f.Severity != OK {
 		t.Fatalf("Severity=%s want OK (%s)", f.Severity, f.Message)
 	}
@@ -173,7 +173,7 @@ func TestCheckConfig_Invalid(t *testing.T) {
 			PollInterval: "not-a-duration",
 		},
 	}
-	f := checkConfig(ws)
+	f := checkConfig(t.TempDir(), ws, nil)
 	if f.Severity != Error {
 		t.Fatalf("Severity=%s want Error", f.Severity)
 	}

@@ -545,7 +545,7 @@ for future work:
 
 This project ships a tiered benchmark protocol designed to keep the binary
 fast (cold-start) and resource-efficient (memory, allocations) without CI
-infrastructure. The agent is the gate.
+infrastructure. It is a human engineering workflow, not an agent gate.
 
 ## Three tiers
 
@@ -613,91 +613,15 @@ no "switch to hard" command — only the activation point.
 
 Read top to bottom; follow in order.
 
-## Before opening a PR (mandatory)
+## Performance benchmarks
 
-1. **Run `just bench-pr-gate`.** Always. Even for "trivial" changes — TOML
-   tweaks have surprised us before. The gate runs L1, compares against the
-   current machine's baseline, writes `bench/results/<machine>/pr-block.md`
-   with a Performance section.
-
-2. **Read the gate's exit code:**
-   - Exit 0, no regression: paste `pr-block.md` verbatim into PR body
-     under `## Performance`. Proceed with `gh pr create`.
-   - Exit 0, regression visible (soft mode): same as above. Mention the
-     regression explicitly in the PR description's Solution section if
-     it's intentional, or in `## Lessons` if a surprise.
-   - Exit 1 (hard mode regression): **stop**. Either fix the regression
-     or escalate to the human with the gate output. Do not proceed
-     with `--bench-skip` unless the human authorized it for this PR.
-
-3. **`--bench-skip` justification (if used):** include in the PR body a
-   `## Performance` section with `bench-skip: <reason>` and a follow-up
-   issue link or TODO. Skipping silently is a forbidden action.
-
-## After merging a perf-relevant PR (mandatory)
-
-If the PR was specifically about performance — optimization, refactor of
-a hot path, dependency bump that touches reconciler or config — refresh
-the baseline:
-
-```bash
-git checkout main && git pull
-just bench-baseline l1            # or `all` for L1+L2
-git add bench/baseline/<machine>
-git commit -m "chore(bench): refresh baseline after <PR title>"
-git push
-```
-
-If the PR was not perf-relevant, do nothing — baselines are sticky on
-purpose.
-
-## When adding new code on a hot path
-
-If the new code lives in any of these packages, add at least one
-microbenchmark in a `*_bench_test.go` file:
-
-- `internal/config` — TOML load/save, validation, branch metadata helpers
-- `internal/cli` — command construction, scan walk, status renderers
-- `internal/conflict` — conflict store record/match
-- `internal/git` — porcelain parsers, fetch logic
-- `internal/clone` — bare/worktree materialize path
-- `cmd/ws` — anything that affects init()
-
-Bench naming convention: `BenchmarkFooSmall` / `FooMedium` / `FooLarge`
-when the input scales meaningfully (e.g. workspace size). Otherwise just
-`BenchmarkFoo`.
-
-## When NOT to add a benchmark
-
-- TUI render code (bubbletea Update loops) — human-timescale, irrelevant
-- One-shot interactive commands (setup, auth) — not on hot paths
-- Test-only helpers — defeats the point
-
-## Threshold violations — diagnostic playbook
-
-When `bench-pr-gate` reports a regression:
-
-1. Re-run with higher count to rule out noise:
-   `BENCH_COUNT=20 just bench-pr-gate`
-2. Profile the regressed function:
-   `go test -bench=BenchmarkX -cpuprofile=cpu.out -memprofile=mem.out -benchtime=10s ./internal/<pkg>`
-   `go tool pprof -http=: cpu.out`  → flame graph
-3. If alloc-bound: `go tool pprof -alloc_objects -http=: mem.out`
-4. Common causes for cold-start regressions:
-   - new package imported on init() path — check `GODEBUG=inittrace=1`
-   - TOML schema added a field with non-zero default → larger Marshal
-   - new validation rule with O(N²) scan instead of map lookup
-   - regex compiled inside loop instead of `var pattern = regexp.MustCompile`
+Agents do not run `just bench-pr-gate`, refresh baselines, or add benchmark
+requirements unless the human asks for that explicitly. Benchmarks are a
+human engineering workflow.
 
 ## When in doubt
 
-Do not invent. Ask the human:
-- "Is this regression intentional?" — when the change is functional and
-  the perf hit looks justified.
-- "Refresh baseline now?" — when uncertain whether the PR is
-  perf-relevant.
-- "Activate gate now?" — when the project hasn't activated yet but the
-  PR is foundational enough that establishing a baseline matters.
+Do not invent. Ask the human when a decision changes scope, risk, or architecture.
 
 ## Mechanical rules — apply proactively, no permission needed
 
