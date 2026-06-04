@@ -20,12 +20,8 @@ case "$OS" in
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
-# Get latest release tag
-if command -v gh >/dev/null 2>&1; then
-  TAG="$(gh api "/repos/$REPO/releases/latest" --jq '.tag_name')"
-else
-  TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
-fi
+# Get latest release tag from Codeberg
+TAG="$(curl -fsSL "https://codeberg.org/api/v1/repos/$REPO/releases/latest" | grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4)"
 
 if [ -z "$TAG" ]; then
   echo "Failed to fetch latest release" >&2
@@ -33,7 +29,7 @@ if [ -z "$TAG" ]; then
 fi
 
 ASSET="ws-${OS}-${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+URL="https://codeberg.org/$REPO/releases/download/$TAG/$ASSET"
 
 echo "Installing $BINARY $TAG ($OS/$ARCH)..."
 
