@@ -22,7 +22,7 @@ jobs:
       - uses: https://code.forgejo.org/actions/setup-go@v6
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
       - run: git config --global --add safe.directory '*'
 
@@ -67,18 +67,9 @@ jobs:
           git config --global init.defaultBranch main
           go test -race -timeout 5m -covermode=atomic -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out | tail -1
-          go tool cover -html=coverage.out -o coverage.html
 
       - name: govulncheck
         run: |
           set -eo pipefail
           go install golang.org/x/vuln/cmd/govulncheck@latest
           "$(go env GOPATH)/bin/govulncheck" ./...
-
-      - name: upload coverage
-        if: always()
-        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.html
-          retention-days: 14
