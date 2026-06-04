@@ -1,14 +1,18 @@
 name: Release
 
+# Intentional, manual releases via the "Run workflow" button (workflow_dispatch).
+# svu computes the next semver from conventional commits since the last tag — no
+# hand-picked version — then GoReleaser cross-compiles and publishes the Codeberg
+# release. Replaces release-please (GitHub-only). Set dry_run to compute the
+# version and build a snapshot without tagging or publishing.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute version + build snapshot, do not tag or publish"
+        type: boolean
+        default: false
 
-# GoReleaser cross-compiles linux/darwin amd64/arm64, builds the changelog from
-# commits, creates the Codeberg release and uploads the tar.gz + checksums.
-# GITEA_TOKEN is the built-in per-job token; GORELEASER_FORCE_TOKEN=gitea makes
-# GoReleaser target Codeberg instead of GitHub.
 jobs:
   release:
     runs-on: linux-amd64
@@ -19,12 +23,39 @@ jobs:
       - uses: https://code.forgejo.org/actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - uses: https://code.forgejo.org/actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: false
 
-      - name: GoReleaser
+      - name: install svu
+        run: go install github.com/caarlos0/svu/v3@v3.4.1
+
+      - name: compute next version
+        id: ver
+        run: |
+          set -eo pipefail
+          NEXT="$("$(go env GOPATH)/bin/svu" next)"
+          echo "next=$NEXT" | tee -a "$GITHUB_OUTPUT"
+
+      - name: tag and push
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          set -eo pipefail
+          NEXT="${{ steps.ver.outputs.next }}"
+          if git rev-parse "$NEXT" >/dev/null 2>&1; then
+            echo "tag $NEXT already exists — no releasable commits since last tag"
+            exit 1
+          fi
+          git config user.name "forgejo-actions"
+          git config user.email "forgejo-actions@noreply.codeberg.org"
+          git tag -a "$NEXT" -m "$NEXT"
+          git push origin "$NEXT"
+
+      - name: goreleaser (publish)
+        if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: https://github.com/goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
@@ -32,3 +63,10 @@ jobs:
         env:
           GORELEASER_FORCE_TOKEN: gitea
           GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: goreleaser (snapshot, no publish)
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        uses: https://github.com/goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
