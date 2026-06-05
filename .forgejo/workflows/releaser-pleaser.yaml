@@ -7,8 +7,6 @@ name: releaser-pleaser
 on:
   push:
     branches: [main]
-  pull_request_target:
-    types: [edited, labeled, unlabeled]
 
 concurrency:
   group: releaser-pleaser
