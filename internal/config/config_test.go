@@ -653,3 +653,59 @@ func TestAgentConfig_OmitWhenEmpty(t *testing.T) {
 		t.Errorf("empty AgentConfig should omit the [agent] block entirely:\n%s", body)
 	}
 }
+
+func TestMirrors_RoundTrip_OmitWhenEmpty(t *testing.T) {
+	const src = `
+[meta]
+version = 1
+root = "/ws"
+
+[daemon]
+poll_interval = "5m"
+stale_threshold = "30d"
+auto_sync = true
+watch_dirs = true
+
+[projects.mirrored]
+remote = "git@codeberg.org:me/mirrored.git"
+path = "personal/mirrored"
+status = "active"
+category = "personal"
+
+[projects.mirrored.mirrors]
+github = "git@github.com:me/mirrored.git"
+
+[projects.plain]
+remote = "git@codeberg.org:me/plain.git"
+path = "personal/plain"
+status = "active"
+category = "personal"
+`
+	dir := writeWS(t, src)
+	ws, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := map[string]string{"github": "git@github.com:me/mirrored.git"}
+	if !reflect.DeepEqual(ws.Projects["mirrored"].Mirrors, want) {
+		t.Errorf("mirrored.Mirrors = %v, want %v", ws.Projects["mirrored"].Mirrors, want)
+	}
+	if len(ws.Projects["plain"].Mirrors) != 0 {
+		t.Errorf("plain.Mirrors should be empty, got %v", ws.Projects["plain"].Mirrors)
+	}
+
+	if err := Save(dir, ws); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	ws2, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load after Save: %v", err)
+	}
+	if !reflect.DeepEqual(ws2.Projects["mirrored"].Mirrors, want) {
+		t.Errorf("Mirrors lost in round-trip: %v", ws2.Projects["mirrored"].Mirrors)
+	}
+	plainBlock := isolateProject(t, readWS(t, dir), "plain")
+	if strings.Contains(plainBlock, "mirrors") {
+		t.Errorf("plain block should omit `mirrors` when empty:\n%s", plainBlock)
+	}
+}

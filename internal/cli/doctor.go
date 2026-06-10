@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/sidecar"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/sidecar"
 )
 
 type Severity int
@@ -355,6 +355,7 @@ func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
 		r.checkFetchRefspec(name, barePath),
 		r.checkRemoteURL(name, proj, barePath),
 	)
+	findings = append(findings, r.checkMirrorRemotes(name, proj, barePath)...)
 	if !r.SkipRemote {
 		findings = append(findings, r.checkRemoteReach(name, barePath))
 	}
@@ -427,6 +428,66 @@ func (r *Runner) checkFetchRefspec(name, barePath string) Finding {
 			return git.SetFetchRefspec(barePath)
 		},
 	}
+}
+
+func (r *Runner) checkMirrorRemotes(name string, proj config.Project, barePath string) []Finding {
+	if len(proj.Mirrors) == 0 {
+		return nil
+	}
+	mirrors := make([]string, 0, len(proj.Mirrors))
+	for m := range proj.Mirrors {
+		mirrors = append(mirrors, m)
+	}
+	sort.Strings(mirrors)
+
+	var findings []Finding
+	for _, mirror := range mirrors {
+		url := proj.Mirrors[mirror]
+		if git.MirrorRemoteOK(barePath, mirror, url) {
+			findings = append(findings, Finding{
+				Scope:    name,
+				Check:    "mirror:" + mirror,
+				Severity: OK,
+				Message:  "mirror remote configured",
+			})
+			continue
+		}
+		m, u := mirror, url
+		findings = append(findings, Finding{
+			Scope:    name,
+			Check:    "mirror:" + mirror,
+			Severity: Error,
+			Message:  fmt.Sprintf("mirror remote %q missing or misconfigured (want %s)", mirror, url),
+			FixHint:  "install the mirror remote with skipFetchAll",
+			Fix: func() error {
+				return git.EnsureMirrorRemote(barePath, m, u)
+			},
+		})
+	}
+
+	remotes, err := git.ListRemotes(barePath)
+	if err != nil {
+		return findings
+	}
+	var extra []string
+	for _, rem := range remotes {
+		if rem == "origin" {
+			continue
+		}
+		if _, declared := proj.Mirrors[rem]; !declared {
+			extra = append(extra, rem)
+		}
+	}
+	if len(extra) > 0 {
+		findings = append(findings, Finding{
+			Scope:    name,
+			Check:    "mirror:extra",
+			Severity: Warn,
+			Message:  fmt.Sprintf("remotes not declared in workspace.toml: %s", strings.Join(extra, ", ")),
+			FixHint:  fmt.Sprintf("declare under [projects.%s.mirrors] or `git remote remove <name>` in the bare repo", name),
+		})
+	}
+	return findings
 }
 
 func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath string) Finding {

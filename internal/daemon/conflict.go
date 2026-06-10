@@ -48,6 +48,10 @@ const (
 	KindCloneFailed     ConflictKind = "clone-failed"
 	KindBranchDuplicate ConflictKind = "branch-duplicate"
 	KindBranchOrphan    ConflictKind = "branch-orphan"
+
+	// KindMirrorPushFailed reuses the Branch field for the mirror remote
+	// name so the store dedupes per (project, mirror) pair.
+	KindMirrorPushFailed ConflictKind = "mirror-push-failed"
 )
 
 type Conflict struct {

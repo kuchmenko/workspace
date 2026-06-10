@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -21,15 +23,16 @@ func newSyncCmd() *cobra.Command {
 		Short: "Run one reconciler tick in the foreground",
 		Annotations: map[string]string{
 			"capability": "sync",
-			"agent:when": "Manually trigger a full sync cycle: push/pull workspace.toml, fetch all projects, ff-pull main worktrees, refresh last_active_*, surface branch-orphan",
+			"agent:when": "Manually trigger a full sync cycle: push/pull workspace.toml, fetch all projects, push mirror remotes, ff-pull main worktrees, refresh last_active_*, surface branch-orphan",
 		},
 		Long: `Synchronize this workspace right now without waiting for the daemon.
 
 Performs the same work as a single daemon tick: commits and pushes
 workspace.toml changes, pulls remote workspace.toml changes, fetches every
-active project's bare repo, fast-forwards the main worktree when safe,
-refreshes last_active_* for branches with local-ahead commits, and detects
-origin-deleted branches as branch-orphan conflicts.
+active project's bare repo, pushes origin's refs to declared mirror remotes,
+fast-forwards the main worktree when safe, refreshes last_active_* for
+branches with local-ahead commits, and detects origin-deleted branches as
+branch-orphan conflicts.
 
 Project branches are never auto-pushed by the reconciler — that's an
 explicit user action via 'ws worktree push'.
@@ -178,6 +181,8 @@ func handleConflict(c daemon.Conflict) (bool, error) {
 		return resolvePathBlocked(c)
 	case daemon.KindCloneFailed:
 		return resolveCloneFailed(c)
+	case daemon.KindMirrorPushFailed:
+		return resolveMirrorPushFailed(c)
 	}
 	fmt.Println("Unknown conflict kind. Press enter to continue.")
 	_ = readLine()
@@ -260,6 +265,50 @@ func editWorkspaceForDuplicate(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
+func resolveMirrorPushFailed(c daemon.Conflict) (bool, error) {
+	var details struct {
+		Mirror string `json:"mirror"`
+		URL    string `json:"url"`
+	}
+	_ = json.Unmarshal(c.Details, &details)
+	if details.Mirror == "" {
+		details.Mirror = c.Branch
+	}
+	fmt.Printf("mirror: %s → %s\n", details.Mirror, details.URL)
+
+	barePath := findProjectBare(c)
+	if barePath == "" {
+		fmt.Println("cannot locate bare repo for this project; fix manually and re-run `ws sync`.")
+		fmt.Println("Press enter to continue.")
+		_ = readLine()
+		return false, nil
+	}
+	return runPromptLoop([]promptAction{
+		{"r", "retry push to the mirror now",
+			func() (bool, error) {
+				if err := git.PushMirror(barePath, details.Mirror); err != nil {
+					fmt.Printf("push failed: %v\n", err)
+					return false, nil
+				}
+				fmt.Println("mirror push succeeded")
+				return true, nil
+			}},
+		{"o", "open shell in bare repo — inspect/fix manually",
+			func() (bool, error) { return shellAndConfirm(barePath) }},
+	}, "k", "")
+}
+
+func findProjectBare(c daemon.Conflict) string {
+	if ws == nil || c.Project == "" {
+		return ""
+	}
+	proj, ok := ws.Projects[c.Project]
+	if !ok {
+		return ""
+	}
+	return layout.BarePath(filepath.Join(c.Workspace, proj.Path))
+}
+
 func resolveBranchOrphan(c daemon.Conflict) (bool, error) {
 	wtPath := findOrphanWorktree(c)
 	dropLabel := "drop [[branches]] entry — no local worktree on this machine"
@@ -275,14 +324,10 @@ func resolveBranchOrphan(c daemon.Conflict) (bool, error) {
 }
 
 func findOrphanWorktree(c daemon.Conflict) string {
-	if ws == nil || c.Project == "" {
+	barePath := findProjectBare(c)
+	if barePath == "" {
 		return ""
 	}
-	proj, ok := ws.Projects[c.Project]
-	if !ok {
-		return ""
-	}
-	barePath := layout.BarePath(filepath.Join(c.Workspace, proj.Path))
 	return locateWorktreeForBranch(barePath, c.Branch)
 }
 

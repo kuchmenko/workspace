@@ -5,15 +5,15 @@
 # Usage: compare.sh <layer> [pr-output-file]
 #   layer: L1 | L2 (L3 is advisory; this script doesn't gate L3)
 #
-# Exit codes (consumed by bench-pr-gate.sh):
-#   0  within thresholds — gate clean, comparison happened
+# Exit codes:
+#   0  within thresholds — comparison happened
 #   1  regression beyond threshold (and p < p_max)
 #   2  unusable invocation (bad args, PR result file missing/empty)
 #   3  no baseline for this machine — advisory, NOTHING was evaluated
 #
-# Why distinct codes: a missing baseline must NOT look like a clean run
-# to the gate. Otherwise on any new machine the PR body would claim
-# "✓ within thresholds" while no thresholds were actually checked.
+# Why distinct codes: a missing baseline must NOT look like a clean run.
+# Otherwise on any new machine the output would claim "✓ within
+# thresholds" while no thresholds were actually checked.
 
 . "$(dirname "$0")/lib.sh"
 ensure_benchstat

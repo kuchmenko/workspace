@@ -535,12 +535,13 @@ const (
 )
 
 type Project struct {
-	Remote        string   `toml:"remote"`
-	Path          string   `toml:"path"`
-	Status        Status   `toml:"status"`
-	Category      Category `toml:"category"`
-	Group         string   `toml:"group,omitempty"`
-	DefaultBranch string   `toml:"default_branch,omitempty"`
+	Remote        string            `toml:"remote"`
+	Mirrors       map[string]string `toml:"mirrors,omitempty"`
+	Path          string            `toml:"path"`
+	Status        Status            `toml:"status"`
+	Category      Category          `toml:"category"`
+	Group         string            `toml:"group,omitempty"`
+	DefaultBranch string            `toml:"default_branch,omitempty"`
 
 	AutoSync *bool `toml:"auto_sync,omitempty"`
 
