@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/tui"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 type viewMode int

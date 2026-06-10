@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/tui"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 func newTestModel(p *Project, wts []Worktree, sessByPath map[string][]Session) *Model {

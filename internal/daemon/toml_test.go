@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/testutil"
+	"codeberg.org/kuchmenko/workspace/internal/testutil"
 )
 
 // TestSyncTOMLAmendCooldownSquashesAutoSyncCommits is the regression test for

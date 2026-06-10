@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/repo"
-	"github.com/kuchmenko/workspace/internal/testutil"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/repo"
+	"codeberg.org/kuchmenko/workspace/internal/testutil"
 )
 
 // TestMigrateProject_HappyPath is the headline regression test for the

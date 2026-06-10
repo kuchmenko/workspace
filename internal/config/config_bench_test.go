@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/config"
 )
 
 // BenchmarkLoad measures TOML decode + post-decode normalization

@@ -149,8 +149,8 @@ linters:
         - (*net.UnixConn).SetReadDeadline
         - (net.Conn).SetReadDeadline
         # Daemon IPC client teardown: best-effort.
-        - (*github.com/kuchmenko/workspace/internal/daemon.Client).Stop
-        - (*github.com/kuchmenko/workspace/internal/daemon.Client).Notify
+        - (*codeberg.org/kuchmenko/workspace/internal/daemon.Client).Stop
+        - (*codeberg.org/kuchmenko/workspace/internal/daemon.Client).Notify
 
     govet:
       # `enable-all` would pull in shadow + fieldalignment which are

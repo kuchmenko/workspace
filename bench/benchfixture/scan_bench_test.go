@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kuchmenko/workspace/bench/benchfixture"
+	"codeberg.org/kuchmenko/workspace/bench/benchfixture"
 )
 
 // BenchmarkScanWalk exercises the directory walk that powers `ws scan`,

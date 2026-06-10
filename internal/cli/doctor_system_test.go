@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/sidecar"
 	"github.com/BurntSushi/toml"
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/daemon"
-	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 // isolateState redirects $XDG_STATE_HOME and $XDG_CONFIG_HOME to temp

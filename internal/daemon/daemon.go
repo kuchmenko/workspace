@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/github"
 	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/github"
 )
 
 type Daemon struct {

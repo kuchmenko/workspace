@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/tui"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 func (m *Model) renderListRows(listW int, dimAll bool) []string {

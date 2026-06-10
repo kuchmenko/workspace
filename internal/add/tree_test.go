@@ -3,7 +3,7 @@ package add
 import (
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/config"
 )
 
 func TestGroupKey(t *testing.T) {
