@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/bench/benchfixture"
-	"github.com/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/bench/benchfixture"
+	"codeberg.org/kuchmenko/workspace/internal/daemon"
 )
 
 // BenchmarkReconcilerTick exercises a single reconciler.Tick over a

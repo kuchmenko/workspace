@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/github"
+	"codeberg.org/kuchmenko/workspace/internal/github"
 )
 
 // fakeProvider is a minimal github.Provider for GitHubSource tests.

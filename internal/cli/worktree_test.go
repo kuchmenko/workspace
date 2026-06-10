@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/testutil"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/testutil"
 )
 
 func TestValidateBranchName_AcceptsValidNames(t *testing.T) {

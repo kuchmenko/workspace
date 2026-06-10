@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/config"
 )
 
 // fixtureWorkspace builds a Workspace registry with two projects whose

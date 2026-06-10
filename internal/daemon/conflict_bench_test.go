@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/daemon"
 )
 
 // BenchmarkRecord_Fresh measures the cost of inserting a brand-new

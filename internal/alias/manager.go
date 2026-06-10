@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/tui"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 type step int

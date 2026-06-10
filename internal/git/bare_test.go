@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/testutil"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/testutil"
 )
 
 // TestHasFetchRefspec_AbsentAfterCloneBare captures the baseline behavior

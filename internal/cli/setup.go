@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	gh "github.com/kuchmenko/workspace/internal/github"
-	"github.com/kuchmenko/workspace/internal/tui"
+	gh "codeberg.org/kuchmenko/workspace/internal/github"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 type step int

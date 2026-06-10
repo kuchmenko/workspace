@@ -1,18 +1,18 @@
 PASS
-ok  	github.com/kuchmenko/workspace/internal/add	0.003s
+ok  	codeberg.org/kuchmenko/workspace/internal/add	0.003s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/agent	0.002s
-?   	github.com/kuchmenko/workspace/internal/alias	[no test files]
-?   	github.com/kuchmenko/workspace/internal/aliasmgr	[no test files]
-?   	github.com/kuchmenko/workspace/internal/auth	[no test files]
-?   	github.com/kuchmenko/workspace/internal/benchfixture	[no test files]
+ok  	codeberg.org/kuchmenko/workspace/internal/agent	0.002s
+?   	codeberg.org/kuchmenko/workspace/internal/alias	[no test files]
+?   	codeberg.org/kuchmenko/workspace/internal/aliasmgr	[no test files]
+?   	codeberg.org/kuchmenko/workspace/internal/auth	[no test files]
+?   	codeberg.org/kuchmenko/workspace/internal/benchfixture	[no test files]
 PASS
-ok  	github.com/kuchmenko/workspace/internal/bootstrap	0.001s
+ok  	codeberg.org/kuchmenko/workspace/internal/bootstrap	0.001s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/branchprompt	0.002s
+ok  	codeberg.org/kuchmenko/workspace/internal/branchprompt	0.002s
 goos: linux
 goarch: arm64
-pkg: github.com/kuchmenko/workspace/internal/cli
+pkg: codeberg.org/kuchmenko/workspace/internal/cli
 BenchmarkNewRootCmd-10      	   13882	     90265 ns/op	   61201 B/op	     355 allocs/op
 BenchmarkNewRootCmd-10      	   13347	     85753 ns/op	   61201 B/op	     355 allocs/op
 BenchmarkNewRootCmd-10      	   15612	    100633 ns/op	   61201 B/op	     355 allocs/op
@@ -34,14 +34,14 @@ BenchmarkRootCmd_Help-10    	    8350	    173064 ns/op	   84324 B/op	     626 al
 BenchmarkRootCmd_Help-10    	    7752	    156108 ns/op	   84327 B/op	     626 allocs/op
 BenchmarkRootCmd_Help-10    	    8090	    162731 ns/op	   84331 B/op	     626 allocs/op
 PASS
-ok  	github.com/kuchmenko/workspace/internal/cli	33.817s
+ok  	codeberg.org/kuchmenko/workspace/internal/cli	33.817s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/clipboard	0.002s
+ok  	codeberg.org/kuchmenko/workspace/internal/clipboard	0.002s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/clone	0.002s
+ok  	codeberg.org/kuchmenko/workspace/internal/clone	0.002s
 goos: linux
 goarch: arm64
-pkg: github.com/kuchmenko/workspace/internal/config
+pkg: codeberg.org/kuchmenko/workspace/internal/config
 BenchmarkLoad_Small-10            	   10000	    263419 ns/op	   71067 B/op	     782 allocs/op
 BenchmarkLoad_Small-10            	    4506	    279978 ns/op	   71065 B/op	     782 allocs/op
 BenchmarkLoad_Small-10            	    5641	    271580 ns/op	   71066 B/op	     782 allocs/op
@@ -153,10 +153,10 @@ BenchmarkClaimBranch_Update-10    	 3978891	       274.3 ns/op	      24 B/op	   
 BenchmarkClaimBranch_Update-10    	 5023286	       258.9 ns/op	      24 B/op	       1 allocs/op
 BenchmarkClaimBranch_Update-10    	 4375951	       268.5 ns/op	      24 B/op	       1 allocs/op
 PASS
-ok  	github.com/kuchmenko/workspace/internal/config	178.772s
+ok  	codeberg.org/kuchmenko/workspace/internal/config	178.772s
 goos: linux
 goarch: arm64
-pkg: github.com/kuchmenko/workspace/internal/conflict
+pkg: codeberg.org/kuchmenko/workspace/internal/conflict
 BenchmarkRecord_Fresh-10                 	   25670	     47323 ns/op	    2738 B/op	      31 allocs/op
 BenchmarkRecord_Fresh-10                 	   31076	     40758 ns/op	    2768 B/op	      30 allocs/op
 BenchmarkRecord_Fresh-10                 	   32251	     38389 ns/op	    2768 B/op	      30 allocs/op
@@ -208,24 +208,24 @@ BenchmarkList_100-10                     	    6489	    262602 ns/op	   74193 B/o
 BenchmarkList_100-10                     	    5616	    244108 ns/op	   74193 B/op	     521 allocs/op
 BenchmarkList_100-10                     	    5832	    232969 ns/op	   74193 B/op	     521 allocs/op
 PASS
-ok  	github.com/kuchmenko/workspace/internal/conflict	114.698s
+ok  	codeberg.org/kuchmenko/workspace/internal/conflict	114.698s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/create	0.008s
-?   	github.com/kuchmenko/workspace/internal/daemon	[no test files]
+ok  	codeberg.org/kuchmenko/workspace/internal/create	0.008s
+?   	codeberg.org/kuchmenko/workspace/internal/daemon	[no test files]
 PASS
-ok  	github.com/kuchmenko/workspace/internal/docs	0.003s
+ok  	codeberg.org/kuchmenko/workspace/internal/docs	0.003s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/doctor	0.006s
+ok  	codeberg.org/kuchmenko/workspace/internal/doctor	0.006s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/git	0.004s
+ok  	codeberg.org/kuchmenko/workspace/internal/git	0.004s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/github	0.003s
+ok  	codeberg.org/kuchmenko/workspace/internal/github	0.003s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/layout	0.002s
+ok  	codeberg.org/kuchmenko/workspace/internal/layout	0.002s
 PASS
-ok  	github.com/kuchmenko/workspace/internal/migrate	0.001s
-?   	github.com/kuchmenko/workspace/internal/setup	[no test files]
+ok  	codeberg.org/kuchmenko/workspace/internal/migrate	0.001s
+?   	codeberg.org/kuchmenko/workspace/internal/setup	[no test files]
 PASS
-ok  	github.com/kuchmenko/workspace/internal/sidecar	0.001s
-?   	github.com/kuchmenko/workspace/internal/testutil	[no test files]
-?   	github.com/kuchmenko/workspace/cmd/ws	[no test files]
+ok  	codeberg.org/kuchmenko/workspace/internal/sidecar	0.001s
+?   	codeberg.org/kuchmenko/workspace/internal/testutil	[no test files]
+?   	codeberg.org/kuchmenko/workspace/cmd/ws	[no test files]

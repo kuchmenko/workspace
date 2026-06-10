@@ -11,10 +11,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/github"
-	"github.com/kuchmenko/workspace/internal/tui"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/github"
+	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
 func (m AddModel) updateManual(msg tui.Msg) (tui.Model, tui.Cmd) {

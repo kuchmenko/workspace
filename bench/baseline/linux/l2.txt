@@ -1,6 +1,6 @@
 goos: linux
 goarch: arm64
-pkg: github.com/kuchmenko/workspace/internal/benchfixture
+pkg: codeberg.org/kuchmenko/workspace/internal/benchfixture
 BenchmarkReconcilerTickPhase2_Small-10     	      75	  65899525 ns/op	 1769993 B/op	    4893 allocs/op
 BenchmarkReconcilerTickPhase2_Small-10     	      81	  43427555 ns/op	 1768416 B/op	    4892 allocs/op
 BenchmarkReconcilerTickPhase2_Small-10     	     100	  42971973 ns/op	 1768361 B/op	    4891 allocs/op
@@ -32,4 +32,4 @@ BenchmarkScanWalk_Large-10                 	   30721	    156041 ns/op	   49517 B
 BenchmarkScanWalk_Large-10                 	   34201	    105581 ns/op	   49504 B/op	     814 allocs/op
 BenchmarkScanWalk_Large-10                 	   18289	    217438 ns/op	   49516 B/op	     814 allocs/op
 PASS
-ok  	github.com/kuchmenko/workspace/internal/benchfixture	324.583s
+ok  	codeberg.org/kuchmenko/workspace/internal/benchfixture	324.583s
