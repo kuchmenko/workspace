@@ -274,6 +274,13 @@ func setupSyncTOMLRepo(t *testing.T) (string, string) {
 		t.Fatal(err)
 	}
 	testutil.RunGit(t, wsRoot, "add", "workspace.toml")
+
+	attrPath := filepath.Join(wsRoot, ".gitattributes")
+	if err := os.WriteFile(attrPath, []byte("workspace.toml merge=union\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.RunGit(t, wsRoot, "add", ".gitattributes")
+
 	testutil.RunGit(t, wsRoot, "commit", "-m", "seed workspace.toml")
 	testutil.RunGit(t, wsRoot, "push", "-u", "origin", "main")
 

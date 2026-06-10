@@ -497,6 +497,7 @@ func (r *Reconciler) syncTOML() (bool, error) {
 			return false, err
 		}
 		_ = r.clearTOMLConflicts()
+		ahead, behind, _ = git.AheadBehind(repoRoot, branch)
 	}
 
 	if ahead > 0 || behind > 0 {

@@ -490,8 +490,13 @@ func findWorktreePath(workspace, project, branch string) (string, error) {
 		return "", fmt.Errorf("project %s not in workspace.toml", project)
 	}
 	mainPath := workspace + string(os.PathSeparator) + proj.Path
-
-	_ = branch
+	if branch == "" {
+		return mainPath, nil
+	}
+	barePath := layout.BarePath(mainPath)
+	if wtPath := locateWorktreeForBranch(barePath, branch); wtPath != "" {
+		return wtPath, nil
+	}
 	return mainPath, nil
 }
 

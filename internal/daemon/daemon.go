@@ -507,8 +507,19 @@ func ensureUnionMerge(repoRoot, tomlAbs string) error {
 	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
 		_, _ = f.WriteString("\n")
 	}
-	_, err = f.WriteString(wantLine + "\n")
-	return err
+	if _, err := f.WriteString(wantLine + "\n"); err != nil {
+		return err
+	}
+	_ = stageAndCommitAttr(repoRoot, attrPath)
+	return nil
+}
+
+func stageAndCommitAttr(repoRoot, attrPath string) error {
+	if err := runIn(repoRoot, "git", "add", attrPath); err != nil {
+		return err
+	}
+	_ = runIn(repoRoot, "git", "commit", "-m", "chore: add union merge driver for workspace.toml")
+	return nil
 }
 
 func loadMachineName() string {
