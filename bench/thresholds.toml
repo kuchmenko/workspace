@@ -1,13 +1,9 @@
 # Thresholds for the perf benchmark protocol. See AGENTS.md "Performance
-# Protocol" for how these are consumed by `just bench-pr-gate`.
+# Protocol" for how these are consumed by `just bench-compare`.
 #
 # Δ% values are absolute deltas (e.g. `5` means "5% slower than baseline").
 # `p_max` is the maximum p-value below which a delta is considered
 # statistically meaningful (Mann-Whitney via benchstat).
-#
-# Soft mode (within 14 days of GATE_ACTIVATION) only PRINTS the regressions.
-# Hard mode (after 14 days) ALSO exits non-zero — blocking `gh pr create`
-# unless the agent is invoked with `--bench-skip` (justified in PR body).
 
 [L1]
 # Microbenchmarks (go test -bench). Tightest gate — pure Go regressions

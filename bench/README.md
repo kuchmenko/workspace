@@ -1,7 +1,7 @@
 # Performance Benchmark Protocol
 
 Tooling for keeping `ws` fast (cold-start) and resource-efficient
-(memory, allocations) without CI infrastructure. The agent is the gate.
+(memory, allocations) without CI infrastructure.
 
 Full protocol: `AGENTS.md` → "Performance Protocol".
 
@@ -11,18 +11,15 @@ Full protocol: `AGENTS.md` → "Performance Protocol".
 just bench-l1           # L1 microbenchmarks (~30s)
 just bench-l2           # L2 macrobenchmarks (~3-5min)
 just bench-l3           # L3 E2E hyperfine (~10-15min, requires hyperfine)
-just bench-pr-gate      # run before `gh pr create` (mandatory for agents)
 just bench-baseline     # refresh per-machine baseline (after merge to main)
-just bench-gate-activate  # arm soft→hard gate countdown (one-time, project-wide)
-just bench-install-hook   # optional pre-push backup gate
+just bench-compare      # compare a layer against the baseline (advisory)
 ```
 
 ## Layout
 
 ```text
 bench/
-  thresholds.toml       gate thresholds (Δ%, p_max) per layer
-  GATE_ACTIVATION       activation timestamp; hard gate engages 14d later
+  thresholds.toml       comparison thresholds (Δ%, p_max) per layer
   baseline/<machine>/   per-machine canonical numbers (committed)
   results/<machine>/    scratch results (.gitignored)
   scripts/              shell entry points
@@ -33,8 +30,8 @@ bench/
 
 Asahi-class machines can't run a stable shared CI runner without an
 ARM64-x86 cross-arch matrix. Per-machine baselines keep numbers stable
-within a developer's loop. The agent enforces the gate before
-`gh pr create`, with an optional pre-push hook as defense-in-depth.
+within a developer's loop. Comparisons are advisory — a human workflow,
+not a gate.
 
 ## Adding a new benchmark
 

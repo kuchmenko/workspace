@@ -5,15 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/sidecar"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/sidecar"
 )
 
 type Reconciler struct {
@@ -180,6 +182,8 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 		return nil
 	}
 
+	r.syncMirrors(name, proj, barePath)
+
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
 		return err
@@ -242,6 +246,70 @@ func (r *Reconciler) syncProject(name string, proj *config.Project, machine stri
 	}
 
 	return nil
+}
+
+// syncMirrors pushes origin's refs to every declared mirror remote. Mirror
+// failures never propagate: a dead mirror must not back off the project or
+// block worktree fast-forwards.
+func (r *Reconciler) syncMirrors(name string, proj *config.Project, barePath string) {
+	r.clearStaleMirrorConflicts(name, proj.Mirrors)
+	for _, mirror := range slices.Sorted(maps.Keys(proj.Mirrors)) {
+		url := proj.Mirrors[mirror]
+		if err := git.EnsureMirrorRemote(barePath, mirror, url); err != nil {
+			r.recordMirrorConflict(name, mirror, url, err)
+			continue
+		}
+		if err := git.PushMirror(barePath, mirror); err != nil {
+			r.recordMirrorConflict(name, mirror, url, err)
+			continue
+		}
+		_ = r.clearProjectConflict(name, mirror, KindMirrorPushFailed)
+	}
+}
+
+func (r *Reconciler) clearStaleMirrorConflicts(name string, mirrors map[string]string) {
+	if r.store == nil {
+		return
+	}
+	conflicts, err := r.store.List()
+	if err != nil {
+		return
+	}
+	for _, c := range conflicts {
+		if c.Kind != KindMirrorPushFailed || c.Workspace != r.root || c.Project != name {
+			continue
+		}
+		if _, still := mirrors[c.Branch]; !still {
+			_ = r.store.Remove(c.ID)
+		}
+	}
+}
+
+func (r *Reconciler) recordMirrorConflict(project, mirror, url string, cause error) {
+	if r.store == nil {
+		return
+	}
+	details, _ := json.Marshal(map[string]string{
+		"message": cause.Error(),
+		"mirror":  mirror,
+		"url":     url,
+	})
+	c := Conflict{
+		Workspace: r.root,
+		Project:   project,
+		Branch:    mirror,
+		Kind:      KindMirrorPushFailed,
+		Details:   details,
+	}
+	created, err := r.store.Record(c)
+	if err != nil {
+		r.logger.Printf("reconciler: record %s: %v", KindMirrorPushFailed, err)
+		return
+	}
+	if created {
+		r.logger.Printf("reconciler: NEW conflict %s for %s mirror %s: %v", KindMirrorPushFailed, project, mirror, cause)
+		NotifyNew(c)
+	}
 }
 
 func (r *Reconciler) autoCloneMissing(name string, proj config.Project) error {

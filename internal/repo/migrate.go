@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/sidecar"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/git"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/sidecar"
 )
 
 type CheckResult struct {
@@ -332,6 +332,12 @@ func MigrateProject(wsRoot string, name string, proj *config.Project, opts Migra
 		}
 
 		_ = git.SetRemoteHead(barePath, defaultBranch)
+
+		for mirror, url := range proj.Mirrors {
+			if err := git.EnsureMirrorRemote(barePath, mirror, url); err != nil {
+				opts.logf("migrate %s: warning: mirror remote %s: %v", name, mirror, err)
+			}
+		}
 	}
 
 	if err := git.SetBranchUpstream(barePath, defaultBranch, "origin"); err != nil {

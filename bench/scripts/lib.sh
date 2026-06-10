@@ -16,7 +16,6 @@ BASELINE_DIR="$BENCH_DIR/baseline"
 RESULTS_DIR="$BENCH_DIR/results"
 SCRIPTS_DIR="$BENCH_DIR/scripts"
 THRESHOLDS_FILE="$BENCH_DIR/thresholds.toml"
-GATE_FILE="$BENCH_DIR/GATE_ACTIVATION"
 
 mkdir -p "$BASELINE_DIR" "$RESULTS_DIR"
 
@@ -39,30 +38,6 @@ bench_machine() {
         fi
     fi
     hostname -s 2>/dev/null || hostname
-}
-
-# bench_mode prints "hard" or "soft" depending on GATE_ACTIVATION.
-# - file missing or empty: soft (gate not yet activated)
-# - file present, < 14 days old: soft
-# - file present, >= 14 days old: hard
-bench_mode() {
-    if [ ! -s "$GATE_FILE" ]; then
-        echo "soft"
-        return
-    fi
-    local activated_at now elapsed
-    activated_at=$(head -n 1 "$GATE_FILE" | tr -d '[:space:]')
-    if ! [[ "$activated_at" =~ ^[0-9]+$ ]]; then
-        echo "soft"
-        return
-    fi
-    now=$(date +%s)
-    elapsed=$((now - activated_at))
-    if [ "$elapsed" -ge $((14*86400)) ]; then
-        echo "hard"
-    else
-        echo "soft"
-    fi
 }
 
 # ensure_benchstat installs golang.org/x/perf/cmd/benchstat under

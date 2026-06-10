@@ -558,7 +558,7 @@ infrastructure. It is a human engineering workflow, not an agent gate.
 
 - **L1 — microbenchmarks** (`just bench-l1`)
   - Per-package, `go test -bench` on the hot paths.
-  - Wall: ~30-60s. Runs on every PR via `just bench-pr-gate`.
+  - Wall: ~30-60s.
   - Detects regressions in pure Go code (allocations, hot loops, escape).
 
 - **L2 — synthetic-workspace macrobenchmarks** (`just bench-l2`)
@@ -599,20 +599,11 @@ bench/
       l2.txt
       l3.json
   results/<machine>/  ← scratch; written by every run; .gitignored
-  thresholds.toml     ← gate thresholds (Δ%, p_max)
-  GATE_ACTIVATION     ← timestamp; hard gate engages 14d later
+  thresholds.toml     ← comparison thresholds (Δ%, p_max)
 ```
 
-## Gate activation lifecycle
-
-```text
-day 0:                         soft mode (no gating)
-just bench-gate-activate ───→  GATE_ACTIVATION written, soft for 14d
-day 14:                        hard mode — gate exits non-zero on regress
-```
-
-Soft → hard transition is automatic based on the file timestamp. There is
-no "switch to hard" command — only the activation point.
+Comparisons against the baseline (`just bench-compare`) are advisory —
+there is no PR gate.
 
 ---
 
@@ -622,7 +613,7 @@ Read top to bottom; follow in order.
 
 ## Performance benchmarks
 
-Agents do not run `just bench-pr-gate`, refresh baselines, or add benchmark
+Agents do not run benchmarks, refresh baselines, or add benchmark
 requirements unless the human asks for that explicitly. Benchmarks are a
 human engineering workflow.
 

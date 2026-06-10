@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/layout"
+	"codeberg.org/kuchmenko/workspace/internal/config"
+	"codeberg.org/kuchmenko/workspace/internal/layout"
 )
 
 func CloneBare(remote, dest string) error {
@@ -41,14 +41,84 @@ func IsBare(path string) bool {
 }
 
 func SetRemoteURL(repoPath, url string) error {
-	cmd := exec.Command("git", "-C", repoPath, "remote", "set-url", "origin", url)
+	return SetRemoteURLFor(repoPath, "origin", url)
+}
+
+func SetRemoteURLFor(repoPath, name, url string) error {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "set-url", name, url)
 	if err := cmd.Run(); err == nil {
 		return nil
 	}
-	cmd = exec.Command("git", "-C", repoPath, "remote", "add", "origin", url)
+	cmd = exec.Command("git", "-C", repoPath, "remote", "add", name, url)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("set remote in %s: %s", repoPath, strings.TrimSpace(string(out)))
+		return fmt.Errorf("set remote %s in %s: %s", name, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func ListRemotes(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "remote")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git remote in %s: %w", repoPath, err)
+	}
+	var remotes []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			remotes = append(remotes, l)
+		}
+	}
+	return remotes, nil
+}
+
+// EnsureMirrorRemote installs (or repairs) a push-only mirror remote on a
+// bare repo. skipFetchAll keeps `git fetch --all` from pulling the mirror's
+// refs back in — the mirror only ever receives pushes.
+func EnsureMirrorRemote(repoPath, name, url string) error {
+	if name == "" || name == "origin" {
+		return fmt.Errorf("mirror remote name %q is reserved", name)
+	}
+	if err := SetRemoteURLFor(repoPath, name, url); err != nil {
+		return err
+	}
+	return setConfig(repoPath, "remote."+name+".skipFetchAll", "true")
+}
+
+func MirrorRemoteOK(repoPath, name, url string) bool {
+	got, err := RemoteURLFor(repoPath, name)
+	if err != nil || got != url {
+		return false
+	}
+	cmd := exec.Command("git", "-C", repoPath, "config", "--get", "remote."+name+".skipFetchAll")
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// PushMirror pushes everything origin has — branches and tags — to the named
+// mirror remote. Branch refs are enumerated explicitly: negative refspecs
+// only apply to fetch, so a glob push would turn the origin/HEAD symref into
+// a literal "HEAD" branch on the mirror. No --force: a diverged mirror fails
+// the push and surfaces as a conflict.
+func PushMirror(repoPath, name string) error {
+	cmd := exec.Command("git", "-C", repoPath, "for-each-ref", "--format=%(refname)", "refs/remotes/origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git for-each-ref in %s: %w", repoPath, err)
+	}
+	refspecs := []string{"refs/tags/*:refs/tags/*"}
+	for _, ref := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		ref = strings.TrimSpace(ref)
+		if ref == "" || ref == "refs/remotes/origin/HEAD" {
+			continue
+		}
+		branch := strings.TrimPrefix(ref, "refs/remotes/origin/")
+		refspecs = append(refspecs, ref+":refs/heads/"+branch)
+	}
+	args := append([]string{"-C", repoPath, "push", name}, refspecs...)
+	pushOut, err := exec.Command("git", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git push %s in %s: %s", name, repoPath, strings.TrimSpace(string(pushOut)))
 	}
 	return nil
 }
@@ -194,6 +264,11 @@ func initBareLayout(name string, proj *config.Project, barePath string, opts Clo
 	if err := SetFetchRefspec(barePath); err != nil {
 		return "", fmt.Errorf("set fetch refspec: %w", err)
 	}
+	for mirror, url := range proj.Mirrors {
+		if err := EnsureMirrorRemote(barePath, mirror, url); err != nil {
+			opts.logf("clone %s: warning: mirror remote %s: %v", name, mirror, err)
+		}
+	}
 	defaultBranch, err := resolveDefaultBranch(name, proj, barePath, opts)
 	if err != nil {
 		return "", err
@@ -288,7 +363,11 @@ func IsRepo(path string) bool {
 }
 
 func RemoteURL(repoPath string) (string, error) {
-	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", "origin")
+	return RemoteURLFor(repoPath, "origin")
+}
+
+func RemoteURLFor(repoPath, name string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "remote", "get-url", name)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
