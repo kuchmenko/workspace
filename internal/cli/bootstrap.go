@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/daemon"
 	"codeberg.org/kuchmenko/workspace/internal/git"
 	"codeberg.org/kuchmenko/workspace/internal/repo"
 	"codeberg.org/kuchmenko/workspace/internal/tui"
@@ -34,8 +33,7 @@ the default branch when it cannot be auto-detected, and surfaces any
 errors before continuing.
 
 Bootstrap is crash-safe via a sidecar progress file at
-~/.local/state/ws/bootstrap/. While bootstrap is running, the daemon pauses
-all sync activity for that workspace to avoid races and half-pushed state.
+~/.local/state/ws/bootstrap/.
 
 Examples:
   ws bootstrap                clone every active project missing locally
@@ -146,10 +144,10 @@ func runBootstrap(args []string, dryRun bool) error {
 	total := cloned + failed
 	fmt.Printf("\nBootstrap complete: %d cloned, %d failed (of %d planned).\n", cloned, failed, total)
 	if failed > 0 {
-		daemon.Notify("ws: bootstrap finished with errors",
+		notify("ws: bootstrap finished with errors",
 			fmt.Sprintf("%d/%d cloned — see terminal", cloned, total))
 	} else if cloned > 0 {
-		daemon.Notify("ws: bootstrap finished",
+		notify("ws: bootstrap finished",
 			fmt.Sprintf("%d projects cloned", cloned))
 	}
 
@@ -331,7 +329,7 @@ func (m bootstrapModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				m.errors = append(m.errors, bootstrapError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
-			daemon.Notify("ws: bootstrap started",
+			notify("ws: bootstrap started",
 				fmt.Sprintf("%s: cloning %d projects", wsRoot, len(m.toClone)))
 			m.step = bsStepCloning
 			m.stepChangedAt = time.Now()
@@ -401,7 +399,7 @@ func (m bootstrapModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 		m.current = msg.index + 1
 
 		if m.current > 0 && m.current%5 == 0 && m.current < len(m.toClone) {
-			daemon.Notify("ws: bootstrap progress",
+			notify("ws: bootstrap progress",
 				fmt.Sprintf("%d/%d cloned", m.current, len(m.toClone)))
 		}
 		if m.current >= len(m.toClone) {

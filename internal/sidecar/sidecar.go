@@ -8,12 +8,8 @@
 //     ~/.local/state/ws/<kind>/<sha>.toml). The path is keyed by the
 //     workspace root, so each workspace has its own sidecar per kind.
 //
-//   - A coordination lock for the daemon. While the file exists with a live
-//     pid in its meta block, the reconciler skips its entire tick for that
-//     workspace — both Phase 1 (workspace.toml git sync) and Phase 2
-//     (project reconcile). This prevents the daemon from racing the
-//     interactive command on git operations or pushing half-completed state
-//     upstream.
+//   - An active-command marker. Synchronization skips a workspace while a
+//     sidecar records a live command process.
 //
 //   - A crash-recovery hint. If the recorded pid is no longer alive, a new
 //     run of the same command can prompt the user to resume or discard.
@@ -22,9 +18,8 @@
 // migrate use different value shapes, so the package stores them as
 // json.RawMessage and lets each command unmarshal into its own struct.
 //
-// IMPORTANT: sidecars live OUTSIDE the workspace git tree on purpose. We
-// don't want them committed by accident, and we don't want fsnotify on
-// workspace.toml to fire on every save.
+// IMPORTANT: sidecars live outside the workspace git tree so they cannot be
+// committed by accident.
 package sidecar
 
 import (

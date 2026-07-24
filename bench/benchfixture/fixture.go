@@ -1,6 +1,6 @@
 // Package benchfixture provides synthetic workspace builders for L2
 // macrobenchmarks. The harness constructs a hermetic workspace under
-// tb.TempDir() with the bare+worktree layout that the reconciler expects,
+// tb.TempDir() with the bare+worktree layout that foreground sync expects,
 // using real git for verisimilitude (mocks would mask the bugs we're
 // trying to catch).
 //
@@ -84,7 +84,6 @@ func composeProjects(tb testing.TB, ws *Workspace, opts Options, root, remotes s
 	tb.Helper()
 	var sb strings.Builder
 	sb.WriteString("[meta]\nversion = 1\nroot = \".\"\n\n")
-	sb.WriteString("[daemon]\npoll_interval = \"5m\"\nstale_threshold = \"30d\"\nauto_sync = true\nwatch_dirs = false\n\n")
 
 	for i := 0; i < opts.Projects; i++ {
 		name := fmt.Sprintf("proj-%03d", i)

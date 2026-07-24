@@ -2,8 +2,7 @@
 
 Every command, every flag. For prose walk-throughs see the topic
 docs ([getting-started](getting-started.md), [worktrees](worktrees.md),
-[daemon-and-sync](daemon-and-sync.md), [aliases](aliases.md),
-[agent-tui](agent-tui.md)).
+[sync](sync.md), [aliases](aliases.md), [explorer](explorer.md)).
 
 Every command supports the global `--root <dir>` flag to override
 the workspace-root auto-detection.
@@ -19,18 +18,26 @@ GitHub, lets you pick / group them, writes `workspace.toml`. See
 ### `ws sync` / `ws sync resolve`
 
 ```sh
-ws sync                    # one reconciler tick in the foreground
+ws sync                    # preflight, review, and execute in foreground
 ws sync resolve            # interactive prompt for unresolved conflicts
 ```
 
-`ws sync` runs the same work as a daemon tick: commit-pull-push of
-`workspace.toml`, fetch every bare, ff-pull main worktrees, refresh
-`last_active_*` for branches with local-ahead commits, surface
-`branch-orphan` for vanished origin refs.
+`ws sync` builds a fresh plan and probes unique workspace, project, and
+mirror endpoints before any mutation. With terminal stdin and stdout it
+opens an interactive source/project/mirror review, supports run-only
+exclusions and verified known-provider HTTPS-to-SSH origin conversion,
+then asks for confirmation. The frozen selection executes sequentially:
+registry sync, project clone/fetch, selected mirror pushes, safe main
+worktree fast-forwards, branch metadata refresh, and orphan detection.
+
+With redirected stdin or stdout it emits ANSI-free text and requires every
+endpoint to pass preflight. Any failed probe exits before mutation.
+
+Exit codes: `0` success, `1` failed preflight/execution or conflict, `130`
+canceled.
 
 `ws sync resolve` walks `~/.local/state/ws/conflicts.json` one entry
-at a time. See [Daemon and sync — conflicts](daemon-and-sync.md#conflicts)
-for the catalog.
+at a time. See [Sync: Conflicts](sync.md#conflicts) for the catalog.
 
 ### `ws add`
 
@@ -47,8 +54,8 @@ ws add                            # interactive TUI
       --no-tui                    # force headless; error if no URLs given
 ```
 
-Holds an `add/<sha>.toml` sidecar while running so the daemon pauses
-the affected workspace.
+Holds an `add/<sha>.toml` sidecar for crash recovery and same-workspace
+operation exclusion.
 
 ### `ws create`
 
@@ -128,7 +135,7 @@ Exit codes:
 ### `ws doctor`
 
 Unified diagnostic + auto-fix pass. See
-[Daemon and sync — health check](daemon-and-sync.md#health-check-ws-doctor).
+[Sync: Health Check](sync.md#health-check).
 
 ```sh
 ws doctor                     # all projects + system, print findings
@@ -206,18 +213,18 @@ ws alias install              # write a sourcing line into ~/.zshrc (idempotent)
 Generated aliases land at `$XDG_STATE_HOME/ws/aliases.zsh` (default
 `~/.local/state/ws/aliases.zsh`). Currently zsh-only.
 
-## Daemon
+## Workspace Registry
 
 ```sh
-ws daemon register [path]     # add a workspace; defaults to cwd
-ws daemon unregister [path]
-ws daemon start               # background-spawn the daemon
-ws daemon stop
-ws daemon restart
-ws daemon run                 # foreground (for the systemd unit)
-ws daemon status              # PID + registered workspaces
-ws daemon install-service     # install systemd user unit
+ws workspace add [path]       # register a root; defaults to cwd
+ws workspace rm [path]        # unregister; does not delete anything
+ws workspace list             # canonical roots, one per line
 ```
+
+These commands edit the machine-local `workspace_roots` array in
+`~/.config/ws/config.toml`. The explorer uses the list for discovery.
+Registration does not schedule synchronization; run `ws sync` from each
+workspace explicitly.
 
 ## Authentication
 
@@ -232,14 +239,14 @@ Token at `~/.config/ws/token`. `ws create` uses `gh repo create`
 under the hood and therefore needs `gh auth login` separately —
 the two authentications don't share state.
 
-## Agent TUI
+## Explorer TUI
 
 ```sh
-ws                            # bare invocation, in a TTY → agent TUI
+ws                            # bare invocation, in a TTY → explorer TUI
 ws agent                      # explicit
 ```
 
-See [Agent TUI](agent-tui.md) for keys and behavior.
+See [Explorer TUI](explorer.md) for keys and behavior.
 
 ## Docs / completion (developer-facing)
 

@@ -38,6 +38,7 @@ func TestMergeSuggestions_AcrossSources(t *testing.T) {
 	}
 	if shared == nil {
 		t.Fatal("shared missing from merged list")
+		return
 	}
 	if !hasSource(shared.Sources, SourceDisk) || !hasSource(shared.Sources, SourceGitHub) {
 		t.Errorf("shared.Sources missing disk or gh: %v", shared.Sources)

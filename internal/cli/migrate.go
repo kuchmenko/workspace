@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/daemon"
 	"codeberg.org/kuchmenko/workspace/internal/repo"
 	"codeberg.org/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
@@ -53,8 +52,7 @@ In TUI mode, dirty/stash/detached states are resolved interactively:
   - stash   → convert each entry to a wt/<machine>/migration-stash-<ts>-N branch (or skip)
   - detached → preserve orphaned commits, then checkout default_branch (or skip)
 
-The reconciler pauses Phase 1+2 while migrate runs (sidecar coordination at
-~/.local/state/ws/migrate/), so daemon never races migrate on git ops.`,
+Migration progress is stored in a sidecar at ~/.local/state/ws/migrate/.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if check {
 				return runMigrateCheck(args)
@@ -406,7 +404,7 @@ func (m migrateModel) updatePlan(msg tui.Msg) (tui.Model, tui.Cmd) {
 				m.errors = append(m.errors, migrateError{project: "<sidecar>", err: err})
 				return m, tui.Quit
 			}
-			daemon.Notify("ws: migrate started",
+			notify("ws: migrate started",
 				fmt.Sprintf("%s: %d projects", wsRoot, len(m.queue)))
 			return m.advance()
 		case "n", "N", "escape":
@@ -623,12 +621,12 @@ func runMigrateTUI(args []string) error {
 	total := migrated + failed + skipped
 	fmt.Printf("\nMigrate complete: %d migrated, %d failed, %d skipped (of %d ready).\n", migrated, failed, skipped, total)
 	if failed > 0 {
-		daemon.Notify("ws: migrate finished with errors",
+		notify("ws: migrate finished with errors",
 			fmt.Sprintf("%d/%d migrated — see terminal", migrated, total))
 		return errors.New("migrate finished with errors")
 	}
 	if migrated > 0 {
-		daemon.Notify("ws: migrate finished",
+		notify("ws: migrate finished",
 			fmt.Sprintf("%d projects migrated", migrated))
 	}
 	return nil

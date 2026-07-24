@@ -37,7 +37,7 @@ func TestWorktreeAdd_ExistingBranch(t *testing.T) {
 
 	// 4. Targeted refspec fetch — git clone --bare does NOT create a
 	//    fetch refspec, so `git fetch --all` would miss new branches.
-	//    This matches what ws worktree new does.
+	//    This matches what ws worktree add does.
 	branch := "wt/other-machine/feature"
 	refspec := "+refs/heads/" + branch + ":refs/heads/" + branch
 	if err := git.FetchRefspec(barePath, "origin", refspec); err != nil {
@@ -135,7 +135,7 @@ func TestWorktreeNew_FetchAndDetect(t *testing.T) {
 	testutil.RunGit(t, otherClone, "commit", "-m", "data api scaffold")
 	testutil.RunGit(t, otherClone, "push", "origin", branch)
 
-	// Targeted refspec fetch — the same approach ws worktree new uses.
+	// Targeted refspec fetch — the same approach ws worktree add uses.
 	refspec := "+refs/heads/" + branch + ":refs/heads/" + branch
 	if err := git.FetchRefspec(barePath, "origin", refspec); err != nil {
 		t.Fatalf("FetchRefspec: %v", err)

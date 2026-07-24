@@ -79,10 +79,6 @@ func TestProjectChecks_HappyPath(t *testing.T) {
 
 	rep := r.Run()
 	for _, f := range rep.Findings {
-		if f.Scope == "system" && f.Check == "daemon" {
-			// Daemon not running in tests — expected and unrelated.
-			continue
-		}
 		if f.Severity >= Warn {
 			t.Errorf("unexpected %s: %s/%s: %s", f.Severity, f.Scope, f.Check, f.Message)
 		}

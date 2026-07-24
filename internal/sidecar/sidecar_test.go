@@ -43,6 +43,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if loaded == nil {
 		t.Fatal("Load returned nil after Save")
+		return
 	}
 	if loaded.Meta.Kind != sidecar.KindBootstrap {
 		t.Errorf("Kind = %s, want bootstrap", loaded.Meta.Kind)
@@ -161,8 +162,8 @@ func TestAnyActiveFindsBoth(t *testing.T) {
 	// Migrate → Add; leftover migrate would mask the add result).
 	_ = sidecar.Delete(wsRoot, sidecar.KindMigrate)
 
-	// Add sidecar: Track B Phase 1-C — the reconciler must pause for
-	// `ws add` runs the same way it does for bootstrap and migrate.
+	// Add participates in the same active-operation exclusion as bootstrap
+	// and migrate.
 	sc3 := sidecar.New(wsRoot, sidecar.KindAdd)
 	if err := sidecar.Save(sc3); err != nil {
 		t.Fatalf("Save add: %v", err)
@@ -173,8 +174,8 @@ func TestAnyActiveFindsBoth(t *testing.T) {
 	}
 	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
 
-	// Create sidecar: same contract as the others — `ws create` must
-	// pause the reconciler while a new repo is being materialized.
+	// Create participates in the same active-operation exclusion while a
+	// repository is being materialized.
 	sc4 := sidecar.New(wsRoot, sidecar.KindCreate)
 	if err := sidecar.Save(sc4); err != nil {
 		t.Fatalf("Save create: %v", err)

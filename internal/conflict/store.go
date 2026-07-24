@@ -1,57 +1,30 @@
-// Package conflict tracks unresolved sync conflicts for the workspace daemon.
-//
-// Conflicts are persisted to ~/.local/state/ws/conflicts.json so the user can
-// inspect them via `ws sync resolve`. The reconciler is the only writer; the
-// resolve CLI is the only reader/mutator. There is no IPC between them — they
-// coordinate via the file alone, with a best-effort O_EXCL lock.
-package daemon
+// Package conflict persists unresolved workspace synchronization conflicts.
+package conflict
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-func Notify(title, body string) {
-	if _, err := exec.LookPath("notify-send"); err != nil {
-		return
-	}
-	_ = exec.Command("notify-send", "-a", "ws", title, body).Run()
-}
-
-func NotifyNew(c Conflict) {
-	title := fmt.Sprintf("ws: new sync conflict (%s)", c.Kind)
-	var body string
-	if c.Project != "" {
-		body = fmt.Sprintf("%s/%s — run 'ws sync resolve'", c.Project, c.Branch)
-	} else {
-		body = "workspace.toml — run 'ws sync resolve'"
-	}
-	Notify(title, body)
-}
-
-type ConflictKind string
+type Kind string
 
 const (
-	KindTOMLMerge       ConflictKind = "toml-merge"
-	KindTOMLPushFailed  ConflictKind = "toml-push-failed"
-	KindMainDivergence  ConflictKind = "main-divergence"
-	KindNeedsMigration  ConflictKind = "needs-migration"
-	KindNeedsBootstrap  ConflictKind = "needs-bootstrap"
-	KindPathBlocked     ConflictKind = "path-blocked"
-	KindCloneFailed     ConflictKind = "clone-failed"
-	KindBranchDuplicate ConflictKind = "branch-duplicate"
-	KindBranchOrphan    ConflictKind = "branch-orphan"
-
-	// KindMirrorPushFailed reuses the Branch field for the mirror remote
-	// name so the store dedupes per (project, mirror) pair.
-	KindMirrorPushFailed ConflictKind = "mirror-push-failed"
+	KindTOMLMerge        Kind = "toml-merge"
+	KindTOMLPushFailed   Kind = "toml-push-failed"
+	KindMainDivergence   Kind = "main-divergence"
+	KindNeedsMigration   Kind = "needs-migration"
+	KindNeedsBootstrap   Kind = "needs-bootstrap"
+	KindPathBlocked      Kind = "path-blocked"
+	KindCloneFailed      Kind = "clone-failed"
+	KindBranchDuplicate  Kind = "branch-duplicate"
+	KindBranchOrphan     Kind = "branch-orphan"
+	KindMirrorPushFailed Kind = "mirror-push-failed"
 )
 
 type Conflict struct {
@@ -59,16 +32,16 @@ type Conflict struct {
 	Workspace  string          `json:"workspace"`
 	Project    string          `json:"project,omitempty"`
 	Branch     string          `json:"branch,omitempty"`
-	Kind       ConflictKind    `json:"kind"`
+	Kind       Kind            `json:"kind"`
 	DetectedAt time.Time       `json:"detected_at"`
 	Details    json.RawMessage `json:"details,omitempty"`
 }
 
-type ConflictStore struct {
+type Store struct {
 	path string
 }
 
-func ConflictPath() (string, error) {
+func Path() (string, error) {
 	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
 		return filepath.Join(xdg, "ws", "conflicts.json"), nil
 	}
@@ -79,19 +52,19 @@ func ConflictPath() (string, error) {
 	return filepath.Join(home, ".local", "state", "ws", "conflicts.json"), nil
 }
 
-func OpenConflictStore() (*ConflictStore, error) {
-	p, err := ConflictPath()
+func Open() (*Store, error) {
+	p, err := Path()
 	if err != nil {
 		return nil, err
 	}
-	return &ConflictStore{path: p}, nil
+	return &Store{path: p}, nil
 }
 
 type fileShape struct {
 	Conflicts []Conflict `json:"conflicts"`
 }
 
-func (s *ConflictStore) load() (*fileShape, error) {
+func (s *Store) load() (*fileShape, error) {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -109,7 +82,7 @@ func (s *ConflictStore) load() (*fileShape, error) {
 	return &f, nil
 }
 
-func (s *ConflictStore) save(f *fileShape) error {
+func (s *Store) save(f *fileShape) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
@@ -124,7 +97,7 @@ func (s *ConflictStore) save(f *fileShape) error {
 	return os.Rename(tmp, s.path)
 }
 
-func (s *ConflictStore) List() ([]Conflict, error) {
+func (s *Store) List() ([]Conflict, error) {
 	f, err := s.load()
 	if err != nil {
 		return nil, err
@@ -136,7 +109,7 @@ func matchKey(c Conflict) string {
 	return string(c.Kind) + "|" + c.Workspace + "|" + c.Project + "|" + c.Branch
 }
 
-func (s *ConflictStore) Record(c Conflict) (bool, error) {
+func (s *Store) Record(c Conflict) (bool, error) {
 	c = ensureRecordDefaults(c)
 	f, err := s.load()
 	if err != nil {
@@ -177,7 +150,7 @@ func refreshExisting(existing *Conflict, fresh Conflict) {
 	}
 }
 
-func (s *ConflictStore) Clear(workspace, project, branch string, kind ConflictKind) error {
+func (s *Store) Clear(workspace, project, branch string, kind Kind) error {
 	f, err := s.load()
 	if err != nil {
 		return err
@@ -194,7 +167,7 @@ func (s *ConflictStore) Clear(workspace, project, branch string, kind ConflictKi
 	return s.save(f)
 }
 
-func (s *ConflictStore) Remove(id string) error {
+func (s *Store) Remove(id string) error {
 	f, err := s.load()
 	if err != nil {
 		return err

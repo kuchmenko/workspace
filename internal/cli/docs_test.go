@@ -55,7 +55,7 @@ func newTestTree() *cobra.Command {
 		Short: "Run sync",
 		Annotations: map[string]string{
 			cli.KeyCapability: "sync",
-			cli.KeyAgentWhen:  "Trigger a full sync cycle",
+			cli.KeyAgentWhen:  "Trigger explicit foreground sync",
 		},
 	}
 
@@ -63,17 +63,16 @@ func newTestTree() *cobra.Command {
 		Use:   "worktree",
 		Short: "Manage worktrees",
 	}
-	wtNew := &cobra.Command{
-		Use:   "new <project> <topic>",
+	wtAdd := &cobra.Command{
+		Use:   "add <project> <branch>",
 		Short: "Create a worktree",
 		Annotations: map[string]string{
 			cli.KeyCapability: "worktree",
 			cli.KeyAgentWhen:  "Start a new feature branch",
 		},
 	}
-	wtNew.Flags().String("from", "", "base ref")
-	wtNew.Flags().Bool("auto-push", false, "opt into auto-push")
-	wt.AddCommand(wtNew)
+	wtAdd.Flags().String("from", "", "base ref")
+	wt.AddCommand(wtAdd)
 
 	root.AddCommand(add, status, help, hidden, sync, wt)
 	return root
@@ -133,7 +132,7 @@ func TestCommandUseIncludesParents(t *testing.T) {
 		t.Fatal("no worktree commands")
 	}
 	cmd := wtGrp.Commands[0]
-	want := "ws worktree new <project> <topic>"
+	want := "ws worktree add <project> <branch>"
 	if cmd.Command != want {
 		t.Errorf("Command = %q, want %q", cmd.Command, want)
 	}
@@ -153,6 +152,7 @@ func TestFlagsAreCollected(t *testing.T) {
 	}
 	if addCmd == nil {
 		t.Fatal("add command not found in project group")
+		return
 	}
 	if len(addCmd.Flags) != 2 {
 		t.Errorf("add has %d flags, want 2: %v", len(addCmd.Flags), addCmd.Flags)

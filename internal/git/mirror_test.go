@@ -154,3 +154,23 @@ func TestPushMirror_NonFastForwardFails(t *testing.T) {
 		t.Error("PushMirror should fail on diverged mirror (no --force)")
 	}
 }
+
+func TestPushMirrorURLIgnoresChangedMirrorConfig(t *testing.T) {
+	barePath, frozen := mirrorFixture(t)
+	redirected := filepath.Join(t.TempDir(), "redirected.git")
+	testutil.RunGit(t, filepath.Dir(redirected), "init", "--bare", redirected)
+	if err := git.EnsureMirrorRemote(barePath, "backup", frozen); err != nil {
+		t.Fatal(err)
+	}
+	testutil.RunGit(t, barePath, "remote", "set-url", "--push", "backup", redirected)
+
+	if err := git.PushMirrorURLContext(t.Context(), barePath, frozen); err != nil {
+		t.Fatalf("PushMirrorURLContext: %v", err)
+	}
+	if git.RevParse(frozen, "refs/heads/main") == "" {
+		t.Fatal("frozen mirror did not receive main")
+	}
+	if git.RevParse(redirected, "refs/heads/main") != "" {
+		t.Fatal("changed mirror config redirected push")
+	}
+}

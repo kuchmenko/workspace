@@ -52,8 +52,8 @@ origin — those cases attach to the existing branch.
 
 ## Cross-machine handoff
 
-The daemon does **not** auto-push project branches. Pushes are
-explicit. Each `ws worktree push` updates `last_pushed_*` /
+`ws sync` does **not** auto-push project branches to origin. Origin pushes
+are explicit. Each `ws worktree push` updates `last_pushed_*` /
 `last_active_*` in `workspace.toml` so the other side sees the activity
 trail.
 
@@ -63,7 +63,8 @@ ws worktree add myapp feat/fix-login
 # (edit, commit)
 ws worktree push myapp feat/fix-login        # publish + stamp
 
-# On archlinux: workspace.toml has already synced via the daemon's Phase 1.
+# On archlinux: synchronize the registry and project remotes explicitly.
+ws sync
 ws worktree add myapp feat/fix-login         # auto-detects existing origin ref,
                                              # creates local from origin/feat/fix-login,
                                              # machines=[linux, archlinux]
@@ -125,8 +126,8 @@ metadata.
 ## Recovering from a deleted-on-origin branch
 
 When a PR is merged with auto-delete-branch enabled (or someone runs
-`git push origin --delete <branch>`), the next reconciler tick records
-a `branch-orphan` conflict. Resolve via `ws sync resolve`:
+`git push origin --delete <branch>`), the next selected `ws sync` run
+records a `branch-orphan` conflict. Resolve via `ws sync resolve`:
 
 - **Drop entry** — for the merged-PR cleanup case. If a local worktree
   still exists, `ws sync resolve` instructs you to run `ws worktree rm`
@@ -136,8 +137,7 @@ a `branch-orphan` conflict. Resolve via `ws sync resolve`:
   `ws worktree push` reinstates the field and normal orphan detection
   resumes.
 
-See [Daemon and sync](daemon-and-sync.md#conflicts) for the full
-conflict catalog.
+See [Sync](sync.md#conflicts) for the full conflict catalog.
 
 ## When you need a single-shot push helper
 

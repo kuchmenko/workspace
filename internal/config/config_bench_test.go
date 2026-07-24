@@ -143,7 +143,6 @@ func benchClaimBranch(b *testing.B, existingBranches int, hitExisting bool) {
 func synthesizeWorkspaceTOML(projects, branchesPerProject int) string {
 	var sb strings.Builder
 	sb.WriteString("[meta]\nversion = 1\nroot = \".\"\n\n")
-	sb.WriteString("[daemon]\npoll_interval = \"5m\"\nstale_threshold = \"30d\"\nauto_sync = true\nwatch_dirs = false\n\n")
 	for i := 0; i < projects; i++ {
 		fmt.Fprintf(&sb, "[projects.proj-%03d]\n", i)
 		fmt.Fprintf(&sb, "remote = \"git@example.invalid:bench/proj-%03d.git\"\n", i)

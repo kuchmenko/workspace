@@ -15,12 +15,6 @@ func TestRepairDuplicatedBranchKeysSplitsMissingBranchTable(t *testing.T) {
 version = 1
 root = "/tmp/ws"
 
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
 [projects.app]
 remote = "git@example.com:app.git"
 path = "personal/app"
@@ -89,12 +83,6 @@ func TestRepairWorkspaceTOMLFixesParsableConfig(t *testing.T) {
 [meta]
 version = 1
 root = "/tmp/ws"
-
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
 
 [projects.app]
 remote = "git@example.com:app.git"

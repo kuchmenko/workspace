@@ -33,6 +33,25 @@ URL="https://codeberg.org/$REPO/releases/download/$TAG/$ASSET"
 
 echo "Installing $BINARY $TAG ($OS/$ARCH)..."
 
+LEGACY_UNIT="$HOME/.config/systemd/user/ws-daemon.service"
+if [ "$OS" = "linux" ] && { [ -e "$LEGACY_UNIT" ] || { command -v systemctl >/dev/null 2>&1 && systemctl --user cat ws-daemon.service >/dev/null 2>&1; }; }; then
+  CLEANUP_FAILED=0
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user disable --now ws-daemon.service >/dev/null 2>&1 || CLEANUP_FAILED=1
+  else
+    CLEANUP_FAILED=1
+  fi
+  rm -f "$LEGACY_UNIT" || CLEANUP_FAILED=1
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || CLEANUP_FAILED=1
+  fi
+  if [ "$CLEANUP_FAILED" -ne 0 ]; then
+    echo "Warning: could not fully retire ws-daemon.service. Before running 'ws sync', run: systemctl --user disable --now ws-daemon.service; rm -f '$LEGACY_UNIT'; systemctl --user daemon-reload" >&2
+  else
+    echo "Removed legacy ws-daemon.service"
+  fi
+fi
+
 # Download and extract
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
