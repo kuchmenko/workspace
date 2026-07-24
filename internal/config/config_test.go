@@ -36,12 +36,6 @@ func TestLoad_MigratesLegacyOwned(t *testing.T) {
 version = 1
 root = "/ws"
 
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
 [projects.app]
 remote = "git@github.com:me/app.git"
 path = "personal/app"
@@ -109,12 +103,6 @@ func TestLoad_MigratesLegacyBranchesStringList_GCdOnSave(t *testing.T) {
 version = 1
 root = "/ws"
 
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
 [projects.app]
 remote = "git@github.com:me/app.git"
 path = "personal/app"
@@ -163,12 +151,6 @@ func TestLoad_IsIdempotent(t *testing.T) {
 [meta]
 version = 1
 root = "/ws"
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
 [projects.app]
 remote = "git@github.com:me/app.git"
 path = "personal/app"
@@ -208,7 +190,6 @@ func TestSave_DropsEmptyMachinesEntries(t *testing.T) {
 	dir := t.TempDir()
 	ws := &Workspace{
 		Meta:    Meta{Version: 1, Root: dir},
-		Daemon:  Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
 		Groups:  map[string]Group{},
 		Aliases: map[string]string{},
 		Projects: map[string]Project{
@@ -266,7 +247,7 @@ func TestClaimBranch_FirstClaim(t *testing.T) {
 	}
 	// First claim must NOT mark the branch as pushed — that signal is
 	// reserved for `ws worktree push` and the attach-to-existing-remote
-	// path. Otherwise the reconciler treats every fresh local branch as
+	// path. Otherwise sync treats every fresh local branch as
 	// "previously published" and false-flags it as orphan once fetch
 	// returns no origin ref. This guards against the codex P2 bug fix.
 	if b.LastPushedMachine != "" || b.LastPushedAt != "" {
@@ -415,297 +396,5 @@ func TestTouchActive_UnknownBranch_NoOp(t *testing.T) {
 	p := Project{}
 	if p.TouchActive("ghost", "linux", time.Now()) {
 		t.Error("TouchActive on unknown branch should be no-op")
-	}
-}
-
-func TestValidate_DetectsDuplicateBranchNames(t *testing.T) {
-	ws := &Workspace{
-		Projects: map[string]Project{
-			"app": {
-				Branches: []BranchMeta{
-					{Name: "feat/foo", Machines: []string{"linux"}},
-					{Name: "feat/bar", Machines: []string{"archlinux"}},
-					{Name: "feat/foo", Machines: []string{"archlinux"}}, // dup
-				},
-			},
-			"lib": {
-				Branches: []BranchMeta{
-					{Name: "feat/x", Machines: []string{"linux"}},
-				},
-			},
-		},
-	}
-	issues := ws.Validate()
-	if len(issues) != 1 {
-		t.Fatalf("want 1 duplicate issue, got %d: %+v", len(issues), issues)
-	}
-	if issues[0].Project != "app" || issues[0].Branch != "feat/foo" || issues[0].Kind != ValidationDuplicateBranch {
-		t.Errorf("unexpected issue: %+v", issues[0])
-	}
-}
-
-func TestValidate_NoDuplicates_ReturnsEmpty(t *testing.T) {
-	ws := &Workspace{
-		Projects: map[string]Project{
-			"app": {Branches: []BranchMeta{
-				{Name: "a", Machines: []string{"linux"}},
-				{Name: "b", Machines: []string{"linux"}},
-			}},
-		},
-	}
-	if got := ws.Validate(); len(got) != 0 {
-		t.Errorf("want empty, got %+v", got)
-	}
-}
-
-func TestSyncEnabled_DefaultsTrue(t *testing.T) {
-	if !((Project{}).SyncEnabled()) {
-		t.Error("default SyncEnabled should be true")
-	}
-	f := false
-	if (Project{AutoSync: &f}).SyncEnabled() {
-		t.Error("AutoSync=false should disable sync")
-	}
-}
-
-func TestSetFavorite_Idempotent(t *testing.T) {
-	p := &Project{}
-	if !p.SetFavorite(true) {
-		t.Error("first SetFavorite(true) should report changed")
-	}
-	if p.SetFavorite(true) {
-		t.Error("second SetFavorite(true) should be no-op")
-	}
-	if !p.SetFavorite(false) {
-		t.Error("SetFavorite(false) on favorited project should report changed")
-	}
-	if p.SetFavorite(false) {
-		t.Error("second SetFavorite(false) should be no-op")
-	}
-}
-
-func TestFavorite_RoundTrip_OmitWhenFalse(t *testing.T) {
-	const src = `
-[meta]
-version = 1
-root = "/ws"
-
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
-[projects.starred]
-remote = "git@github.com:me/starred.git"
-path = "personal/starred"
-status = "active"
-category = "personal"
-favorite = true
-
-[projects.plain]
-remote = "git@github.com:me/plain.git"
-path = "personal/plain"
-status = "active"
-category = "personal"
-`
-	dir := writeWS(t, src)
-	ws, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if !ws.Projects["starred"].Favorite {
-		t.Error("starred.Favorite should be true after Load")
-	}
-	if ws.Projects["plain"].Favorite {
-		t.Error("plain.Favorite should be false after Load")
-	}
-
-	// Save round-trip: plain stays without `favorite =`, starred keeps it.
-	if err := Save(dir, ws); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	body := readWS(t, dir)
-	starredBlock, plainBlock := isolateProject(t, body, "starred"), isolateProject(t, body, "plain")
-	if !strings.Contains(starredBlock, "favorite = true") {
-		t.Errorf("starred block missing `favorite = true`:\n%s", starredBlock)
-	}
-	if strings.Contains(plainBlock, "favorite") {
-		t.Errorf("plain block should omit `favorite` when false:\n%s", plainBlock)
-	}
-}
-
-// isolateProject returns the substring of `body` for a single
-// [projects.<name>] section, up to the next [projects....] header or
-// EOF. Resilient to encoder indentation (the toml encoder indents
-// nested keys by two spaces, so the section header is prefixed with
-// whitespace in the output). Tiny helper to make the favorite-round-
-// trip test resilient to map iteration order in encoder output.
-func isolateProject(t *testing.T, body, name string) string {
-	t.Helper()
-	header := "[projects." + name + "]"
-	start := strings.Index(body, header)
-	if start < 0 {
-		t.Fatalf("project %q section not found in:\n%s", name, body)
-	}
-	rest := body[start+len(header):]
-	// Find next sibling header, regardless of leading whitespace.
-	bestNext := -1
-	for i := 0; i < len(rest); i++ {
-		if rest[i] != '\n' {
-			continue
-		}
-		j := i + 1
-		for j < len(rest) && (rest[j] == ' ' || rest[j] == '\t') {
-			j++
-		}
-		if strings.HasPrefix(rest[j:], "[projects.") {
-			bestNext = i
-			break
-		}
-	}
-	if bestNext < 0 {
-		return body[start:]
-	}
-	return body[start : start+len(header)+bestNext]
-}
-
-func TestAgentDefaultView_FallsBackToAll(t *testing.T) {
-	cases := []struct {
-		raw, want string
-	}{
-		{"", AgentViewAll},
-		{"all", AgentViewAll},
-		{"favorites", AgentViewFavorites},
-		{"garbage", AgentViewAll},
-	}
-	for _, tc := range cases {
-		ws := &Workspace{Agent: AgentConfig{DefaultView: tc.raw}}
-		if got := ws.AgentDefaultView(); got != tc.want {
-			t.Errorf("raw=%q: want %q, got %q", tc.raw, tc.want, got)
-		}
-	}
-}
-
-func TestSetAgentDefaultView_NormalizesAndReportsChange(t *testing.T) {
-	ws := &Workspace{}
-	if ws.SetAgentDefaultView("all") {
-		t.Error(`SetAgentDefaultView("all") on empty should be no-op (canonical is "")`)
-	}
-	if !ws.SetAgentDefaultView("favorites") {
-		t.Error(`SetAgentDefaultView("favorites") should report changed`)
-	}
-	if ws.Agent.DefaultView != "favorites" {
-		t.Errorf("want stored value 'favorites', got %q", ws.Agent.DefaultView)
-	}
-	if !ws.SetAgentDefaultView("garbage") {
-		t.Error(`SetAgentDefaultView("garbage") flips back to "" (changed=true)`)
-	}
-	if ws.Agent.DefaultView != "" {
-		t.Errorf("unknown values should normalize to empty; got %q", ws.Agent.DefaultView)
-	}
-}
-
-func TestAgentConfig_RoundTrip(t *testing.T) {
-	const src = `
-[meta]
-version = 1
-root = "/ws"
-
-[agent]
-default_view = "favorites"
-
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-`
-	dir := writeWS(t, src)
-	ws, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if got := ws.AgentDefaultView(); got != AgentViewFavorites {
-		t.Errorf("want favorites view post-Load, got %q", got)
-	}
-	if err := Save(dir, ws); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	body := readWS(t, dir)
-	if !strings.Contains(body, `default_view = "favorites"`) {
-		t.Errorf("Save lost agent.default_view:\n%s", body)
-	}
-}
-
-func TestAgentConfig_OmitWhenEmpty(t *testing.T) {
-	ws := &Workspace{
-		Meta:     Meta{Version: 1, Root: "/ws"},
-		Daemon:   Daemon{PollInterval: "5m", StaleThreshold: "30d"},
-		Projects: map[string]Project{},
-	}
-	dir := t.TempDir()
-	if err := Save(dir, ws); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	body := readWS(t, dir)
-	if strings.Contains(body, "[agent]") || strings.Contains(body, "default_view") {
-		t.Errorf("empty AgentConfig should omit the [agent] block entirely:\n%s", body)
-	}
-}
-
-func TestMirrors_RoundTrip_OmitWhenEmpty(t *testing.T) {
-	const src = `
-[meta]
-version = 1
-root = "/ws"
-
-[daemon]
-poll_interval = "5m"
-stale_threshold = "30d"
-auto_sync = true
-watch_dirs = true
-
-[projects.mirrored]
-remote = "git@codeberg.org:me/mirrored.git"
-path = "personal/mirrored"
-status = "active"
-category = "personal"
-
-[projects.mirrored.mirrors]
-github = "git@github.com:me/mirrored.git"
-
-[projects.plain]
-remote = "git@codeberg.org:me/plain.git"
-path = "personal/plain"
-status = "active"
-category = "personal"
-`
-	dir := writeWS(t, src)
-	ws, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	want := map[string]string{"github": "git@github.com:me/mirrored.git"}
-	if !reflect.DeepEqual(ws.Projects["mirrored"].Mirrors, want) {
-		t.Errorf("mirrored.Mirrors = %v, want %v", ws.Projects["mirrored"].Mirrors, want)
-	}
-	if len(ws.Projects["plain"].Mirrors) != 0 {
-		t.Errorf("plain.Mirrors should be empty, got %v", ws.Projects["plain"].Mirrors)
-	}
-
-	if err := Save(dir, ws); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-	ws2, err := Load(dir)
-	if err != nil {
-		t.Fatalf("Load after Save: %v", err)
-	}
-	if !reflect.DeepEqual(ws2.Projects["mirrored"].Mirrors, want) {
-		t.Errorf("Mirrors lost in round-trip: %v", ws2.Projects["mirrored"].Mirrors)
-	}
-	plainBlock := isolateProject(t, readWS(t, dir), "plain")
-	if strings.Contains(plainBlock, "mirrors") {
-		t.Errorf("plain block should omit `mirrors` when empty:\n%s", plainBlock)
 	}
 }

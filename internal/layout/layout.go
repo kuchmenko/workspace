@@ -1,5 +1,5 @@
 // Package layout computes the canonical filesystem paths for the
-// worktree-based project layout. Centralized so that migrate, reconciler,
+// worktree-based project layout. Centralized so that migrate, sync,
 // archive, restore, scan and clean all agree on where things live.
 //
 // For a project with workspace-relative path "personal/myapp" the layout is:

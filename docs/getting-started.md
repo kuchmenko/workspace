@@ -1,8 +1,9 @@
 # Getting started
 
-A workspace is a directory that holds many git projects, a single
-`workspace.toml` registry, and (optionally) a daemon that keeps those
-projects in sync with their remotes and across your machines.
+A workspace is a directory that holds many git projects and a single
+`workspace.toml` registry. Synchronization is explicit: `ws sync`
+preflights the current workspace, lets you review the run in a terminal,
+and changes remote state only after confirmation.
 
 ## Install
 
@@ -27,18 +28,22 @@ reminder.
 mkdir ~/dev && cd ~/dev
 ws auth login            # GitHub device flow (or `--pat` for a token)
 ws setup                 # TUI: pick repos, organize into groups, write workspace.toml
-ws sync                  # one reconciler tick: clone everything, ff-pull main worktrees
-ws daemon register ~/dev # add this workspace to the daemon's registry
-ws daemon start          # background reconciler — keeps workspace.toml + repos fresh
+ws sync                  # preflight, review, clone/fetch, and ff-pull safely
 ```
 
-`ws daemon start` only launches the daemon process; it reads the
-already-saved registry and reconciles whatever is registered.
-Without `ws daemon register` first the daemon would come up with
-zero watched workspaces and nothing would happen on its ticks.
+`ws setup` also adds the new root to this machine's local
+`workspace_roots` list. The list is used by the explorer and does not
+schedule synchronization. There is no background service.
+
+When upgrading from a release that installed `ws-daemon.service`, the release
+installer and `just install` retire the old unit automatically. If cleanup
+warns or the binary was replaced another way, use the manual commands in
+[Sync: upgrading from the background
+service](sync.md#upgrading-from-the-background-service) before running
+`ws sync`.
 
 That's enough for one machine. For cross-machine workflow see
-[Multi-machine sync](daemon-and-sync.md).
+[Multi-machine sync](sync.md#multi-machine-flow).
 
 ### `ws setup` — interactive
 
@@ -106,6 +111,24 @@ All three end at the same place: an entry in `workspace.toml` plus a
 project laid out as `<name>/` (main worktree) + `<name>.bare/` (bare
 repo) under the chosen group/category directory.
 
+## Registering workspace roots
+
+The explorer can show multiple workspaces on one machine. Their canonical
+absolute paths live in `workspace_roots` inside
+`~/.config/ws/config.toml`:
+
+```sh
+ws workspace add ~/dev      # defaults to cwd when path is omitted
+ws workspace add ~/work
+ws workspace list
+ws workspace rm ~/work      # unregister only; never deletes the directory
+```
+
+Roots are machine-local, sorted, and deduplicated. `workspace.toml`
+remains per-workspace and git-synced; `workspace_roots` is not shared
+between machines. If no roots are registered, the explorer can still use
+the workspace containing the current directory as a fallback.
+
 ## Authentication
 
 `ws auth login` is the GitHub device flow used by `ws setup` to list
@@ -127,11 +150,11 @@ vice versa.
 
 - [Worktrees](worktrees.md) — the per-feature checkout model and
   `ws worktree add/push/list/rm`.
-- [Daemon and sync](daemon-and-sync.md) — what the background daemon
-  does and how cross-machine syncing works.
+- [Sync](sync.md) — preflight, interactive selection, strict headless
+  behavior, conflicts, and cross-machine syncing.
 - [Aliases](aliases.md) — short shell aliases for projects and groups.
-- [Agent TUI](agent-tui.md) — bare `ws` opens a Bubble Tea TUI launcher
-  for Claude Code sessions across worktrees.
+- [Explorer TUI](explorer.md) — bare `ws` opens a Bubble Tea launcher
+  across registered workspaces and worktrees.
 - [Architecture](architecture.md) — internals: data model, on-disk
-  layout, daemon contract.
+  layout, and foreground sync contract.
 - [Command reference](reference.md) — every command, every flag.

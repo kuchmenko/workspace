@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run L2 macrobenchmarks against synthetic workspaces.
 #
-# These exercise cross-package flows (reconciler.Tick, scan, validate) on
+# These exercise cross-package flows (foreground sync, scan, validate) on
 # fixtures built by bench/benchfixture. Bench files are tagged with
 # `//go:build bench_l2` so they don't run on `go test ./...`.
 

@@ -1,17 +1,13 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/conflict"
 	"codeberg.org/kuchmenko/workspace/internal/git"
 	"codeberg.org/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
@@ -20,30 +16,31 @@ import (
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Run one reconciler tick in the foreground",
+		Short: "Synchronize workspace and project state",
 		Annotations: map[string]string{
 			"capability": "sync",
-			"agent:when": "Manually trigger a full sync cycle: push/pull workspace.toml, fetch all projects, push mirror remotes, ff-pull main worktrees, refresh last_active_*, surface branch-orphan",
+			"agent:when": "Explicitly preflight remote access, review run-only targets, then synchronize workspace.toml, selected projects, mirrors, and safe main worktree updates",
 		},
-		Long: `Synchronize this workspace right now without waiting for the daemon.
+		Long: `Synchronize this workspace right now.
 
-Performs the same work as a single daemon tick: commits and pushes
-workspace.toml changes, pulls remote workspace.toml changes, fetches every
-active project's bare repo, pushes origin's refs to declared mirror remotes,
-fast-forwards the main worktree when safe, refreshes last_active_* for
-branches with local-ahead commits, and detects origin-deleted branches as
-branch-orphan conflicts.
+Before changing anything, builds a fresh plan and probes every unique
+workspace, project, and mirror endpoint noninteractively. In a terminal,
+review sources and targets, optionally exclude them for this run, and choose
+only verified known-provider HTTPS-to-SSH origin conversions. With redirected
+input or output, every endpoint must pass or no changes are made.
 
-Project branches are never auto-pushed by the reconciler — that's an
-explicit user action via 'ws worktree push'.
+After confirmation, synchronizes workspace.toml, clones or fetches selected
+active projects, pushes selected mirrors, fast-forwards eligible main
+worktrees, refreshes last_active_* for local-ahead registered branches, and
+detects origin-deleted branches as branch-orphan conflicts.
 
-Conflicts and skipped operations are recorded to ~/.local/state/ws/conflicts.json.
+Project branches are never pushed to origin by 'ws sync'; that's an explicit
+user action via 'ws worktree push'.
+
+Conflicts are recorded to ~/.local/state/ws/conflicts.json.
 Use 'ws sync resolve' to inspect and act on them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := log.New(os.Stdout, "", 0)
-			r := daemon.NewReconciler(wsRoot, 5*time.Minute, logger)
-			r.Tick()
-			return nil
+			return runSync(cmd.Context(), wsRoot, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	cmd.AddCommand(newSyncResolveCmd())
@@ -81,7 +78,7 @@ func runSyncResolve() error {
 	return resolveLoop(store, conflicts)
 }
 
-func resolveLoop(store *daemon.ConflictStore, conflicts []daemon.Conflict) error {
+func resolveLoop(store *conflict.Store, conflicts []conflict.Conflict) error {
 	for {
 		if !pickAndResolve(store, conflicts) {
 			return nil
@@ -98,7 +95,7 @@ func resolveLoop(store *daemon.ConflictStore, conflicts []daemon.Conflict) error
 	}
 }
 
-func pickAndResolve(store *daemon.ConflictStore, conflicts []daemon.Conflict) bool {
+func pickAndResolve(store *conflict.Store, conflicts []conflict.Conflict) bool {
 	printConflictList(conflicts)
 	idx, quit := readConflictChoice(len(conflicts))
 	if quit {
@@ -111,7 +108,7 @@ func pickAndResolve(store *daemon.ConflictStore, conflicts []daemon.Conflict) bo
 	return true
 }
 
-func printConflictList(conflicts []daemon.Conflict) {
+func printConflictList(conflicts []conflict.Conflict) {
 	fmt.Printf("\n%d unresolved conflict(s):\n", len(conflicts))
 	for i, c := range conflicts {
 		fmt.Printf("  [%d] %s  (%s)\n", i+1, conflictListLabel(c), c.DetectedAt.Local().Format("2006-01-02 15:04"))
@@ -119,7 +116,7 @@ func printConflictList(conflicts []daemon.Conflict) {
 	fmt.Print("\nselect (number, q to quit): ")
 }
 
-func conflictListLabel(c daemon.Conflict) string {
+func conflictListLabel(c conflict.Conflict) string {
 	if c.Project == "" {
 		return string(c.Kind) + " — workspace.toml"
 	}
@@ -144,7 +141,7 @@ func readConflictChoice(max int) (idx int, quit bool) {
 	return n - 1, false
 }
 
-func applyConflictResolution(store *daemon.ConflictStore, c daemon.Conflict) {
+func applyConflictResolution(store *conflict.Store, c conflict.Conflict) {
 	resolved, err := handleConflict(c)
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
@@ -158,30 +155,30 @@ func applyConflictResolution(store *daemon.ConflictStore, c daemon.Conflict) {
 	}
 }
 
-func openConflictStore() (*daemon.ConflictStore, error) {
-	return daemon.OpenConflictStore()
+func openConflictStore() (*conflict.Store, error) {
+	return conflict.Open()
 }
 
-func handleConflict(c daemon.Conflict) (bool, error) {
+func handleConflict(c conflict.Conflict) (bool, error) {
 	printConflictHeader(c)
 	switch c.Kind {
-	case daemon.KindTOMLMerge, daemon.KindTOMLPushFailed:
+	case conflict.KindTOMLMerge, conflict.KindTOMLPushFailed:
 		return resolveTOMLConflict(c)
-	case daemon.KindMainDivergence:
+	case conflict.KindMainDivergence:
 		return resolveProjectConflict(c)
-	case daemon.KindBranchDuplicate:
+	case conflict.KindBranchDuplicate:
 		return resolveBranchDuplicate(c)
-	case daemon.KindBranchOrphan:
+	case conflict.KindBranchOrphan:
 		return resolveBranchOrphan(c)
-	case daemon.KindNeedsMigration:
+	case conflict.KindNeedsMigration:
 		return resolveNeedsMigration(c)
-	case daemon.KindNeedsBootstrap:
+	case conflict.KindNeedsBootstrap:
 		return resolveNeedsBootstrap(c)
-	case daemon.KindPathBlocked:
+	case conflict.KindPathBlocked:
 		return resolvePathBlocked(c)
-	case daemon.KindCloneFailed:
+	case conflict.KindCloneFailed:
 		return resolveCloneFailed(c)
-	case daemon.KindMirrorPushFailed:
+	case conflict.KindMirrorPushFailed:
 		return resolveMirrorPushFailed(c)
 	}
 	fmt.Println("Unknown conflict kind. Press enter to continue.")
@@ -189,7 +186,7 @@ func handleConflict(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func printConflictHeader(c daemon.Conflict) {
+func printConflictHeader(c conflict.Conflict) {
 	fmt.Println()
 	fmt.Printf("Conflict: %s\n", c.Kind)
 	if c.Project != "" {
@@ -205,7 +202,7 @@ func printConflictHeader(c daemon.Conflict) {
 	fmt.Println()
 }
 
-func resolveNeedsMigration(c daemon.Conflict) (bool, error) {
+func resolveNeedsMigration(c conflict.Conflict) (bool, error) {
 	fmt.Println("This project needs migration. Run:")
 	fmt.Printf("  ws migrate %s\n", c.Project)
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
@@ -213,7 +210,7 @@ func resolveNeedsMigration(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func resolveNeedsBootstrap(c daemon.Conflict) (bool, error) {
+func resolveNeedsBootstrap(c conflict.Conflict) (bool, error) {
 	fmt.Println("This project needs to be cloned on this machine. Run:")
 	fmt.Printf("  ws bootstrap %s\n", c.Project)
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
@@ -221,7 +218,7 @@ func resolveNeedsBootstrap(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func resolvePathBlocked(c daemon.Conflict) (bool, error) {
+func resolvePathBlocked(c conflict.Conflict) (bool, error) {
 	fmt.Println("The target path is already taken by something else.")
 	if len(c.Details) > 0 {
 		fmt.Printf("  details: %s\n", string(c.Details))
@@ -232,7 +229,7 @@ func resolvePathBlocked(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func resolveCloneFailed(c daemon.Conflict) (bool, error) {
+func resolveCloneFailed(c conflict.Conflict) (bool, error) {
 	fmt.Println("Clone failed for this project.")
 	if len(c.Details) > 0 {
 		fmt.Printf("  details: %s\n", string(c.Details))
@@ -243,14 +240,14 @@ func resolveCloneFailed(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func resolveBranchDuplicate(c daemon.Conflict) (bool, error) {
+func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
 	return runPromptLoop([]promptAction{
 		{"e", "open workspace.toml in $EDITOR — pick which entry to keep",
 			func() (bool, error) { return editWorkspaceForDuplicate(c) }},
 	}, "k", "")
 }
 
-func editWorkspaceForDuplicate(c daemon.Conflict) (bool, error) {
+func editWorkspaceForDuplicate(c conflict.Conflict) (bool, error) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -265,7 +262,7 @@ func editWorkspaceForDuplicate(c daemon.Conflict) (bool, error) {
 	return false, nil
 }
 
-func resolveMirrorPushFailed(c daemon.Conflict) (bool, error) {
+func resolveMirrorPushFailed(c conflict.Conflict) (bool, error) {
 	var details struct {
 		Mirror string `json:"mirror"`
 		URL    string `json:"url"`
@@ -298,7 +295,7 @@ func resolveMirrorPushFailed(c daemon.Conflict) (bool, error) {
 	}, "k", "")
 }
 
-func findProjectBare(c daemon.Conflict) string {
+func findProjectBare(c conflict.Conflict) string {
 	if ws == nil || c.Project == "" {
 		return ""
 	}
@@ -309,7 +306,7 @@ func findProjectBare(c daemon.Conflict) string {
 	return layout.BarePath(filepath.Join(c.Workspace, proj.Path))
 }
 
-func resolveBranchOrphan(c daemon.Conflict) (bool, error) {
+func resolveBranchOrphan(c conflict.Conflict) (bool, error) {
 	wtPath := findOrphanWorktree(c)
 	dropLabel := "drop [[branches]] entry — no local worktree on this machine"
 	if wtPath != "" {
@@ -323,7 +320,7 @@ func resolveBranchOrphan(c daemon.Conflict) (bool, error) {
 	}, "s", "")
 }
 
-func findOrphanWorktree(c daemon.Conflict) string {
+func findOrphanWorktree(c conflict.Conflict) string {
 	barePath := findProjectBare(c)
 	if barePath == "" {
 		return ""
@@ -331,7 +328,7 @@ func findOrphanWorktree(c daemon.Conflict) string {
 	return locateWorktreeForBranch(barePath, c.Branch)
 }
 
-func dropOrphanEntry(c daemon.Conflict, wtPath string) (bool, error) {
+func dropOrphanEntry(c conflict.Conflict, wtPath string) (bool, error) {
 	if wtPath != "" {
 		fmt.Printf("Run: ws worktree rm %s %s --force\n", c.Project, c.Branch)
 		fmt.Println("Press enter once removed (or 's' to skip).")
@@ -358,7 +355,7 @@ func removeBranchFromWorkspace(project, branch string) error {
 	return saveWorkspace()
 }
 
-func keepOrphanLocal(c daemon.Conflict) (bool, error) {
+func keepOrphanLocal(c conflict.Conflict) (bool, error) {
 	if ws == nil || c.Project == "" || c.Branch == "" {
 		return true, nil
 	}
@@ -378,152 +375,4 @@ func keepOrphanLocal(c daemon.Conflict) (bool, error) {
 		return false, nil
 	}
 	return true, nil
-}
-
-type promptAction struct {
-	key, label string
-	handler    func() (done bool, err error)
-}
-
-func runPromptLoop(actions []promptAction, skipKeys ...string) (bool, error) {
-	for {
-		printPromptMenu(actions, skipKeys)
-		choice := strings.TrimSpace(readLine())
-		if isSkipKey(choice, skipKeys) {
-			return false, nil
-		}
-		done, err := dispatchPromptChoice(choice, actions)
-		if err != nil || done {
-			return done, err
-		}
-	}
-}
-
-func printPromptMenu(actions []promptAction, skipKeys []string) {
-	fmt.Println("Options:")
-	for _, a := range actions {
-		fmt.Printf("  (%s) %s\n", a.key, a.label)
-	}
-	for _, k := range skipKeys {
-		if k == "" {
-			continue
-		}
-		fmt.Printf("  (%s) skip — leave for later\n", k)
-	}
-	fmt.Print("> ")
-}
-
-func isSkipKey(choice string, skipKeys []string) bool {
-	for _, k := range skipKeys {
-		if choice == k {
-			return true
-		}
-	}
-	return false
-}
-
-func dispatchPromptChoice(choice string, actions []promptAction) (bool, error) {
-	for _, a := range actions {
-		if a.key == choice {
-			return a.handler()
-		}
-	}
-	return false, nil
-}
-
-func resolveTOMLConflict(c daemon.Conflict) (bool, error) {
-	return runPromptLoop([]promptAction{
-		{"s", "open shell in workspace repo — fix manually, exit shell to return",
-			func() (bool, error) { return shellAndConfirm(c.Workspace) }},
-		{"d", "show git status",
-			func() (bool, error) { return false, runInTerm(c.Workspace, "git", "status") }},
-	}, "k", "")
-}
-
-func shellAndConfirm(dir string) (bool, error) {
-	if err := openShell(dir); err != nil {
-		return false, err
-	}
-	fmt.Println("returned from shell. Mark conflict resolved? (y/N)")
-	if strings.EqualFold(strings.TrimSpace(readLine()), "y") {
-		return true, nil
-	}
-	return false, nil
-}
-
-func resolveProjectConflict(c daemon.Conflict) (bool, error) {
-	wtPath, err := findWorktreePath(c.Workspace, c.Project, c.Branch)
-	if err != nil {
-		fmt.Printf("warning: could not locate worktree: %v\n", err)
-	}
-	return runPromptLoop([]promptAction{
-		{"l", "git log local..remote (remote-only commits)",
-			func() (bool, error) { runDivergenceLog(wtPath, c.Branch+"..@{u}"); return false, nil }},
-		{"r", "git log remote..local (local-only commits)",
-			func() (bool, error) { runDivergenceLog(wtPath, "@{u}.."+c.Branch); return false, nil }},
-		{"o", "open shell in worktree — fix manually",
-			func() (bool, error) { return openShellAtWorktree(wtPath) }},
-	}, "k", "")
-}
-
-func openShellAtWorktree(wtPath string) (bool, error) {
-	if wtPath == "" {
-		fmt.Println("no worktree path; cannot open shell")
-		return false, nil
-	}
-	return shellAndConfirm(wtPath)
-}
-
-func runDivergenceLog(wtPath, gitRange string) {
-	if wtPath == "" {
-		return
-	}
-	_ = runInTerm(wtPath, "git", "log", "--oneline", gitRange)
-}
-
-func findWorktreePath(workspace, project, branch string) (string, error) {
-	if ws == nil {
-		return "", fmt.Errorf("workspace not loaded")
-	}
-	proj, ok := ws.Projects[project]
-	if !ok {
-		return "", fmt.Errorf("project %s not in workspace.toml", project)
-	}
-	mainPath := workspace + string(os.PathSeparator) + proj.Path
-	if branch == "" {
-		return mainPath, nil
-	}
-	barePath := layout.BarePath(mainPath)
-	if wtPath := locateWorktreeForBranch(barePath, branch); wtPath != "" {
-		return wtPath, nil
-	}
-	return mainPath, nil
-}
-
-func openShell(dir string) error {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	cmd := exec.Command(shell)
-	cmd.Dir = dir
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func runInTerm(dir, name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
-
-func readLine() string {
-	r := bufio.NewReader(os.Stdin)
-	line, _ := r.ReadString('\n')
-	return strings.TrimRight(line, "\r\n")
 }

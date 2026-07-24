@@ -1,8 +1,8 @@
 # Explorer TUI
 
 `ws` (run with no arguments in a TTY) — or `ws explorer` explicitly —
-opens a Bubble Tea TUI explorer across every workspace the daemon
-knows about. It is the fastest path from "I want to work on something"
+opens a Bubble Tea TUI explorer across every workspace registered on
+this machine. It is the fastest path from "I want to work on something"
 to a shell or a Claude Code session in the right directory.
 
 ```sh
@@ -16,10 +16,11 @@ piping / scripts get help instead of a TUI prompt.
 
 ## What you see
 
-The explorer reads `~/.config/ws/daemon.toml` to find every registered
-workspace, walks each one for projects / groups / worktrees / Claude
-sessions, and renders a pinned quick-nav header above a scrollable
-tree.
+The explorer reads `workspace_roots` from `~/.config/ws/config.toml`,
+walks each root for projects / groups / worktrees / Claude sessions,
+and renders a pinned quick-nav header above a scrollable tree. Manage
+the roots with `ws workspace add/rm/list`. The current workspace is a
+fallback when no roots are registered.
 
 ```text
 *1.myapp 2m  2.api 1h    3.docs 3h  4.experiments 1d  5.utils 2d
@@ -82,8 +83,8 @@ Per-row actions:
   `[[branches]].machines`).
 - `f` — on a project row, toggle favorite. Equivalent to
   `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
-  persisted to `workspace.toml` and synced across machines via the
-  reconciler.
+  persisted to `workspace.toml` and reaches other machines on the next
+  explicit `ws sync` on each side.
 
 Search:
 
@@ -112,9 +113,9 @@ and re-renders so the new entry appears immediately.
 ## Project edit
 
 Press `e` on a project row → group / category form. Edits update
-`workspace.toml` directly (Phase 1 of the next reconciler tick
-commits + pushes the change). Useful when reorganizing the layout
-without leaving the explorer.
+`workspace.toml` directly. The next `ws sync` commits and pushes the
+change. Useful when reorganizing the layout without leaving the
+explorer.
 
 ## Sessions
 
@@ -129,8 +130,8 @@ Three reasons it earns its keep:
 
 - **One key per pinned project.** Number hotkeys 1-9 beat
   remembering aliases for branches that come and go.
-- **Cross-workspace.** If you have several `ws daemon register`'d
-  directories, they all show up in one list.
+- **Cross-workspace.** Roots registered with `ws workspace add` all show
+  up in one list without scheduling background work.
 - **Claude integration.** The explorer is the primary way to drop
   into a Claude session that already has the right `cwd` and an
   optional resume target.

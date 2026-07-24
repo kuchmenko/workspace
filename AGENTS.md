@@ -1,729 +1,609 @@
 # AGENTS.md
 
 The single source of project knowledge and agent operating procedure for
-this repository. Read top to bottom before changing anything.
+this repository. Read it top to bottom before changing anything.
 
-Instructions are for AI agents (Claude Code, Cursor, OpenAI Codex, etc.)
-and human developers alike. Sections are layered: project knowledge first
-(what the system is and why), then performance protocol, then agent-
-specific obligations.
+Instructions apply to AI agents and human developers. Sections are layered:
+project knowledge, performance protocol, then agent obligations.
 
-## High-level goal
+## High-Level Goal
 
-Personal workspace manager for tracking, syncing, and operating on
-development projects across multiple machines. The end goal: the same set
-of projects, branches, and works-in-progress is available on every machine
-the user sits down at, without losing data and without making destructive
-operations behind the user's back.
+`ws` tracks, synchronizes, and operates development projects across the
+user's machines. The same project registry, branches, and work-in-progress
+should be available everywhere without hidden or destructive repository
+operations.
 
-The user works on the same projects from multiple machines (e.g. an Asahi
-laptop and a desktop). They want:
+The core invariants are:
 
-1. **One registry of projects** that travels between machines via git, so
-   adding a project on one machine makes it appear on the other.
-2. **Bidirectional, safe sync of feature work** so a branch started on
-   machine A can be picked up on machine B without manual `git push`/`pull`
-   gymnastics and without merge conflicts in unrelated branches.
-3. **No destructive operations** in project repos. The daemon never runs
-   `merge`, `rebase`, `reset`, or `force` inside a project. The worst it
-   can do is decline to act and surface a conflict.
-4. **Worktree-first layout** so two machines never fight over the same
-   checked-out branch — each machine has its own per-branch worktree;
-   `[[projects.X.branches]]` records which machines hold a copy. Branch
-   names are repo-native (`feat/foo`, `fix/bar`) from the start; the
-   legacy `wt/<machine>/<topic>` namespace still resolves but is no
-   longer the default.
+1. **One shared registry per workspace.** `workspace.toml` travels through
+   the workspace repository. A registry change reaches another machine
+   only after explicit sync on both sides.
+2. **Machine-local workspace discovery.** Each machine stores its own
+   canonical `workspace_roots` in `~/.config/ws/config.toml`. This list is
+   for the explorer; it does not schedule synchronization.
+3. **Foreground-only synchronization.** `ws sync` performs preflight,
+   review, confirmation, execution, and summary. There is no background
+   service, watcher, timer, IPC channel, or retry scheduler.
+4. **No project branch auto-push to origin.** `ws sync` fetches project
+   state and may fast-forward an eligible main worktree, but origin branch
+   pushes are explicit through `ws worktree push` or plain `git push`.
+5. **No destructive project operations.** Sync never runs project merge,
+   rebase, reset, force, branch deletion, or branch push. Unsafe states are
+   skipped and may become conflicts.
+6. **Worktree-first layout.** Each project uses one bare object store and
+   separate main/feature worktrees. Branch names are literal repo-native
+   names such as `feat/foo`; legacy `wt/<machine>/*` branches still resolve.
 
-Many design decisions were deliberate trade-offs and are non-obvious.
+These are deliberate trade-offs. Do not reintroduce background behavior or
+hidden branch publication as a convenience.
 
 ## Architecture
 
-### Source of truth
+### Shared and Local Sources of Truth
 
-- **`workspace.toml`** at the workspace root is the single source of truth
-  for project registration. It lists projects, their remotes, status,
-  category, default branch, and per-project sync flags. It is committed to
-  git and synced between machines via the workspace's own git repo.
-- The reconciler ensures `workspace.toml` is mergeable across machines by
-  installing a `merge=union` driver in `.gitattributes`. Concurrent
-  additions of different projects from different machines merge cleanly
-  without manual intervention.
+`workspace.toml` is the shared source of truth for project registration,
+groups, aliases, mirrors, explorer preferences, and branch metadata. Paths
+inside it are relative to the workspace root. It is committed in the
+workspace's own git repository.
 
-### On-disk layout (per project)
+Explicit sync installs a `merge=union` rule for `workspace.toml` in the
+owning repository's `.gitattributes`. Concurrent additions usually merge
+cleanly; duplicate branch metadata is validated and surfaced as a conflict.
 
-After `ws migrate`, every project lives as a sibling triplet under its
-category directory:
+`~/.config/ws/config.toml` is machine-local:
+
+```toml
+machine_name = "linux"
+workspace_roots = ["/home/user/dev", "/home/user/work"]
+```
+
+`ws workspace add/rm/list` owns `workspace_roots`. Roots are canonicalized,
+deduplicated, and sorted. `ws setup` registers the workspace it creates.
+Loading machine config performs a one-time migration from the removed legacy
+`daemon.toml`; this compatibility path is historical data migration, not a
+runtime architecture dependency.
+
+### On-Disk Project Layout
+
+After `ws migrate`, or immediately for projects created by `ws add` /
+`ws create`, paths are siblings:
 
 ```text
 personal/
-├── myapp/                       ← main worktree (project.default_branch)
-│   └── .git                     ← file pointing into ../myapp.bare
-├── myapp.bare/                  ← bare repo, source of truth for git state
-└── myapp-wt-<machine>-<topic>/  ← extra per-feature worktrees, optional
+├── myapp/                              main worktree
+│   └── .git                            pointer into ../myapp.bare
+├── myapp.bare/                         git object store
+└── myapp-wt-linux-feat-auth-refactor/  optional feature worktree
 ```
 
-- `<project>/` keeps its original path so `cd personal/myapp` still drops
-  the user into a working repo. Tooling that doesn't understand worktrees
-  generally still works because `.git` is a valid pointer file.
-- `<project>.bare/` is the only place git objects live. Worktrees share it.
-- `<project>-wt-<machine>-<branch-slug>/` is the convention for extra
-  worktrees created by `ws worktree add`. The directory name has dashes
-  only (no slashes); slug collisions get a deterministic `-<sha8>`
-  suffix from `SHA-1(branch)`. The underlying branch name is whatever
-  the user typed (e.g. `feat/auth-refactor`).
+- `<project>/` keeps the original project path stable.
+- `<project>.bare/` owns git objects and refs shared by all worktrees.
+- Extra directories use `<project>-wt-<machine>-<branch-slug>`.
+- Slashes flatten only in the directory name. The branch remains literal.
+- Slug collisions receive deterministic `-<sha8>` suffixes from
+  `SHA-1(branch)`.
 
-### Branch naming convention
+### Branch Naming and Metadata
 
-- Branch names are **literal user input.** `ws worktree add <project>
-  <branch>` accepts the branch name verbatim — no `wt/<machine>/`
-  injection, no slug rewrite, no pattern templating. The CLI validates
-  with `git check-ref-format --branch` and surfaces git's error on
-  rejection. Type whatever your project convention is from the start
-  (`feat/auth-refactor`, `fix/prod-1234`, `chore/cleanup`).
-- The reconciler **never auto-pushes project branches.** Pushes are
-  explicit via `ws worktree push <project> <branch>` (which also stamps
-  `last_active_*` in `workspace.toml`) or plain `git push` from inside
-  the worktree (which skips the metadata stamp).
-- Per-branch ownership lives in `[[projects.X.branches]]` blocks in
-  `workspace.toml`. `ws worktree add` appends this machine to the
-  branch's `machines` slice; `ws worktree rm` removes it. When the
-  slice becomes empty, the entry is GC'd on the next save — there are
-  no `[[branches]]` orphan tombstones on disk.
-- Legacy `wt/<machine>/<topic>` branches still work: `ws worktree add
-  myapp wt/linux/legacy-foo` attaches to the existing local branch and
-  registers it in `[[branches]]`. The reconciler ignores branches that
-  are not in the registry, so unregistered legacy worktrees keep
-  functioning without any forced migration.
-- `<topic>` may still contain slashes (`feat/auth-refactor`). Slashes
-  are preserved in the branch name; the worktree directory uses
-  `<project>-wt-<machine>-<branch-slug>` with `/` flattened to `-`.
-  Distinct branches whose slugs collide get a deterministic `-<sha8>`
-  suffix from `SHA-1(branch)`.
-- `~/.config/ws/config.toml` field `machine_name` still identifies this
-  machine in `branches.<name>.machines` and `last_active_machine`. The
-  user is prompted to set it on first use.
+`ws worktree add <project> <branch>` accepts the branch verbatim and
+validates it with `git check-ref-format --branch`. It does not synthesize a
+namespace or enforce a project convention.
 
-### Reconciler (the daemon's brain)
+Per-branch ownership lives in `[[projects.X.branches]]`:
 
-`internal/daemon/reconciler.go` is a single state-machine that replaces the
-old split Syncer/Poller pair. On each tick (immediate at startup, then on
-the configured interval, plus on `config_changed` IPC notifications) it
-runs the following sequence:
+- `machines` identifies machines with a local worktree.
+- `last_active_*` is updated by worktree creation, explicit push, explorer
+  launch stamping, and foreground sync observing local-ahead commits.
+- `last_pushed_*` is written after explicit publication or attachment to an
+  already-published branch. Orphan detection requires this signal.
+- `created_*` records explicit branch/worktree creation. Explorer launch
+  stamping may create minimal entries without creator fields.
 
-**Sidecar pre-check (inline guard, runs before any phase).** Before any
-work, the reconciler calls `sidecar.AnyActive(wsRoot)`, which checks every
-known sidecar kind (`bootstrap`, `migrate`, `add`, `create`) for the
-workspace at `~/.local/state/ws/<kind>/<sha>.toml`. If any sidecar exists
-and its recorded pid is alive, the entire tick is skipped for that
-workspace — both Phase 1 and Phase 2. This prevents the daemon from
-pushing half-completed state upstream and from racing the interactive
-command on git operations. Other registered workspaces (each with their
-own reconciler goroutine) are unaffected. Stale sidecars (pid dead) are
-ignored, and the tick proceeds normally.
+`ws worktree add` claims a branch for this machine; `ws worktree rm`
+releases it. Empty `machines` removes the entry on save. Plain `git push`
+works but does not update metadata.
 
-1. **Phase 1 — `syncTOML`.** Commits any local changes to `workspace.toml`
-   under a `ws: auto-sync workspace.toml from <machine>` message, fetches,
-   handles every combination of `local_dirty`/`local_ahead`/`remote_ahead`
-   via a fixed decision matrix, falls back to `pull --rebase` (which is
-   safe thanks to union-merge), and records `toml-merge`/`toml-push-failed`
-   conflicts when even rebase fails.
+Legacy `wt/<machine>/<topic>` branches can be re-registered by calling
+`ws worktree add` with the existing branch. Unregistered legacy worktrees
+remain usable and are ignored by metadata refresh.
 
-2. **Phase 2 — `reconcileProjects`.** For every active project:
-   - If neither `<path>.bare` nor `<path>` exist (project registered in
-     `workspace.toml` but nothing on disk), and `daemon.auto_bootstrap` is
-     enabled (default `true`) and `auto_sync != false`, attempt
-     `clone.CloneIntoLayout` non-interactively. Sequential by construction:
-     one project per tick. Errors map to:
-       - `ErrNeedsBootstrap` → conflict `needs-bootstrap` (default branch
-         ambiguous, user must run `ws bootstrap <name>`)
-       - `ErrPathBlocked` → conflict `path-blocked`
-       - network/auth → existing per-project exponential backoff +
-         `clone-failed` conflict
-     On success, `default_branch` is persisted back into `workspace.toml`
-     so other machines pick it up via the next Phase 1 sync.
-   - If `<path>.bare` is missing but `<path>` exists, record a
-     `needs-migration` conflict and skip. Plain checkouts are never
-     auto-migrated — the user runs `ws migrate` explicitly.
-   - `git fetch --all --prune --tags` in the bare. Failure increments a
-     per-project exponential backoff (base = poll interval, cap = 1h).
-   - For each worktree returned by `git worktree list`:
-     - Skip if `index.lock` is present (the user is mid-edit).
-     - **Main worktree** (the one at `proj.path`): if clean and only
-       behind, `git pull --ff-only`. Diverged → record `main-divergence`
-       and leave it. Dirty → silently skip.
-     - **Sibling worktrees on a registered branch**: if local is ahead
-       of origin, stamp `last_active_machine = me` /
-       `last_active_at = now()` on the `[[branches]]` entry. No push.
-     - **Sibling worktrees on an unregistered branch** (legacy
-       `wt/<machine>/*` checkouts that pre-date the redesign): no-op.
-       The user can re-register via `ws worktree add <project> <branch>`.
-   - For every `[[branches]]` entry whose `last_pushed_at` is set,
-     check `refs/remotes/origin/<name>` post-fetch. Missing → record
-     `branch-orphan` (PR-merge auto-delete is the typical cause; user
-     resolves via `ws sync resolve`). Re-appearance → clears the
-     conflict on the next tick. Branches with empty `last_pushed_at`
-     are local-only (created via `ws worktree add`, never pushed)
-     and are intentionally skipped — origin's missing ref is expected.
-   - `ws.Validate()` runs after `config.Load` and emits
-     `branch-duplicate` for any project that has two `[[branches]]`
-     entries sharing the same `name` (typical race: two machines did
-     `ws worktree add` on the same branch in the same Phase 1 cycle).
-   - If anything changed in-memory during the loop (metadata refresh,
-     orphan clearing), `config.Save` writes the fresh `workspace.toml`
-     so Phase 1 of the next tick commits and pushes it.
-   - `auto_sync = false` on a project limits the work to fetch-only.
+### Foreground Sync Core
 
-**Conflict bookkeeping (inline).** Conflicts surfaced during Phase 2 are
-persisted to `~/.local/state/ws/conflicts.json` (XDG-aware) and the user
-is notified via `notify-send` (best-effort, silent fallback). The
-reconciler also clears stale entries on each tick when their underlying
-condition has been resolved. There is no separate "Phase 3" — recording
-happens inline as conflicts are detected.
+`internal/sync` owns synchronization. `internal/cli/sync*.go` owns TTY
+detection, TUI/headless presentation, signals, exit codes, and summaries.
 
-The reconciler is **idempotent**: missed ticks and duplicate triggers
-never break state, because each tick recomputes desired vs actual from
-scratch.
+The CLI flow is:
 
-### Migration (`ws migrate`)
+```text
+fresh config.Load
+      |
+      v
+BuildPlan -> Probe (parallel, noninteractive, mutation-free)
+      |                |
+      |                +-> verified known-provider SSH candidates
+      v
+Selection (interactive run-only choices or strict headless all-target run)
+      |
+      v
+Runner.RunContext (frozen plan, sequential execution)
+      |
+      +-> selected origin conversions
+      +-> workspace registry synchronization
+      +-> registry reload and validation
+      +-> selected project origin/fetch/mirrors/worktrees/orphans
+      +-> metadata save and typed Report/Event stream
+```
 
-`internal/migrate/migrate.go` converts a plain `git clone` checkout into
-the bare+worktree layout in place. It is intentionally **fail-safe rather
-than reversible** — there is no `ws unmigrate`, but every step before the
-irreversible final swap preserves the original `.git` so the user can
-recover by hand.
+#### Plan
 
-Default UX is the **interactive bubbletea TUI** (`internal/cli/migrate_tui.go`):
-scan → plan summary → per-project decision for any project that needs one
-(`dirty / stash / detached`) → progress → done. CLI flags (`--all`,
-`--check`, `--wip`, `--no-tui`) skip the TUI and run the legacy text flow,
-which is also what happens when stdout is not a TTY (pipes, CI).
+`BuildPlan` snapshots each active project's remote, path, status, default
+branch, and mirrors. It classifies disk state as `present`, `missing`,
+`needs-migration`, or `blocked`.
 
-Pre-flight handling, in order. Each path that doesn't simply abort
-creates an extra side branch that becomes part of the bare clone:
+Targets are the workspace registry origin when configured, every active
+project origin, and configured mirrors. Exact URL duplicates share one
+endpoint. Endpoints are grouped by source identity for review. Ordering is
+deterministic.
 
-- **Detached HEAD.** Default: abort. Interactive `[c]` (or
-  non-interactive `Options.CheckoutDefault=true`): if the current commit
-  is reachable from any local branch, just `checkout default_branch`. If
-  it's not reachable, first preserve it on a fresh
-  `wt/<machine>/migration-detached-<ts>` branch so the orphaned commits
-  survive into the bare clone.
-- **Stash entries.** Default: abort (stash refs are not copied by
-  `clone --bare`, so they would silently disappear). Interactive `[b]`
-  (or `Options.StashBranch=true`): walk every entry via
-  `git stash branch wt/<machine>/migration-stash-<ts>-N`, commit the
-  popped state, and return to the original branch. The new branches are
-  preserved into the bare like any other local branch.
-- **Dirty working tree.** Default: abort. Interactive `[w]` (or
-  `--wip` / `Options.WIP=true`): commit the dirty state to
-  `wt/<machine>/migration-wip-<ts>`, then check out the original branch
-  again so the post-migration main worktree matches the user's
-  expectation. The WIP branch is attached as a sibling worktree after
-  migration completes.
+The snapshot is a safety boundary. Execution reloads `workspace.toml`; a
+project whose sync-relevant fields changed after preflight is skipped with
+`plan-changed`. Active projects introduced after preflight are also skipped.
 
-Other invariants:
+#### Probe
 
-- **All local branches are preserved into the bare** via `clone --bare
-  --no-local` plus belt-and-suspenders `git fetch <main> <branch>` for
-  any branch the clone missed.
-- **Hooks are migrated.** Files in `.git/hooks/` that are not `*.sample`
-  and have an executable bit get copied to `<bare>/hooks/`.
-- **No upstream tracking is restored.** Bare repos clone with the mirror
-  refspec `+refs/heads/*:refs/heads/*` and have no `refs/remotes/origin/*`
-  refs at all, so `branch --set-upstream-to=origin/X` always fails. The
-  worktree layout doesn't need it: the reconciler only auto-pushes
-  `wt/<machine>/*` branches, and ordinary `git pull` in a worktree
-  resolves its upstream lazily.
-- **Worktree attach via --no-checkout + pointer swap.** `git worktree
-  add --force <existing-non-empty-dir>` does NOT attach to a directory
-  that already has files — `--force` only relaxes the
-  "branch-already-checked-out" and "registered-but-missing" checks, not
-  the path-existence check. Migrate's working strategy:
-    1. Move existing `.git` aside to `.git.migrating-<ts>` (recoverable).
-    2. `git worktree add --no-checkout <main>.wt-tmp <branch>` — git
-       writes the worktree's `.git` pointer file to the tmp dir but no
-       working-tree files.
-    3. `mv <main>.wt-tmp/.git <main>/.git` — pointer file lands in the
-       existing main path, on top of the user's untouched files.
-    4. `rm -rf <main>.wt-tmp` (now empty).
-    5. `git worktree repair <main>` so the bare's `worktrees/<name>/gitdir`
-       points at `<main>` instead of the tmp location.
-    6. Verify HEAD didn't shift.
-  Any failure between steps 2–5 restores `.git.migrating-<ts>` and tears
-  down the bare. Step 6 is the last point a rollback is feasible.
+`Probe` checks unique endpoints with up to eight workers, noninteractive git,
+and a 15-second per-endpoint timeout. It distinguishes success,
+authentication/access failure, timeout, unreachable, unsupported, and
+canceled. Probe never mutates repositories, config, or conflicts.
 
-`ws migrate --check` reports state without changing anything. `ws migrate
---all` walks every active project, skipping already-migrated ones and
-projects that are not cloned on this machine.
+For a failed HTTPS origin on a known provider, probe may derive the exact SSH
+form and test it. Conversion becomes selectable only after that SSH endpoint
+succeeds. Mirrors are not conversion targets.
 
-The migration process is coordinated with the daemon via a sidecar at
-`~/.local/state/ws/migrate/<sha>.toml`. While migrate is running with a
-live pid, the reconciler skips its tick entirely for the affected
-workspace — both Phase 1 (workspace.toml git sync) and Phase 2 (project
-reconcile) — preventing races on git operations and half-migrated state
-being pushed upstream. Stale sidecars (crashed run) trigger a resume
-prompt on the next `ws migrate` invocation.
+#### Selection and UI
 
-### Conflict store and `ws sync resolve`
+Accessible targets begin selected. In the TUI, users may exclude sources,
+projects, the workspace target, or mirrors for this invocation only.
+Excluding a project excludes its mirrors. These choices are ephemeral and
+must not become persisted sync preferences.
 
-`internal/conflict/conflict.go` owns `~/.local/state/ws/conflicts.json`.
-The reconciler is the only writer; `ws sync resolve` is the only reader
-that mutates entries. Coordination is via the file alone (atomic write
-via tmp+rename); there is no IPC between them. The store deduplicates
-on `(workspace, project, branch, kind)` so a recurring condition does
-not produce duplicate entries on every tick.
+Both stdin and stdout must be terminals for the TUI. Otherwise headless mode
+prints deterministic ANSI-free output, requires every endpoint to pass, and
+does no mutation if any preflight probe fails. Headless mode does not choose
+SSH conversion automatically.
 
-`ws sync resolve` is a prompt-based CLI (intentionally not a TUI in v1).
-It lists conflicts, lets the user open a shell in the affected worktree
-or workspace repo, shows `git log local..remote` and `remote..local`,
-and clears entries when the user confirms a fix. **It never auto-rebases
-or auto-merges anything** — every action that modifies git state is
-explicitly the user's choice via the spawned shell.
+Exit codes are `0` success, `1` preflight/execution/conflict failure, and
+`130` cancellation.
 
-## Project statuses
+#### Runner
 
-- `active` — cloned locally, actively developed
-- `dormant` — still cloned but no recent activity (detected by daemon)
+`Runner.RunContext` checks live sidecars, applies selected verified origin
+conversions, synchronizes the workspace repository, reloads and validates
+the registry, then processes projects sequentially in sorted order.
+
+Project conversion updates both the local repository origin and
+`workspace.toml`; a failed registry save rolls repository origins back.
+Workspace conversion updates the workspace repository origin. Conversions
+are always explicit interactive choices backed by successful probes.
+
+For each selected project:
+
+- Missing paths clone into the bare+worktree layout.
+- Plain checkout state records `needs-migration`.
+- Incompatible paths record `path-blocked`.
+- Present bare repositories repair the origin fetch refspec when needed and
+  run `git fetch --all --prune --tags`.
+- Selected mirrors are pushed after origin fetch.
+- Clean main worktrees that are behind and not ahead fast-forward with
+  `git pull --ff-only`.
+- Diverged main worktrees record `main-divergence`; dirty main worktrees and
+  index-locked worktrees are left alone.
+- Registered sibling worktrees with local-ahead commits refresh activity
+  metadata without pushing.
+- Previously pushed registered branches missing from origin record
+  `branch-orphan`; local-only branches are skipped by orphan detection.
+
+Cancellation stops new work and waits for in-flight work to return. The
+report records operation starts, results, conversions, conflicts, skips, and
+cancellation for live progress and final summary.
+
+There is no background retry, cooldown, backoff, auto-bootstrap setting, or
+per-project `auto_sync` field. Fix failures and invoke `ws sync` again.
+
+### Workspace Registry Synchronization
+
+`internal/sync/toml.go` resolves a symlinked `workspace.toml`, finds its git
+repository, and no-ops when no origin/upstream exists. Otherwise it:
+
+1. Ensures the union merge rule.
+2. Fetches the workspace repository.
+3. Commits dirty `workspace.toml` under
+   `ws: auto-sync workspace.toml from <machine>`.
+4. Rebases the workspace repository when behind.
+5. Validates the registry and pushes.
+
+It may amend the immediately preceding matching auto-sync commit to coalesce
+local registry edits. This history manipulation is restricted to the
+workspace repository. It is never applied to project repositories.
+
+### Sidecars
+
+`ws add`, `ws create`, `ws bootstrap`, and `ws migrate` use sidecars at
+`~/.local/state/ws/<kind>/<sha>.toml`. Sidecars support crash recovery and
+same-workspace command exclusion. Foreground sync skips when any live sidecar
+would make execution race an in-progress operation.
+
+`internal/sidecar` centralizes path, lock, pid, load/save/delete, and stale
+process behavior. Command packages own command-specific payloads. Stale
+bootstrap and migrate sidecars can be reported and removed by
+`ws doctor --fix`.
+
+Sidecars do not signal or pause a background process; none exists.
+
+### Migration
+
+`internal/repo/migrate.go` converts a plain checkout to the bare+worktree
+layout. It is fail-safe rather than generally reversible. Preflight handles:
+
+- Detached HEAD: abort by default, or preserve unreachable commits on a
+  migration branch before checking out the default branch.
+- Stash entries: abort by default, or materialize each stash into a migration
+  branch and commit it.
+- Dirty tree: abort by default, or snapshot it to a migration WIP branch.
+
+Migration preserves all local branches and executable non-sample hooks.
+Internal recovery branches use
+`wt/<machine>/migration-{detached,stash,wip}-<timestamp>` and become part of
+the bare repository.
+
+To attach the existing non-empty project directory safely:
+
+1. Move `.git` aside to a recoverable path.
+2. Add a temporary worktree with `--no-checkout`.
+3. Move only the pointer file into the existing project directory.
+4. Remove the empty temporary directory.
+5. Repair worktree metadata for the final path.
+6. Verify HEAD did not change.
+
+Failures before final verification restore the original `.git` and remove
+the incomplete bare repository. `ws migrate --check` is read-only;
+`ws migrate --all` skips already-migrated or missing projects.
+
+### Conflict Store and Resolution
+
+`internal/conflict` owns `~/.local/state/ws/conflicts.json`. Foreground sync
+records and clears observed conditions. Records deduplicate on
+`(workspace, project, branch, kind)` and save atomically.
+
+`ws sync resolve` is an interactive prompt. It can open a relevant shell or
+editor, retry a mirror push, or apply branch-metadata actions selected by the
+user. It never automatically merges or rebases project work.
+
+Conflict kinds currently include `toml-merge`, `toml-push-failed`,
+`main-divergence`, `needs-migration`, `needs-bootstrap`, `path-blocked`,
+`clone-failed`, `branch-duplicate`, `branch-orphan`, and
+`mirror-push-failed`.
+
+## Project Statuses
+
+- `active`: included in sync planning and ordinary active use.
+- `dormant`: retained in the registry but excluded from sync planning.
+- `archived`: retained but excluded from sync planning.
+
+Status transitions are explicit registry changes; there is no background
+activity classifier.
 
 ## Categories
 
-- `personal` — user's own repos
-- `work` — organization repos
+- `personal`: the user's own repositories.
+- `work`: organization repositories.
 
-## Workspace-wide fields (`workspace.toml`)
+## Workspace Fields
 
-The `[agent]` top-level block holds user preferences for `ws agent`.
-Synced across machines via `workspace.toml`. Per-machine preferences
-would live in `~/.config/ws/config.toml` instead — `[agent]` is
-intentionally cross-machine.
+The `[agent]` block is shared through `workspace.toml`:
 
 ```toml
 [agent]
-default_view = "favorites"   # "all" (default) | "favorites"
-                             # toggled by `space v` in `ws agent`
+default_view = "favorites" # "all" by default
 ```
 
-## Per-project fields (`workspace.toml`)
+Machine-specific preferences belong in `~/.config/ws/config.toml`, not this
+block.
+
+## Per-Project Fields
 
 ```toml
 [projects.myapp]
 remote         = "git@github.com:user/myapp.git"
-path           = "personal/myapp"   # main worktree, relative to ws root
+path           = "personal/myapp"
 status         = "active"
 category       = "personal"
-default_branch = "main"             # determined at migrate time, prompt fallback
-auto_sync      = true               # default true; false = fetch only
-favorite       = true               # pinned to Favorites section of `ws agent`
-group          = "..."              # optional grouping
+default_branch = "main"
+favorite       = true
+group          = "personal"
 
-# One [[branches]] block per branch this project knows about, populated
-# by `ws worktree add`, `ws agent` launch stamps, and `ws worktree
-# push` / the reconciler's metadata refresh. Empty-machines entries
-# never persist across saves.
-#
-# `ws agent` activity stamps create a minimal entry for the project's
-# default branch the first time the user opens a shell or claude
-# session on it — CreatedBy / CreatedAt stay empty in this case
-# because the launcher is not a user-driven act of branch creation,
-# unlike `ws worktree add`.
+[projects.myapp.mirrors]
+codeberg = "git@codeberg.org:user/myapp.git"
+
 [[projects.myapp.branches]]
-  name                = "feat/auth-refactor"
-  machines            = ["linux", "archlinux"]   # who currently has a worktree
-  last_active_machine = "linux"                  # last to push, commit, or launch
-  last_active_at      = "2026-05-08T12:00:00Z"
-  last_pushed_machine = "linux"                  # last to ws worktree push
-  last_pushed_at      = "2026-05-07T16:30:00Z"   # absent until first push
-  created_by          = "linux"                  # original creator (empty for launch-stamped)
-  created_at          = "2026-04-08T13:59:04Z"   # original create time (empty for launch-stamped)
+name                = "feat/auth-refactor"
+machines            = ["linux", "archlinux"]
+last_active_machine = "linux"
+last_active_at      = "2026-05-08T12:00:00Z"
+last_pushed_machine = "linux"
+last_pushed_at      = "2026-05-07T16:30:00Z"
+created_by          = "linux"
+created_at          = "2026-04-08T13:59:04Z"
 ```
 
-Legacy `[[autopush.owned]]` and `autopush.branches []string` from
-pre-0.7.0 workspace.toml files are auto-migrated on `config.Load` and
-removed on the next `config.Save`. No manual edit is required.
+Do not add `auto_sync`; the field no longer exists. Legacy `autopush`
+configuration is migrated to branch metadata on load and removed on save.
 
 ## Commands
 
-### Project management
+### Project Management
 
 | Command | Purpose |
 |---|---|
-| `ws add [remote-url...]` | Register and clone one or more new repos into `workspace.toml`, directly into the bare+worktree layout (no follow-up `ws migrate` needed). Accepts positional URLs, `-` for stdin (one URL per line, `#` comments allowed), and the legacy single-URL invocation. Flags: `-c`/`--category` personal\|work, `-g`/`--group`, `-n`/`--name` (single-URL only), `--no-clone` register-only, `--no-tui` force headless, `--tui` force TUI (Phase 3). Crash-safe via a sidecar at `~/.local/state/ws/add/`; daemon pauses while running. |
-| `ws create` | Create a new GitHub repository in any accessible owner (personal account or org via `gh api user/orgs`), then register it in `workspace.toml` and clone it as bare+worktree — same end state as `ws add`. Default: interactive single-screen TUI (owner selector, name, visibility, description, category, group). Repo is always created with `--add-readme` so the default branch + first commit exist before clone runs. Headless mode via `--owner --name [--public] [--description ...]`. Requires `gh auth login`. Crash-safe via a sidecar at `~/.local/state/ws/create/`; daemon pauses while running. |
-| `ws bootstrap [name]` | Interactive TUI: clone projects listed in `workspace.toml` that are missing on this machine, directly into the bare+worktree layout. Crash-safe via a sidecar at `~/.local/state/ws/bootstrap/`. While running, the daemon pauses all sync for this workspace. `--dry-run` shows the plan without cloning. |
-| `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. Default: interactive TUI with per-project decisions for `dirty / stash / detached HEAD`. Pass any flag (`--all`, `--check`, `--wip`, `--no-tui`) or run without a TTY to switch to non-interactive mode. Crash-safe via a sidecar at `~/.local/state/ws/migrate/`; daemon pauses while running. See "Migration" above for the worktree-attach strategy. |
-| `ws sync` | Run **one reconciler tick** in the foreground (commit/push/pull `workspace.toml`, fetch every bare, ff-pull main worktrees, refresh `last_active_*` for branches with local-ahead commits, detect origin-deleted branches as `branch-orphan`). The reconciler does NOT push project branches — `ws worktree push` is the user-driven path. Same work as a daemon tick. |
-| `ws sync resolve` | Inspect and act on unresolved conflicts from `~/.local/state/ws/conflicts.json`. Prompt-based; never auto-merges. |
-| `ws status` | Table: PROJECT / GROUP / STATUS / BRANCH / LAST COMMIT / LAYOUT. The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N is the count of extra worktrees), or `missing`. |
-| `ws scan` | Find git repos under `personal/`, `work/`, `playground/`, `researches/`, `tools/` that are not in `workspace.toml`. **Ignores `*.bare/` and `*-wt-*/` siblings** so the worktree layout doesn't show up as orphans. |
-| `ws doctor [name] [--fix] [--json] [--skip-remote]` | Run unified health check across system (daemon, stale sidecars, active conflicts, config validity) and per-project state (layout, fetch refspec, remote URL, reachability, default branch, branch upstream, index locks). `--fix` applies all safe auto-fixes in batch; conflicts and index-locks are intentionally never auto-fixed. Exit codes: `0` clean, `1` issues found, `2` --fix applied. |
-| `ws favorite add/rm/list <project>` | Pin / unpin projects to the Favorites section of `ws agent`. Sets `[projects.X].favorite = true` in `workspace.toml`, which syncs across machines. Same toggle is available in the TUI via the `f` hotkey. |
+| `ws setup` | Interactive GitHub repo selection, registry creation, and local workspace-root registration. |
+| `ws add [remote-url...]` | Register and clone one or more repositories directly into the bare+worktree layout; supports stdin and interactive/headless modes. |
+| `ws create` | Create a GitHub repository through `gh`, then register and clone it. |
+| `ws bootstrap [name]` | Clone registered projects missing on this machine; supports interactive and dry-run flows. |
+| `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. |
+| `ws sync` | Explicit preflight, optional interactive selection/conversion, sequential synchronization, and summary. |
+| `ws sync resolve` | Inspect and manually resolve persisted conflicts. |
+| `ws status` | Show project, group, status, branch, last commit, and layout. |
+| `ws scan` | Find unregistered repositories while ignoring bare/worktree siblings. |
+| `ws path [project]` | Print the workspace or project path for scripts. |
+| `ws doctor [name] [--fix] [--json] [--skip-remote]` | Check system and project health; apply only safe fixes. |
+| `ws favorite add/rm/list <project>` | Manage explorer favorites stored in `workspace.toml`. |
 
-### Worktree layout
-
-| Command | Purpose |
-|---|---|
-| `ws migrate <name>` | Convert a plain checkout to the bare+worktree layout in place. Verify-before-delete; preserves all local branches and active hooks. |
-| `ws migrate --all` | Migrate every active project. Skips already-migrated. |
-| `ws migrate --check [name...]` | Preview without changes. Shows state and any blockers (dirty, stash, detached HEAD, hook count). |
-| `ws migrate <name> --wip` | Snapshot dirty working tree to a `wt/<machine>/migration-wip-<ts>` branch and attach as a sibling worktree. |
-| `ws worktree add <project> <branch> [--from <base>]` | Create or attach a worktree for the literal `<branch>`. Auto-detects existing remote (fetches and checks out) and existing local-only branches (attaches; covers legacy `wt/<machine>/*` re-registration). Records this machine in `[[branches]].machines` and stamps `last_active_*`. Slug collisions get `-<sha8>` deterministic suffix. |
-| `ws worktree list [project]` | Table: PROJECT / WORKTREE / BRANCH / STATE. STATE includes clean/dirty, ahead/behind, ownership (`main`, `mine`, `shared with <machines>`, `remote`, `legacy-wt`), and `last: <machine> <date>` from the registry. |
-| `ws worktree rm <project> <branch> [--force]` | Remove a worktree and release this machine from `[[branches]].machines`. Refuses dirty or unpushed unless `--force`. Empty `machines` causes the entry to be GC'd on save. |
-| `ws worktree push <project> <branch> [--force-dirty]` | Push the branch to origin via `git push -u origin <branch>` and stamp `last_pushed_*` (and bump `last_active_*`) in `workspace.toml`. Refuses dirty without `--force-dirty`; refuses branches missing from `[[branches]]` (sign of out-of-band creation). |
-| `ws wt …` | Alias for `ws worktree`. |
-
-### Aliases
+### Machine Workspace Registry
 
 | Command | Purpose |
 |---|---|
-| `ws alias list` | Show configured shell aliases. |
-| `ws alias add <alias> <target>` | Add an alias. |
-| `ws alias rm <alias>` | Remove an alias. |
-| `ws alias init [shell]` | Generate alias init code for the user's shell (zsh). |
-| `ws alias install` | Install the hook into `~/.zshrc`. |
+| `ws workspace add [path]` | Add a canonical root to local `workspace_roots`; defaults to cwd. |
+| `ws workspace rm [path]` | Remove a root from local discovery without deleting files. |
+| `ws workspace list` | Print locally registered workspace roots. |
 
-### Daemon
+These commands do not synchronize anything.
 
-| Command | Purpose |
-|---|---|
-| `ws daemon run` | Foreground (used by `start` after fork). |
-| `ws daemon start` | Background-spawn the daemon. |
-| `ws daemon stop` | Stop the daemon. |
-| `ws daemon restart` | Stop + start. |
-| `ws daemon status` | PID + running state. |
-| `ws daemon register [path]` | Add a workspace to the daemon's config so it gets reconciled on every tick. |
-| `ws daemon unregister [path]` | Remove a workspace from the daemon config. |
-| `ws daemon install-service` | Install systemd unit for the daemon. |
-
-### GitHub auth (for repo discovery)
+### Worktrees
 
 | Command | Purpose |
 |---|---|
-| `ws auth login` | Device flow or PAT. |
-| `ws auth logout` | Remove the stored token. |
-| `ws auth status` | Token status. |
+| `ws worktree add <project> <branch> [--from <base>]` | Create, attach, or re-register a worktree for the literal branch. |
+| `ws worktree list [project]` | Show worktrees, clean/dirty state, ahead/behind state, ownership, and last activity. |
+| `ws worktree rm <project> <branch> [--force]` | Remove a non-main worktree and release machine ownership. |
+| `ws worktree push <project> <branch> [--force-dirty]` | Explicitly publish the branch and stamp push/activity metadata. |
+| `ws wt ...` | Alias for `ws worktree`. |
 
-### Setup
+### Explorer and Organization
 
 | Command | Purpose |
 |---|---|
-| `ws setup` | Interactive bootstrap of a new workspace directory. |
+| `ws` / `ws explorer` / `ws agent` | Open the multi-workspace explorer in a TTY. |
+| `ws alias` | Interactive alias management. |
+| `ws alias add/rm/list` | Headless alias management. |
+| `ws alias init [zsh]` | Generate shell initialization code. |
+| `ws alias install` | Install the generated alias-state hook in zsh. |
 
-## Files the CLI relies on
+### Authentication and Setup
 
-- `<wsRoot>/workspace.toml` — project registry, single source of truth.
-- `<wsRoot>/.gitattributes` — `workspace.toml merge=union` (created by reconciler).
-- `~/.config/ws/config.toml` — `machine_name` for branch namespacing.
-- `~/.config/ws/daemon.toml` — list of workspaces watched by the daemon plus socket path.
-- `~/.config/ws/daemon.{sock,pid,log}` — daemon runtime files.
-- `~/.local/state/ws/conflicts.json` — unresolved sync conflicts. Honors `$XDG_STATE_HOME`.
-- `~/.local/state/ws/bootstrap/<sha>.toml` — per-workspace bootstrap progress sidecar. Created by `ws bootstrap`, deleted on success. While present with a live pid, the daemon skips its tick for that workspace. Honors `$XDG_STATE_HOME`.
-- `~/.local/state/ws/migrate/<sha>.toml` — per-workspace migrate progress sidecar. Created by `ws migrate`, deleted on success. Same daemon-skip semantics. Honors `$XDG_STATE_HOME`. All four sidecar kinds (`bootstrap`, `migrate`, `add`, `create`) share `internal/sidecar` which centralizes file/lock/pid mechanics; command-specific value types live in their own packages and round-trip through `json.RawMessage`.
-- `~/.local/state/ws/add/<sha>.toml` — per-workspace `ws add` session sidecar. Created when `ws add` starts (any mode), deleted on success/error/panic via `defer`. While present with a live pid, the daemon skips its tick for that workspace and a second `ws add` invocation refuses with an "is running" error. Honors `$XDG_STATE_HOME`.
-- `~/.local/state/ws/create/<sha>.toml` — per-workspace `ws create` session sidecar. Same lifecycle and contract as the `add` sidecar; the kind name differs so concurrent `ws add` and `ws create` runs do not stomp each other. Honors `$XDG_STATE_HOME`.
+| Command | Purpose |
+|---|---|
+| `ws auth login/logout/status` | Manage the token used for GitHub discovery. |
+| `ws docs --agent` | Emit generated command capability metadata. |
+
+`ws create` uses `gh` and therefore requires separate `gh auth login`.
+
+## Runtime Files
+
+- `<wsRoot>/workspace.toml`: shared workspace registry.
+- `<wsRoot>/.gitattributes`: union merge rule installed by explicit sync.
+- `~/.config/ws/config.toml`: `machine_name` and local
+  `workspace_roots`.
+- `~/.config/ws/token`: GitHub discovery token.
+- `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
+- `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,
+  `create`, `bootstrap`, and `migrate`.
+- `~/.local/state/ws/aliases.zsh`: generated shell aliases.
+
+There are no service, socket, pid, log, watcher, or IPC runtime files.
 
 ## Conventions
 
-- All paths in `workspace.toml` are relative to the workspace root.
-- Scripts and reconciler logic must be idempotent — safe to re-run.
-- No secrets in this repo.
-- **No comments in production Go code.** Things explained by a comment
-  should become code (named constants, asserts, typed wrappers, explicit
-  state enums). Permitted: build constraints (`//go:build`), package doc
-  comments (one line, required by `go doc`), `// DECISION:` blocks for
-  non-obvious WHY anchored to a specific line, `// TODO:` / `// FIXME:`
-  / `// HACK:` markers. Test files (`*_test.go`) are exempt — explanatory
-  comments in tests are fine.
-- **TUI consumers import `internal/tui` only.** Direct imports of
-  `github.com/charmbracelet/{bubbletea,lipgloss,bubbles/*}` outside
-  `internal/tui/` are a regression. The seam exists so a future PR can
-  swap the bubbletea implementation behind `internal/tui` without
-  touching consumers. Quick check:
-  `grep -rln "charmbracelet" --include='*.go' | grep -v internal/tui`
-  should return zero.
-- `workspace.toml` is the only file that changes during normal operation
-  (plus `.gitattributes` once, on the reconciler's first run).
-- The daemon **never** runs `merge`, `rebase`, `reset`, `force`, **or
-  `push`** inside a project repo. The worst it does is record a
-  conflict and stop. Project pushes are user-driven via
-  `ws worktree push` or plain `git push`.
-- Do **not** hand-edit `[[projects.X.branches]]` blocks unless you are
-  reconciling a `branch-duplicate` conflict. The CLI helpers
-  (`ClaimBranch` / `ReleaseBranch` / `TouchActive` / `StampActivity`)
-  are the only sanctioned writers; manual edits race against the
-  reconciler's metadata refresh.
+- All `workspace.toml` paths are relative to the workspace root.
+- Synchronization and command recovery paths must be safe to re-run.
+- No secrets belong in this repository.
+- **No comments in production Go by default.** Prefer names, types, control
+  flow, and file boundaries. Permitted exceptions are build constraints,
+  package docs, approved `DECISION` rationale, and approved
+  `TODO`/`FIXME`/`HACK` markers. Tests may explain invariants.
+- **TUI consumers import `internal/tui` only.** Direct Charmbracelet imports
+  outside `internal/tui` are regressions.
+- Normal operation may change `workspace.toml`, `.gitattributes`, conflict
+  state, command sidecars, machine config, and generated alias state according
+  to the invoked command. Nothing runs in the background.
+- `ws sync` never pushes project branches to origin or performs project
+  merge, rebase, reset, force, or deletion.
+- Do not hand-edit `[[projects.X.branches]]` except to resolve a confirmed
+  `branch-duplicate`. Use `ClaimBranch`, `ReleaseBranch`, `TouchActive`,
+  `StampActivity`, `MarkPushed`, and `RemoveBranch` through their CLI flows.
 
 ## Commits
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
+Use Conventional Commits:
 
-- `feat:` — new feature (bumps minor pre-1.0, would be minor post-1.0)
-- `fix:` — bug fix (bumps patch)
-- `feat!:` or `fix!:` with `BREAKING CHANGE:` footer — breaking change
-  (bumps minor pre-1.0, major post-1.0)
-- `chore:`, `docs:`, `refactor:`, `test:`, `ci:`, `style:`, `perf:` — no release
+- `feat:` for user-visible capability.
+- `fix:` for bug fixes.
+- `feat!:` or `fix!:` with a `BREAKING CHANGE:` footer for breaking change.
+- `chore:`, `docs:`, `refactor:`, `test:`, `ci:`, `style:`, and `perf:` do
+  not trigger a feature/fix release increment.
 
-Scope is optional: `feat(alias): ...`, `fix(sync): ...`.
+Scope is optional. Never add `Co-Authored-By` or AI attribution footers.
 
-Never add `Co-Authored-By` or attribution footers.
+## Release Process
 
-## Release process
+Releases are started manually from Codeberg Actions with the Release
+workflow. `svu` derives the next version from conventional commits, then
+GoReleaser cross-compiles and publishes assets and checksums.
 
-Releases are cut manually from Codeberg: **Actions → Release → Run workflow**
-(`workflow_dispatch`, in `.forgejo/workflows/release.yml`).
-
-**Flow:** the job computes the next version with
-[svu](https://github.com/caarlos0/svu) from conventional commits since the
-last tag → tags and pushes `vX.Y.Z` → [GoReleaser](https://goreleaser.com)
-cross-compiles (`linux`/`darwin` × `amd64`/`arm64`) and publishes the Codeberg
-Release with the `ws-<os>-<arch>.tar.gz` assets + checksums. Run with
-`dry_run` to compute the version and build a snapshot without tagging or
-publishing.
-
-**Do NOT** hand-pick versions or create `vX.Y.Z` tags by hand — svu derives
-them from commit types (see above). Release notes are generated by GoReleaser
-from the commit log; `CHANGELOG.md` is historical (release-please, now removed,
-used to maintain it) and is no longer auto-updated.
+Do not hand-pick versions or create release tags manually. Use dry-run to
+compute and build without publishing. `CHANGELOG.md` is historical and is
+not updated by the current release process.
 
 ## Tests
 
-The project uses **real git in temp dirs** rather than mocks. Every test
-spins up its own ephemeral git repos under `t.TempDir()` and runs real
-`git` commands. This catches the kinds of bugs (the
-`git worktree add --force` regression that motivated the migrate rewrite,
-for example) that mock-based tests would happily lie about.
+The project uses real git repositories under `t.TempDir()` instead of mocks.
+Git-touching changes require real-git tests. Shared helpers live in
+`internal/testutil/gitfixture.go`:
 
-`internal/testutil/gitfixture.go` provides the shared helpers:
+- `InitFakeRemote` creates a seeded bare remote.
+- `InitFakePlainCheckout` creates a non-bare checkout with local branches.
+- `RunGit` / `RunGitTry` run deterministic git commands.
+- `AddDirty` / `AddStash` create migration states.
 
-- `InitFakeRemote(t, name, defaultBranch) string` — creates a bare repo
-  with a seed commit; usable as `proj.Remote` for clone/bootstrap tests.
-- `InitFakePlainCheckout(t, parent, name, branches) string` — creates a
-  non-bare git repo with N branches, each carrying one unique commit.
-  Used as the input for migrate tests.
-- `RunGit(t, dir, args...)` / `RunGitTry` — wraps `exec.Command("git", ...)`
-  with a deterministic env (no global config, no GPG, fixed identity).
-- `AddDirty`, `AddStash` — push the working tree into the dirty/stash
-  states needed by migrate's pre-flight tests.
+Current coverage locations include:
 
-Test files live next to the code they cover, in `_test` packages:
+- `internal/git/*_test.go`: clone, remote parsing/probing, context handling,
+  mirrors, and worktrees.
+- `internal/repo/migrate_test.go`: migration preservation and rollback.
+- `internal/repo/bootstrap_test.go`: bootstrap planning.
+- `internal/sidecar/sidecar_test.go`: lifecycle and active/stale behavior.
+- `internal/sync/*_test.go`: plans, parallel probes, selections,
+  conversions, registry sync, projects, mirrors, cancellation, and reports.
+- `internal/cli/sync_*_test.go`: strict headless output/exit behavior and TUI
+  model transitions.
+- `internal/config/machine_test.go`: local workspace-root registry and legacy
+  root migration.
+- `internal/agent/workspaces_test.go`: multi-workspace explorer loading.
+- `internal/cli/doctor_*_test.go`: system and project health checks.
 
-- `internal/clone/clone_test.go` — happy path, ErrAlreadyCloned,
-  ErrNeedsMigration, ErrPathBlocked, default_branch resolution.
-- `internal/migrate/migrate_test.go` — happy path **(regression test for
-  the worktree-attach bug)**, dirty + WIP, stash + branch conversion,
-  detached HEAD with and without orphan preservation, ErrAlreadyMigrated.
-- `internal/bootstrap/bootstrap_test.go` — `ScanPlan` classification of
-  every project state, only-filter restriction.
-- `internal/sidecar/sidecar_test.go` — Save/Load round-trip,
-  Delete-is-idempotent, IsAlive with self/dead/zero pids, AnyActive
-  finds either kind, AnyActive ignores stale entries.
-- `internal/doctor/*_test.go` — per-check tests for the `ws doctor`
-  catalog: happy-path runner, stale-sidecar auto-fix, conflict scoping,
-  config validation, fetch-refspec/remote-URL/default-branch/branch-
-  upstream fixes on real bare+worktree fixtures, index-lock detection.
-- `internal/agent/header_test.go` — sort/cap/tie-breaking for the
-  Favorites + Recent shortcut header above the workspace tree.
-- `internal/agent/stamp_test.go` — `StampLaunchFromPath` smoke tests
-  (default branch entry creation, subpath resolution, no-op outside
-  any workspace, idempotent re-stamp).
+Run everything with `go test ./...`. CI runs
+`go test -race -timeout 5m ./...` on every push and PR.
 
-Run everything: `go test ./...`. CI runs `go test -race -timeout 5m ./...`
-on every push to main and on every PR via `.forgejo/workflows/ci.yml` (a single
-`ci` job), executed by a self-hosted Forgejo runner on Codeberg Actions.
+## Known Follow-Ups
 
-When adding new git-touching code: write a real-git test for it. The
-testutil helpers cover ~95% of fixture needs; extend them rather than
-inlining `exec.Command` in tests.
-
-## Known follow-ups (not yet implemented)
-
-These were deliberately deferred during the worktree refactor and are open
-for future work:
-
-- **`ws worktree gc`** to clean up old WIP branches and orphaned worktrees.
-- **fsnotify on `workspace.toml`** to remove the dependency on IPC
-  notifications from CLI commands.
-- **Real TUI for `ws sync resolve`** instead of the prompt-based v1.
-- **Per-machine `default_branch` override** for the rare case of different
-  default branches across machines for the same project.
+- `ws worktree gc` for old migration/WIP branches and orphaned worktrees.
+- A full TUI for `ws sync resolve` instead of the prompt-based flow.
+- Per-machine `default_branch` override for repositories whose local default
+  differs between machines.
 
 ---
 
 # Performance Protocol
 
-This project ships a tiered benchmark protocol designed to keep the binary
-fast (cold-start) and resource-efficient (memory, allocations) without CI
-infrastructure. It is a human engineering workflow, not an agent gate.
+The repository has a three-tier human benchmark workflow. Agents do not run
+benchmarks, refresh baselines, or add benchmark requirements unless the user
+explicitly asks.
 
-## Three tiers
+## Tiers
 
-- **L1 — microbenchmarks** (`just bench-l1`)
-  - Per-package, `go test -bench` on the hot paths.
-  - Wall: ~30-60s.
-  - Detects regressions in pure Go code (allocations, hot loops, escape).
+- **L1 (`just bench-l1`)**: package microbenchmarks for pure Go hot paths,
+  roughly 30-60 seconds.
+- **L2 (`just bench-l2`)**: synthetic-workspace macrobenchmarks under the
+  `bench_l2` build tag, roughly 3-5 minutes. This includes foreground sync
+  over real fake repositories.
+- **L3 (`just bench-l3`)**: end-to-end binary scenarios measured with
+  `hyperfine`, roughly 10-15 minutes. Trend-only, never a gate.
 
-- **L2 — synthetic-workspace macrobenchmarks** (`just bench-l2`)
-  - Cross-package flows on a fixture built by `bench/benchfixture`.
-    e.g. `reconciler.Tick` over 50 fake projects.
-  - Wall: ~3-5min. Manual (`just bench-l2`) or after architectural changes.
-  - Bench files are tagged `//go:build bench_l2` so they don't run on
-    `go test ./...`.
+## Priority: CLI Cold Start
 
-- **L3 — end-to-end binary scenarios** (`just bench-l3`)
-  - `hyperfine` on the actual `ws` binary against an ephemeral workspace.
-    Captures cold/warm wall, peak RSS, binary size, init() trace.
-  - Wall: ~10-15min. Trend-only — never gates.
+Every command pays initialization, config load, and cobra dispatch. Bias new
+coverage toward `internal/config`, `internal/cli`, and `cmd/ws/main.go`.
+Allocation rate matters because GC inflates visible tail latency.
 
-## Priority axis: CLI cold-start
-
-This protocol was designed with CLI cold-start as the optimization
-priority. Every `ws <cmd>` invocation pays init() + config.Load + cobra
-dispatch; that's the most user-visible latency. Bias new bench coverage
-toward functions on the cold-start path:
-
-- `internal/config` (TOML load/save/validate)
-- `internal/cli` (root command construction, status path)
-- `cmd/ws/main.go` init() trace
-
-Allocation rate matters more than raw CPU here — GC pauses inflate p99 of
-a 100ms invocation visibly.
-
-## Per-machine baselines
-
-Without CI, each developer machine has its own baseline. Layout:
+## Per-Machine Baselines
 
 ```text
 bench/
-  baseline/
-    <machine>/        ← from ~/.config/ws/config.toml machine_name
-      l1.txt
-      l2.txt
-      l3.json
-  results/<machine>/  ← scratch; written by every run; .gitignored
-  thresholds.toml     ← comparison thresholds (Δ%, p_max)
+  baseline/<machine>/{l1.txt,l2.txt,l3.json}
+  results/<machine>/
+  thresholds.toml
 ```
 
-Comparisons against the baseline (`just bench-compare`) are advisory —
-there is no PR gate.
+`just bench-compare` is advisory. Never modify benchmark baselines as part of
+ordinary feature or documentation work.
 
 ---
 
-# Agent obligations
+# Agent Obligations
 
-Read top to bottom; follow in order.
+## When in Doubt
 
-## Performance benchmarks
+Do not invent. Ask the user when a choice changes scope, risk, or architecture.
 
-Agents do not run benchmarks, refresh baselines, or add benchmark
-requirements unless the human asks for that explicitly. Benchmarks are a
-human engineering workflow.
+## Mechanical Rules
 
-## When in doubt
+### No Big Go Files
 
-Do not invent. Ask the human when a decision changes scope, risk, or architecture.
+- Beyond about 500 lines: extract a cohesive cluster on the next touch.
+- Beyond 800 lines: extract before adding more code.
+- Tests count, but split production first when they are one unit.
 
-## Mechanical rules — apply proactively, no permission needed
+### No Decorative Separators
 
-### 1. No big files
+Never add visual section-divider comments. A chunk that needs one belongs in
+its own file or package. Package docs, exported-symbol docs, build constraints,
+and license headers are not decorative separators.
 
-A `.go` file beyond ~500 lines is a signal to split. Hard thresholds:
+### Function Complexity
 
-- **> 500 lines**: extract on the next touch — find the cohesive
-  cluster inside that wants its own file/package and pull it out.
-- **> 800 lines**: extract *now*, before adding the change that
-  brought you here. Do not append to a file already that large.
+- Cyclomatic complexity over 15: extract now.
+- Complexity over 10: split on the next touch before adding branches.
+- Bubble Tea reducers and cobra builders may be naturally branchy, but a
+  switch that hides a real sub-machine still needs extraction.
 
-Tests count, but the `_test.go` sibling is one unit — split the
-production file first; tests usually follow naturally.
+Check with:
 
-### 2. No decorative section separators
-
-Never write `// ─── X ───`, `// --- X ---`, `// === X ===`, or any
-other in-file visual delimiter to break up a single `.go` file. If
-you reach for one, the chunk underneath is asking to be its own
-file or package. Extract instead.
-
-Not this rule: godoc headings on exported symbols, `// Package foo`
-comments, and license headers at file top.
-
-### 3. Function complexity
-
-Cyclomatic complexity (gocyclo) thresholds for production `.go`:
-
-- **> 15**: extract *now* — pull state branches into their own
-  dispatch (one handler per case, a table, or a sub-state file).
-  Do this before adding the change that brought you here.
-- **> 10**: extract on the next touch — when you edit a function
-  already over 10, split before adding more branches.
-
-Bubbletea `Update` and cobra builders are naturally branchy; the rule
-trusts the writer to recognize when the switch is masking a real
-sub-machine that deserves its own file. Check with:
-
-```
+```sh
 go run github.com/fzipp/gocyclo/cmd/gocyclo@latest -over 10 -ignore '_test\.go' .
 ```
 
-### 4. Comments are a last resort
+### Comments Are a Last Resort
 
-Default to no comment. Before adding one, try a clearer name or a
-small extraction so the code carries the meaning on its own. A
-comment is justified when it captures a non-obvious *why* the reader
-cannot derive from the code (workaround for a specific bug, invariant
-maintained off-screen, deliberate inefficiency, external protocol
-nuance).
+Prefer clearer code. A justified comment captures a non-obvious invariant,
+external constraint, deliberate inefficiency, or workaround that code cannot
+express. Do not narrate obvious operations.
 
-Not justified: "// init defaults", "// loop over projects", "//
-returns the count", paraphrasing an obvious branch, or marking
-sections with `// ── header ──` (see rule 2).
+## Architectural Changes Require Approval
 
-## Architectural changes — ask first
+Do not decide module boundaries, abstractions, provider contracts, or
+cross-cutting behavior without approval. First provide:
 
-The agent does not decide module boundaries, new abstractions,
-provider/transport contracts, or any cross-cutting structural change
-on its own. For these:
+1. Proposed shape, file list, dependency direction, blast radius, and what
+   remains unchanged.
+2. One or two rejected alternatives and why.
+3. A wait point for user approval.
 
-1. State the proposed shape (ASCII diagram, file list, dependency
-   direction, blast radius, what stays the same).
-2. List one or two rejected alternatives with why.
-3. Wait for human approval before writing code.
+Mechanical extraction from an oversized file, deleting dead code, or renaming
+a local variable does not need architecture approval.
 
-The reason is signal, not capability. The human grows this system
-over time and needs to know what's happening at the architecture
-level to keep later decisions consistent. The agent implementing an
-architectural choice without surfacing it short-circuits that loop.
+Changes that do require approval include:
 
-**Counter-examples (agent does NOT ask first):**
-- Splitting a 800-line file along an obviously cohesive seam
-  (mechanical rule 1) — just do it.
-- Pulling a `// ─── helpers ───` chunk into its own `helpers.go`
-  (mechanical rule 2) — just do it.
-- Renaming a local variable for clarity, deleting dead branches,
-  inlining a single-use helper — just do it.
+- Changing the plan/probe/selection/runner boundary or execution ordering.
+- Persisting interactive sync selections or introducing background sync.
+- Changing known-provider remote conversion policy.
+- Changing conflict persistence or resolution ownership.
+- Adding a sidecar kind, field, or lifecycle.
+- Introducing a new interface, abstraction layer, feature flag, or build-time
+  toggle.
 
-**Examples (agent asks first):**
-- Introducing a new interface or abstraction layer.
-- Moving a cluster of files under a new parent package.
-- Changing the daemon ↔ CLI IPC contract or socket shape.
-- Reconciler phase semantics (what each phase owns, what it touches).
-- Sidecar protocol additions (new kinds, new fields, lifecycle changes).
-- New feature flags or build-time toggles.
-- Anything the agent would label "architecture" in a PR title.
-
-## Other agent conventions
+## Other Agent Conventions
 
 - Use `ws` for workspace operations: `ws status`, `ws sync`,
-  `ws sync resolve`, `ws worktree add/list/push/rm`.
-- Start non-trivial work with `ws worktree add workspace <type>/<kebab-topic>`.
-  Do not branch inside the main worktree.
-- Branch names are literal user input, but must follow conventional form:
-  `<type>/<kebab-topic>`.
-- Allowed branch/commit/PR types: `feat`, `fix`, `chore`, `docs`, `refactor`,
-  `test`, `ci`, `style`, `perf`.
-- Commit messages and PR titles must be Conventional Commits:
+  `ws sync resolve`, `ws workspace add/rm/list`, and
+  `ws worktree add/list/push/rm`.
+- Start non-trivial work with
+  `ws worktree add workspace <type>/<kebab-topic>`; do not branch in main.
+- Branch names use `<type>/<kebab-topic>` with allowed types `feat`, `fix`,
+  `chore`, `docs`, `refactor`, `test`, `ci`, `style`, or `perf`.
+- Commit messages and PR titles use
   `<type>(<scope>): <imperative result-oriented description>`.
-- Never create new `wt/<machine>/*` branches; they are legacy compatibility only.
+- Never create new `wt/<machine>/*` branches; that namespace is legacy or
+  migration-internal only.
 - Never use stale `ws worktree new`, `ws worktree promote`, `--auto-push`,
-  or `autopush.branches` guidance.
-- PRs: open as **draft** by default (`gh pr create --draft`). Only the
-  human flips to ready.
-- No `Co-Authored-By` footers in commits.
+  `autopush.branches`, daemon commands, or service setup guidance.
+- Open PRs as draft by default. Only the user marks them ready.
+- Never add attribution footers.

@@ -134,7 +134,7 @@ linters:
         - os.Chmod
         - (*os.Process).Release
         - (*os.Process).Signal
-        - (*os/exec.Cmd).Run        # daemon log-tail: best-effort
+        - (*os/exec.Cmd).Run
         - (*os/exec.Cmd).Start
         - (*encoding/json.Decoder).Decode  # in error paths after non-200 HTTP
         - (*encoding/json.Encoder).Encode
@@ -148,9 +148,6 @@ linters:
         - (*net.UnixConn).Write
         - (*net.UnixConn).SetReadDeadline
         - (net.Conn).SetReadDeadline
-        # Daemon IPC client teardown: best-effort.
-        - (*codeberg.org/kuchmenko/workspace/internal/daemon.Client).Stop
-        - (*codeberg.org/kuchmenko/workspace/internal/daemon.Client).Notify
 
     govet:
       # `enable-all` would pull in shadow + fieldalignment which are
@@ -210,19 +207,15 @@ linters:
           - funlen
       # MigrateProject is a 280-line orchestration that fans out to
       # the strategy decisions for dirty / stash / detached HEAD; the
-      # design is deliberate. Reconciler.syncProject likewise routes
-      # every project state class to its handler in a single switch.
-      # Both have inline comments explaining each case; refactoring
-      # for cognitive complexity alone would obscure the logic.
+      # design is deliberate; refactoring for cognitive complexity alone
+      # would obscure the migration flow.
       - path: internal/repo/migrate\.go
         linters:
           - gocyclo
           - gocognit
           - funlen
-      # Daemon reconciler: the original reconciler.go was split into
-      # reconciler.go + projects.go + toml.go + conflicts.go + git.go.
-      # The state-machine fan-out lives in projects.go and toml.go now.
-      - path: internal/daemon/.*\.go
+      # Foreground sync fan-out lives in projects.go and toml.go.
+      - path: internal/sync/.*\.go
         linters:
           - gocyclo
           - gocognit

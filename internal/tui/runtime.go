@@ -9,13 +9,17 @@ import (
 type ProgramOption func(*programConfig)
 
 type programConfig struct {
-	altScreen bool
-	mouse     bool
-	ctx       interface{}
+	altScreen      bool
+	mouse          bool
+	withoutSignals bool
+	ctx            interface{}
 }
 
 func WithAltScreen() ProgramOption       { return func(c *programConfig) { c.altScreen = true } }
 func WithMouseCellMotion() ProgramOption { return func(c *programConfig) { c.mouse = true } }
+func WithoutSignalHandler() ProgramOption {
+	return func(c *programConfig) { c.withoutSignals = true }
+}
 
 type Program struct {
 	p   *tea.Program
@@ -35,6 +39,9 @@ func NewProgram(m Model, opts ...ProgramOption) *Program {
 	}
 	if cfg.mouse {
 		teaOpts = append(teaOpts, tea.WithMouseCellMotion())
+	}
+	if cfg.withoutSignals {
+		teaOpts = append(teaOpts, tea.WithoutSignalHandler())
 	}
 	if cfg.ctx != nil {
 		if ctx, ok := cfg.ctx.(context.Context); ok {

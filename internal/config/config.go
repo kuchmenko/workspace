@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -196,17 +194,9 @@ type Meta struct {
 	Root    string `toml:"root"`
 }
 
-type Daemon struct {
-	PollInterval   string `toml:"poll_interval"`
-	StaleThreshold string `toml:"stale_threshold"`
-	AutoSync       bool   `toml:"auto_sync"`
-	WatchDirs      bool   `toml:"watch_dirs"`
-}
-
 type Workspace struct {
 	Meta     Meta               `toml:"meta"`
 	Agent    AgentConfig        `toml:"agent,omitempty"`
-	Daemon   Daemon             `toml:"daemon"`
 	Groups   map[string]Group   `toml:"groups"`
 	Projects map[string]Project `toml:"projects"`
 	Aliases  map[string]string  `toml:"aliases,omitempty"`
@@ -318,7 +308,6 @@ func LoadOrCreate(root string) (*Workspace, error) {
 	}
 	ws := &Workspace{
 		Meta:     Meta{Version: 1, Root: root},
-		Daemon:   Daemon{PollInterval: "5m", StaleThreshold: "30d", AutoSync: true, WatchDirs: true},
 		Groups:   make(map[string]Group),
 		Projects: make(map[string]Project),
 		Aliases:  make(map[string]string),
@@ -446,79 +435,6 @@ func (p *Project) appendLegacyBare(name string) {
 	p.Branches = append(p.Branches, BranchMeta{Name: name})
 }
 
-type MachineConfig struct {
-	MachineName string `toml:"machine_name"`
-}
-
-var machineNameSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
-
-func SanitizeMachineName(raw string) string {
-	s := strings.ToLower(strings.TrimSpace(raw))
-	s = machineNameSanitizer.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	return s
-}
-
-func MachineConfigPath() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ws", "config.toml"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "ws", "config.toml"), nil
-}
-
-func LoadMachineConfig() (*MachineConfig, error) {
-	path, err := MachineConfigPath()
-	if err != nil {
-		return nil, err
-	}
-	var cfg MachineConfig
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return &cfg, nil
-	} else if err != nil {
-		return nil, err
-	}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
-	}
-	return &cfg, nil
-}
-
-func SaveMachineConfig(cfg *MachineConfig) error {
-	path, err := MachineConfigPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return toml.NewEncoder(f).Encode(cfg)
-}
-
-func DefaultMachineName() string {
-	h, err := os.Hostname()
-	if err != nil || h == "" {
-		return "unknown"
-	}
-
-	if i := strings.IndexByte(h, '.'); i > 0 {
-		h = h[:i]
-	}
-	s := SanitizeMachineName(h)
-	if s == "" {
-		return "unknown"
-	}
-	return s
-}
-
 type Status string
 
 const (
@@ -543,20 +459,11 @@ type Project struct {
 	Group         string            `toml:"group,omitempty"`
 	DefaultBranch string            `toml:"default_branch,omitempty"`
 
-	AutoSync *bool `toml:"auto_sync,omitempty"`
-
 	Favorite bool `toml:"favorite,omitempty"`
 
 	Branches []BranchMeta `toml:"branches,omitempty"`
 
 	LegacyAutopush *legacyAutopush `toml:"autopush,omitempty"`
-}
-
-func (p Project) SyncEnabled() bool {
-	if p.AutoSync == nil {
-		return true
-	}
-	return *p.AutoSync
 }
 
 func (p *Project) SetFavorite(fav bool) bool {
@@ -565,53 +472,4 @@ func (p *Project) SetFavorite(fav bool) bool {
 	}
 	p.Favorite = fav
 	return true
-}
-
-type ValidationKind string
-
-const (
-	ValidationDuplicateBranch ValidationKind = "duplicate-branch"
-)
-
-type ValidationIssue struct {
-	Kind    ValidationKind
-	Project string
-	Branch  string
-	Detail  string
-}
-
-func (w *Workspace) Validate() []ValidationIssue {
-	var issues []ValidationIssue
-	for projName, proj := range w.Projects {
-		issues = append(issues, duplicateBranchIssues(projName, proj.Branches)...)
-	}
-	sort.Slice(issues, func(i, j int) bool {
-		if issues[i].Project != issues[j].Project {
-			return issues[i].Project < issues[j].Project
-		}
-		return issues[i].Branch < issues[j].Branch
-	})
-	return issues
-}
-
-func duplicateBranchIssues(projName string, branches []BranchMeta) []ValidationIssue {
-	seen := make(map[string]int, len(branches))
-	var out []ValidationIssue
-	for _, b := range branches {
-		if b.Name == "" {
-			continue
-		}
-		prev, isDup := seen[b.Name]
-		if !isDup {
-			seen[b.Name] = len(seen)
-			continue
-		}
-		out = append(out, ValidationIssue{
-			Kind:    ValidationDuplicateBranch,
-			Project: projName,
-			Branch:  b.Name,
-			Detail:  fmt.Sprintf("branch %q has %d entries (first at index %d)", b.Name, prev+1, prev),
-		})
-	}
-	return out
 }

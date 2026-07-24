@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/daemon"
+	"codeberg.org/kuchmenko/workspace/internal/conflict"
 	"codeberg.org/kuchmenko/workspace/internal/sidecar"
 	"github.com/BurntSushi/toml"
 )
@@ -21,22 +21,8 @@ func isolateState(t *testing.T) (stateDir, configDir string) {
 	configDir = t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateDir)
 	t.Setenv("XDG_CONFIG_HOME", configDir)
-	// daemon.PidPath goes via os.UserConfigDir which on Linux honors
-	// XDG_CONFIG_HOME. Force HOME too so macOS / other platforms that
-	// compute dirs from HOME also land in the tempdir.
 	t.Setenv("HOME", t.TempDir())
 	return
-}
-
-func TestCheckDaemon_NotRunning(t *testing.T) {
-	isolateState(t)
-	f := checkDaemon()
-	if f.Severity != Warn {
-		t.Fatalf("Severity=%s want Warn (no PID file)", f.Severity)
-	}
-	if f.FixHint == "" {
-		t.Fatalf("FixHint should suggest `ws daemon start`")
-	}
 }
 
 func TestCheckStaleSidecars_None(t *testing.T) {
@@ -92,16 +78,16 @@ func TestCheckConflicts_Mine(t *testing.T) {
 	isolateState(t)
 	wsRoot := t.TempDir()
 
-	store, err := daemon.OpenConflictStore()
+	store, err := conflict.Open()
 	if err != nil {
-		t.Fatalf("daemon.OpenConflictStore: %v", err)
+		t.Fatalf("conflict.Open: %v", err)
 	}
 	absWsRoot, _ := filepath.Abs(wsRoot)
-	if _, err := store.Record(daemon.Conflict{
+	if _, err := store.Record(conflict.Conflict{
 		Workspace: absWsRoot,
 		Project:   "demo",
 		Branch:    "wt/test/foo",
-		Kind:      daemon.KindBranchOrphan,
+		Kind:      conflict.KindBranchOrphan,
 		Details:   json.RawMessage(`{}`),
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
@@ -121,14 +107,14 @@ func TestCheckConflicts_OtherWorkspaceIgnored(t *testing.T) {
 	wsRoot := t.TempDir()
 	other := t.TempDir()
 
-	store, err := daemon.OpenConflictStore()
+	store, err := conflict.Open()
 	if err != nil {
-		t.Fatalf("daemon.OpenConflictStore: %v", err)
+		t.Fatalf("conflict.Open: %v", err)
 	}
 	absOther, _ := filepath.Abs(other)
-	if _, err := store.Record(daemon.Conflict{
+	if _, err := store.Record(conflict.Conflict{
 		Workspace: absOther,
-		Kind:      daemon.KindTOMLMerge,
+		Kind:      conflict.KindTOMLMerge,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
@@ -149,10 +135,6 @@ func TestCheckConfig_Valid(t *testing.T) {
 				Category: config.CategoryPersonal,
 			},
 		},
-		Daemon: config.Daemon{
-			PollInterval:   "5m",
-			StaleThreshold: "30d",
-		},
 	}
 	f := checkConfig(t.TempDir(), ws, nil)
 	if f.Severity != OK {
@@ -169,37 +151,14 @@ func TestCheckConfig_Invalid(t *testing.T) {
 				Status: "weird",
 			},
 		},
-		Daemon: config.Daemon{
-			PollInterval: "not-a-duration",
-		},
 	}
 	f := checkConfig(t.TempDir(), ws, nil)
 	if f.Severity != Error {
 		t.Fatalf("Severity=%s want Error", f.Severity)
 	}
-	// All three issues (remote, path, status) + one daemon issue should
-	// surface, but we don't want to pin on exact count — just >= 3.
-	// Smoke-check one phrase per class.
-	for _, needle := range []string{"missing remote", "missing path", "unknown status", "not a valid duration"} {
+	for _, needle := range []string{"missing remote", "missing path", "unknown status"} {
 		if !containsSubstr(f.Message, needle) {
 			t.Errorf("Message missing %q: %s", needle, f.Message)
-		}
-	}
-}
-
-func TestValidDuration(t *testing.T) {
-	cases := map[string]bool{
-		"5m":       true,
-		"1h30m":    true,
-		"30d":      true,
-		"":         false,
-		"d":        false,
-		"garbage":  false,
-		"5minutes": false, // time.ParseDuration doesn't accept this
-	}
-	for in, want := range cases {
-		if got := validDuration(in); got != want {
-			t.Errorf("validDuration(%q)=%v want %v", in, got, want)
 		}
 	}
 }

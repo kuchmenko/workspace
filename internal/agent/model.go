@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/daemon"
 	"codeberg.org/kuchmenko/workspace/internal/git"
 	"codeberg.org/kuchmenko/workspace/internal/layout"
 )
@@ -139,7 +138,6 @@ func StampLaunchFromPath(cwd string) error {
 	if err := config.Save(wsRoot, ws); err != nil {
 		return err
 	}
-	notifyDaemon(wsRoot)
 	return nil
 }
 
@@ -169,15 +167,6 @@ func findProjectByPath(ws *config.Workspace, wsRoot, abs string) (string, *confi
 		}
 	}
 	return "", nil
-}
-
-func notifyDaemon(wsRoot string) {
-	c, err := daemon.Dial()
-	if err != nil {
-		return
-	}
-	defer c.Close()
-	_ = c.Notify(wsRoot, "config_changed")
 }
 
 const (
@@ -290,7 +279,6 @@ func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
 	if err := config.Save(wsRoot, ws); err != nil {
 		return err
 	}
-	notifyDaemon(wsRoot)
 	return nil
 }
 
@@ -298,7 +286,7 @@ func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, *SessionCache, []stri
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
 	if len(roots) == 0 {
-		diagnostics = append(diagnostics, "no workspaces registered (run `ws daemon register` or cd into a workspace)")
+		diagnostics = append(diagnostics, "no workspace found; run from inside a workspace")
 		return nil, nil, diagnostics
 	}
 
@@ -407,31 +395,16 @@ func projectActivity(branches []config.BranchMeta) (time.Time, string) {
 }
 
 func workspaceRoots(fallback string) []string {
-	seen := map[string]bool{}
-	var out []string
-
-	cfg, err := daemon.LoadConfig()
-	if err == nil && cfg != nil {
-		for _, w := range cfg.Workspaces {
-			if w.Root == "" || seen[w.Root] {
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(w.Root, "workspace.toml")); err != nil {
-				continue
-			}
-			seen[w.Root] = true
-			out = append(out, w.Root)
+	if roots, err := config.ListWorkspaceRoots(); err == nil && len(roots) > 0 {
+		return roots
+	}
+	if fallback != "" {
+		if root, ok := config.FindRootFrom(fallback); ok {
+			return []string{root}
 		}
 	}
-
-	if len(out) == 0 && fallback != "" {
-		if _, err := os.Stat(filepath.Join(fallback, "workspace.toml")); err == nil {
-			out = append(out, fallback)
-		} else if root, err := config.FindRoot(); err == nil && !seen[root] {
-			out = append(out, root)
-		}
+	if root, err := config.FindRoot(); err == nil {
+		return []string{root}
 	}
-
-	sort.Strings(out)
-	return out
+	return nil
 }
