@@ -8,19 +8,22 @@ and changes remote state only after confirmation.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/kuchmenko/workspace/main/install.sh | sh
+gh auth login
+gh api repos/kuchmenko/workspace/contents/install.sh \
+  -H "Accept: application/vnd.github.raw+json" | sh
 ```
 
 Or build from source:
 
 ```sh
-git clone git@github.com:kuchmenko/workspace.git
+gh repo clone kuchmenko/workspace
 cd workspace
 just install            # binary lands at ~/.local/bin/ws
 ```
 
-`~/.local/bin` should be on your `PATH`. If not, the installer prints a
-reminder.
+The repository is private, so installation requires an authenticated GitHub
+CLI session with repository access. `~/.local/bin` should be on your `PATH`.
+If not, the installer prints a reminder.
 
 ## First-time setup (interactive)
 
