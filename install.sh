@@ -5,6 +5,16 @@ REPO="kuchmenko/workspace"
 BINARY="ws"
 INSTALL_DIR="${WS_INSTALL_DIR:-$HOME/.local/bin}"
 
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI is required. Install gh, then run: gh auth login" >&2
+  exit 1
+fi
+
+if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+  echo "GitHub authentication is required. Run: gh auth login" >&2
+  exit 1
+fi
+
 # Detect platform
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -20,16 +30,13 @@ case "$OS" in
   *) echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
-# Get latest release tag from GitHub
-TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -o '"tag_name":[[:space:]]*"[^"]*"' | head -1 | cut -d'"' -f4)"
-
-if [ -z "$TAG" ]; then
-  echo "Failed to fetch latest release" >&2
+# Get latest private release tag from GitHub
+if ! TAG="$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null)" || [ -z "$TAG" ]; then
+  echo "Cannot access $REPO releases. Check gh authentication and repository access." >&2
   exit 1
 fi
 
 ASSET="ws-${OS}-${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 
 echo "Installing $BINARY $TAG ($OS/$ARCH)..."
 
@@ -56,7 +63,10 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-curl -fsSL "$URL" -o "$TMP/$ASSET"
+if ! gh release download "$TAG" --repo "$REPO" --pattern "$ASSET" --dir "$TMP" 2>/dev/null; then
+  echo "Cannot download $ASSET from $REPO release $TAG. Check repository access and release assets." >&2
+  exit 1
+fi
 tar xzf "$TMP/$ASSET" -C "$TMP"
 
 # Install
