@@ -445,13 +445,15 @@ Scope is optional. Never add `Co-Authored-By` or AI attribution footers.
 
 ## Release Process
 
-Releases are started manually from Codeberg Actions with the Release
-workflow. `svu` derives the next version from conventional commits, then
-GoReleaser cross-compiles and publishes assets and checksums.
+Release Please owns version selection, changelog updates, tags, and GitHub
+release creation from conventional commits on `main`. When it creates a
+release, the same workflow calls the reusable release-assets workflow, which
+runs the full quality gate, cross-compiles the four supported binaries,
+creates checksums, and uploads all assets to that release.
 
-Do not hand-pick versions or create release tags manually. Use dry-run to
-compute and build without publishing. `CHANGELOG.md` is historical and is
-not updated by the current release process.
+Do not hand-pick versions or create release tags manually. If asset
+publication fails, manually dispatch the release-assets workflow with the
+existing release tag to retry it.
 
 ## Tests
 
