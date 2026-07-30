@@ -7,7 +7,6 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  security-events: write
   actions: read
 
 jobs:
@@ -28,6 +27,5 @@ jobs:
       tag: ${{ needs.release-please.outputs.tag_name }}
     permissions:
       contents: write
-      security-events: write
       actions: read
     secrets: inherit

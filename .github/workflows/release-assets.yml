@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: write
-  security-events: write
   actions: read
 
 jobs:
@@ -24,7 +23,6 @@ jobs:
     uses: ./.github/workflows/ci-checks.yml
     permissions:
       contents: read
-      security-events: write
       actions: read
     secrets: inherit
 

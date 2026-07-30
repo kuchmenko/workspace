@@ -54,28 +54,17 @@ jobs:
   lint:
     name: Lint (golangci-lint)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v6
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
           cache: false
-      - name: golangci-lint (SARIF + console)
+      - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
           version: latest
-          args: --timeout=5m --output.text.path=stdout --output.sarif.path=golangci-lint.sarif
-      - name: Upload SARIF
-        if: success() || failure()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: golangci-lint.sarif
-          category: golangci-lint
-          wait-for-processing: true
+          args: --timeout=5m
 
   test:
     name: Test (race + coverage)
@@ -115,24 +104,11 @@ jobs:
   vuln:
     name: govulncheck
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
-      - id: govulncheck
-        uses: golang/govulncheck-action@v1
+      - uses: golang/govulncheck-action@v1
         with:
           go-version-file: ${{ env.GO_VERSION_FILE }}
-          output-format: sarif
-          output-file: govulncheck.sarif
-      - name: Upload SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: govulncheck.sarif
-          category: govulncheck
-          wait-for-processing: true
 
   build:
     name: Build (${{ matrix.os }})
