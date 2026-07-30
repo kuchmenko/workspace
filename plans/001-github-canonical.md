@@ -12,6 +12,7 @@
 - **Depends on**: none
 - **Category**: migration
 - **Planned at**: commit `fec7728`, 2026-07-30
+- **Repository visibility**: private
 
 ## Why this matters
 
@@ -40,6 +41,7 @@ GitHub `main` is 11 commits behind the current Codeberg/local `main`. The curren
 | Vulnerabilities | `GOTOOLCHAIN=auto govulncheck ./...` | exit 0 |
 | Build | `GOTOOLCHAIN=auto go build ./...` | exit 0 |
 | Installer syntax | `sh -n install.sh` | exit 0 |
+| Workflows | `GOTOOLCHAIN=auto go run github.com/rhysd/actionlint/cmd/actionlint@latest` | exit 0 |
 
 ## Scope
 
@@ -50,7 +52,7 @@ In scope:
 - `.github/workflows/ci.yml`, `.github/workflows/ci-checks.yml`, `.github/workflows/release-please.yml`, and `.github/workflows/release-assets.yml`.
 - `.github/dependabot.yml`, `release-please-config.json`, and `.release-please-manifest.json`.
 - Removal of `.forgejo/workflows/` and `.goreleaser.yaml`.
-- `install.sh` and the release-process section of `AGENTS.md`.
+- `install.sh`, `README.md`, `docs/getting-started.md`, and the release-process section of `AGENTS.md`.
 - This `plans/` directory.
 
 Out of scope:
@@ -82,7 +84,7 @@ Change `go.mod` to `module github.com/kuchmenko/workspace`. Replace only reposit
 
 ### Step 3: Restore GitHub CI
 
-Adapt the prior GitHub workflows from `github/main` to the current Go version and package layout. Keep one reusable check suite containing format, vet, tidy, golangci-lint with SARIF, race tests with coverage artifact, govulncheck with SARIF, and Ubuntu/macOS build/install smoke. Add the small push/PR caller. Restore weekly grouped Dependabot updates. Remove Forgejo CI only after equivalent GitHub checks exist.
+Adapt the prior GitHub workflows from `github/main` to the current Go version and package layout. Keep one reusable check suite containing format, vet, tidy, golangci-lint console checking, race tests with coverage artifact, govulncheck in normal check mode, and Ubuntu/macOS build/install smoke. Code scanning is unavailable for this private repository, so do not add SARIF uploads or `security-events` permissions. Add the small push/PR caller. Restore weekly grouped Dependabot updates. Remove Forgejo CI only after equivalent GitHub checks exist.
 
 ### Step 4: Implement integrated Release Please publication
 
@@ -92,7 +94,7 @@ The reusable release-assets workflow must support both `workflow_call` and manua
 
 ### Step 5: Restore GitHub installation and release documentation
 
-Change only release discovery and asset download in `install.sh` to GitHub. Preserve platform detection and daemon-service retirement. Update `AGENTS.md` to state that Release Please owns version, changelog, tag, and GitHub release creation, while the reusable asset workflow owns checks and binaries. Create signed `fix(installer): download releases from GitHub` and `docs: document GitHub release process` commits, or one signed commit if the changes are inseparable.
+Keep the GitHub repository private. Require authenticated `gh` in `install.sh`, discover the latest release through `gh api`, and download its platform asset through `gh release download`. Fail with an actionable message when `gh` is missing, unauthenticated, or lacks repository access. Preserve platform detection and daemon-service retirement. Replace anonymous raw GitHub install commands in `README.md` and `docs/getting-started.md` with authenticated `gh` commands. Update `AGENTS.md` to state that Release Please owns version, changelog, tag, and GitHub release creation, while the reusable asset workflow owns checks and binaries. Create signed Conventional Commits for the installer, documentation, and CI changes.
 
 ### Step 6: Run final verification
 
@@ -102,16 +104,17 @@ Update the plan row in `plans/README.md` to DONE only after every gate passes.
 
 ## Done criteria
 
-- [ ] The branch is a fast-forward descendant of GitHub `main`.
-- [ ] The original `fec7728` tree was preserved across the signature rewrite.
-- [ ] Every commit in `github/main..HEAD` is signed.
-- [ ] The module and self-imports use `github.com/kuchmenko/workspace`.
-- [ ] GitHub CI covers the current local quality gate.
-- [ ] Release Please invokes retryable GitHub asset publication without a PAT.
-- [ ] `install.sh` uses GitHub releases and retains daemon cleanup.
-- [ ] Forgejo/Gitea canonical-host automation is removed.
-- [ ] All local verification commands pass.
-- [ ] No out-of-scope worktree or benchmark baseline changed.
+- [x] The branch is a fast-forward descendant of GitHub `main`.
+- [x] The original `fec7728` tree was preserved across the signature rewrite.
+- [x] Every commit in `github/main..HEAD` is signed.
+- [x] The module and self-imports use `github.com/kuchmenko/workspace`.
+- [x] GitHub CI covers the current local quality gate without SARIF or code-scanning permissions.
+- [x] Release Please invokes retryable GitHub asset publication without a PAT.
+- [x] `install.sh` uses authenticated `gh` for private GitHub releases and retains daemon cleanup.
+- [x] User-facing installation commands work with the private repository through authenticated `gh`.
+- [x] Forgejo/Gitea canonical-host automation is removed.
+- [x] All local verification commands pass.
+- [x] No out-of-scope worktree or benchmark baseline changed.
 
 ## STOP conditions
 
@@ -124,4 +127,4 @@ Update the plan row in `plans/README.md` to DONE only after every gate passes.
 
 ## Maintenance notes
 
-GitHub private repositories on the current account cannot enable branch protection without a plan upgrade, so publication review must enforce green checks manually. Codeberg non-main branches, benchmark baseline refresh, historical `v0.8.1` release migration, and local origin cutover are separate operator-reviewed tasks.
+GitHub must remain private. Private code scanning and branch protection are unavailable on the current account, so CI uses text/check output without SARIF and publication review must enforce green checks manually. Installation requires authenticated `gh` access. Codeberg non-main branches, benchmark baseline refresh, historical `v0.8.1` release migration, and local origin cutover are separate operator-reviewed tasks.
