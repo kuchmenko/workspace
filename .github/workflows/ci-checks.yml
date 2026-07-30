@@ -1,0 +1,155 @@
+name: CI Checks
+
+on:
+  workflow_call:
+
+env:
+  GO_VERSION_FILE: go.mod
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: gofmt -l (must be empty)
+        run: |
+          set -eo pipefail
+          out=$(gofmt -l .)
+          if [[ -n "$out" ]]; then
+            echo "::error::gofmt found unformatted files"
+            echo "$out"
+            exit 1
+          fi
+
+  vet:
+    name: Vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - run: go vet ./...
+
+  mod-tidy:
+    name: go mod tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Verify modules tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: false
+      - name: golangci-lint (SARIF + console)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m --output.text.path=stdout --output.sarif.path=golangci-lint.sarif
+      - name: Upload SARIF
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: golangci-lint.sarif
+          category: golangci-lint
+          wait-for-processing: true
+
+  test:
+    name: Test (race + coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "ws-ci"
+          git config --global init.defaultBranch main
+      - name: Test
+        run: go test -race -timeout 5m -covermode=atomic -coverprofile=coverage.out ./...
+      - name: Generate coverage reports
+        if: always()
+        run: |
+          if [[ -f coverage.out ]]; then
+            go tool cover -func=coverage.out > coverage.txt
+            go tool cover -html=coverage.out -o coverage.html
+          fi
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+            coverage.html
+          if-no-files-found: warn
+          retention-days: 14
+
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          output-format: sarif
+          output-file: govulncheck.sarif
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck
+          wait-for-processing: true
+
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Build
+        run: go build ./...
+      - name: Install smoke
+        run: |
+          go install ./cmd/ws
+          "$(go env GOPATH)/bin/ws" --help > /dev/null

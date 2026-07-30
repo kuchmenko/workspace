@@ -1,0 +1,87 @@
+name: Release Assets
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing GitHub release tag
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  security-events: write
+  actions: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci-checks.yml
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    secrets: inherit
+
+  build:
+    needs: checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build archive
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          binary="ws-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/ws
+          tar czf "${binary}.tar.gz" "$binary"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ws-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ws-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ws-*
+          merge-multiple: true
+      - name: Generate checksums
+        run: sha256sum ws-*.tar.gz > checksums.txt
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            ws-linux-amd64.tar.gz
+            ws-linux-arm64.tar.gz
+            ws-darwin-amd64.tar.gz
+            ws-darwin-arm64.tar.gz
+            checksums.txt
