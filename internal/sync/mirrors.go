@@ -6,9 +6,9 @@ import (
 	"maps"
 	"slices"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/conflict"
-	"codeberg.org/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/git"
 )
 
 func (r *Runner) syncMirrorsContext(ctx context.Context, name string, project *config.Project, barePath string, frozenURLs map[string]string, selected map[string]bool, report *Report, onEvent func(Event)) {

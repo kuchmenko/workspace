@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/github"
-	"codeberg.org/kuchmenko/workspace/internal/sidecar"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/sidecar"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 var ErrEmbedNotSupported = errors.New("embedded mode not yet supported")

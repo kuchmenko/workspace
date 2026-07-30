@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"codeberg.org/kuchmenko/workspace/internal/add"
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/add"
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )

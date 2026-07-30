@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"codeberg.org/kuchmenko/workspace/internal/alias"
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/alias"
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )

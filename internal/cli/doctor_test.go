@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/config"
 )
 
 // Severity order is load-bearing — Report.MaxSeverity and the CLI exit

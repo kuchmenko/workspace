@@ -7,8 +7,8 @@ import (
 	"log"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/bench/benchfixture"
-	workspacesync "codeberg.org/kuchmenko/workspace/internal/sync"
+	"github.com/kuchmenko/workspace/bench/benchfixture"
+	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 )
 
 // BenchmarkSyncRun exercises one sync Runner run over a

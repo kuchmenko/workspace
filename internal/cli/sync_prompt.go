@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"codeberg.org/kuchmenko/workspace/internal/conflict"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 type promptAction struct {

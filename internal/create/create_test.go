@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/sidecar"
-	"codeberg.org/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/sidecar"
+	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
 // setupCreateWorkspace mirrors add_test.setupWorkspace: temp wsRoot,

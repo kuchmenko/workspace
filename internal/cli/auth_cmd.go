@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"codeberg.org/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/spf13/cobra"
 )
 

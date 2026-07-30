@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	workspacesync "codeberg.org/kuchmenko/workspace/internal/sync"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/git"
+	workspacesync "github.com/kuchmenko/workspace/internal/sync"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 var (

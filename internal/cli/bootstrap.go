@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/repo"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/repo"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 

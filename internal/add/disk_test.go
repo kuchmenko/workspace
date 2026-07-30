@@ -7,8 +7,8 @@ import (
 	"sort"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
 // initRepoAt creates a tiny git repo at parent/<name> and seeds one

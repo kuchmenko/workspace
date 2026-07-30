@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 type Source interface {

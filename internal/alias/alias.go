@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/config"
 )
 
 func ShellConflict(name string) (string, bool) {

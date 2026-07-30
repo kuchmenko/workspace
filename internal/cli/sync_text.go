@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	workspacesync "codeberg.org/kuchmenko/workspace/internal/sync"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 	"golang.org/x/term"
 )
 

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/spf13/cobra"
 )
 

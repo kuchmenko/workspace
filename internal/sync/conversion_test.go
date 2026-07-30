@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
-	"codeberg.org/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
 const testHTTPSRemote = "https://github.com/acme/workspace-sync-test.git"

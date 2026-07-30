@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	workspacesync "codeberg.org/kuchmenko/workspace/internal/sync"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	workspacesync "github.com/kuchmenko/workspace/internal/sync"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func TestSyncModelTransitionsFromProbeToReview(t *testing.T) {

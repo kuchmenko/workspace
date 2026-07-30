@@ -9,8 +9,8 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 

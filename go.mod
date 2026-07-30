@@ -1,4 +1,4 @@
-module codeberg.org/kuchmenko/workspace
+module github.com/kuchmenko/workspace
 
 go 1.26.4
 

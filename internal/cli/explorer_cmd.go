@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"codeberg.org/kuchmenko/workspace/internal/agent"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/agent"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 

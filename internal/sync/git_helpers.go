@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
 )
 
 func findGitRoot(dir string) string {

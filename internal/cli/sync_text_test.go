@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
-	workspacesync "codeberg.org/kuchmenko/workspace/internal/sync"
-	"codeberg.org/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
+	workspacesync "github.com/kuchmenko/workspace/internal/sync"
+	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
 func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {

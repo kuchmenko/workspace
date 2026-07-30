@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"codeberg.org/kuchmenko/workspace/internal/conflict"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 

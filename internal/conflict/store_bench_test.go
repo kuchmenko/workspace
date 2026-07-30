@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/conflict"
 )
 
 func BenchmarkRecordFresh(b *testing.B) {

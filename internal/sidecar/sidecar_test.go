@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/sidecar"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 // withStateDir points $XDG_STATE_HOME at a temp dir for the duration of

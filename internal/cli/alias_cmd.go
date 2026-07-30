@@ -5,8 +5,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"codeberg.org/kuchmenko/workspace/internal/alias"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/alias"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
 

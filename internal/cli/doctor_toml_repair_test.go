@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/config"
 )
 
 func TestRepairDuplicatedBranchKeysSplitsMissingBranchTable(t *testing.T) {

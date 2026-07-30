@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/git"
 )
 
 const (

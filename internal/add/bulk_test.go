@@ -1,7 +1,7 @@
 package add
 
 import (
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/tui"
 	"testing"
 )
 

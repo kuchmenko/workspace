@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/git"
-	"codeberg.org/kuchmenko/workspace/internal/layout"
-	"codeberg.org/kuchmenko/workspace/internal/sidecar"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 type CheckResult struct {

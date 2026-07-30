@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"codeberg.org/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/conflict"
 )
 
 func notifyConflict(c conflict.Conflict) {

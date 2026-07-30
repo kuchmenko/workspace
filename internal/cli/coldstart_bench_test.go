@@ -3,7 +3,7 @@ package cli_test
 import (
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/cli"
+	"github.com/kuchmenko/workspace/internal/cli"
 )
 
 // BenchmarkNewRootCmd measures the cobra-tree construction cost paid on

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/cli"
+	"github.com/kuchmenko/workspace/internal/cli"
 	"github.com/spf13/cobra"
 )
 

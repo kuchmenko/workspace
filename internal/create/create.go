@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"codeberg.org/kuchmenko/workspace/internal/add"
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/sidecar"
-	"codeberg.org/kuchmenko/workspace/internal/tui"
+	"github.com/kuchmenko/workspace/internal/add"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/sidecar"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 var ErrNoOwner = errors.New("no owner provided; pass --owner or run without --no-tui")

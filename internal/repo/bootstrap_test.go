@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"codeberg.org/kuchmenko/workspace/internal/config"
-	"codeberg.org/kuchmenko/workspace/internal/repo"
-	"codeberg.org/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/repo"
+	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
 // TestScanPlan classifies five projects in five distinct on-disk states
