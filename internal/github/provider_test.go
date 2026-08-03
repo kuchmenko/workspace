@@ -149,17 +149,6 @@ func TestNoopProvider_ReturnsErrNotAuthed(t *testing.T) {
 	}
 }
 
-func TestGhAppProviderStub_ReturnsErrNotImplemented(t *testing.T) {
-	p := NewGhAppProviderStub()
-	_, err := p.SuggestRepos(context.Background(), 10)
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Errorf("want ErrNotImplemented, got %v", err)
-	}
-	if p.Name() != "gh-app" {
-		t.Errorf("want gh-app, got %s", p.Name())
-	}
-}
-
 func TestClientProvider_SortByActivityThenPushedAt(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	now := time.Now()

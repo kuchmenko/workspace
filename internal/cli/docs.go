@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"os"
-	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -183,26 +182,4 @@ func toSortedMap(groups map[string]*CapabilityGroup) map[string]CapabilityGroup 
 		out[k] = *v
 	}
 	return out
-}
-
-func SortedCapabilityKeys(m map[string]CapabilityGroup) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		oi, oki := capabilityMeta[keys[i]]
-		oj, okj := capabilityMeta[keys[j]]
-		if oki && okj {
-			return oi.Order < oj.Order
-		}
-		if oki {
-			return true
-		}
-		if okj {
-			return false
-		}
-		return keys[i] < keys[j]
-	})
-	return keys
 }

@@ -10,31 +10,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 )
 
-func (r *Runner) syncTOML() (bool, error) {
-	tomlPath := filepath.Join(r.root, "workspace.toml")
-	realPath, err := filepath.EvalSymlinks(tomlPath)
-	if err != nil {
-		return false, fmt.Errorf("resolve symlink: %w", err)
-	}
-	repoRoot := findGitRoot(filepath.Dir(realPath))
-	if repoRoot == "" {
-		return false, nil
-	}
-	origin, err := git.ConfiguredRemoteURL(repoRoot, "origin")
-	if err != nil {
-		return false, nil
-	}
-	remoteURL, err := git.ResolveRemoteURL(origin, repoRoot)
-	if err != nil {
-		return false, err
-	}
-	branch, err := workspaceBranch(repoRoot)
-	if err != nil {
-		return false, err
-	}
-	return r.syncTOMLContext(context.Background(), repoRoot, origin, remoteURL, branch)
-}
-
 func (r *Runner) syncTOMLContext(ctx context.Context, repoRoot, expectedOrigin, remoteURL, branch string) (bool, error) {
 	relFile, err := r.prepareWorkspaceSync(ctx, repoRoot, expectedOrigin, branch)
 	if err != nil {

@@ -13,21 +13,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-func CloneBare(remote, dest string) error {
-	return CloneBareContext(context.Background(), remote, dest)
-}
-
-func CloneBareContext(ctx context.Context, remote, dest string) error {
-	if err := os.Mkdir(dest, 0o755); err != nil {
-		return fmt.Errorf("claim clone destination %s: %w", dest, err)
-	}
-	err := cloneBareIntoDestinationContext(ctx, remote, dest)
-	if err != nil {
-		_ = os.RemoveAll(dest)
-	}
-	return err
-}
-
 func cloneBareIntoDestinationContext(ctx context.Context, remote, dest string) error {
 	cmd := remoteCommand(ctx, "clone", "--bare", remote, dest)
 	out, err := cmd.CombinedOutput()

@@ -27,9 +27,7 @@ func makeProjectBare(t *testing.T, wsRoot, name, defaultBranch string) (config.P
 		t.Fatalf("mkdir parent: %v", err)
 	}
 
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("SetFetchRefspec: %v", err)
 	}

@@ -34,7 +34,6 @@ func (t *TextInput) CursorEnd()              { t.ti.CursorEnd() }
 type SpinnerStyle struct{ s spinner.Spinner }
 
 var DotSpinner = SpinnerStyle{s: spinner.Dot}
-var LineSpinner = SpinnerStyle{s: spinner.Line}
 
 type Spinner struct{ sp spinner.Model }
 

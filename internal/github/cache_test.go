@@ -124,8 +124,6 @@ func TestLoadCache_OldVersionIsMiss(t *testing.T) {
 func TestSaveCache_EmptyIsNoop(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
-	// Empty save must not produce a cache file (otherwise CacheFresh
-	// would lie about having data).
 	if err := SaveCache(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -135,55 +133,8 @@ func TestSaveCache_EmptyIsNoop(t *testing.T) {
 	}
 }
 
-func TestPurgeCache_RemovesFile(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	if err := SaveCache([]Repo{{Name: "x", Owner: "me", SSHURL: "git@github.com:me/x.git"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := PurgeCache(); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _ := LoadCache()
-	if got != nil {
-		t.Errorf("after purge, expected nil, got %d entries", len(got))
-	}
-}
-
-func TestPurgeCache_NoFile_NoError(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	if err := PurgeCache(); err != nil {
-		t.Errorf("purge of non-existent cache should be silent, got %v", err)
-	}
-}
-
-func TestCacheFresh_ReportsFreshAndAge(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	if err := SaveCache([]Repo{{Name: "x", Owner: "me", SSHURL: "git@github.com:me/x.git"}}); err != nil {
-		t.Fatal(err)
-	}
-	fresh, age := CacheFresh()
-	if !fresh {
-		t.Error("freshly-saved cache should report fresh=true")
-	}
-	if age <= 0 {
-		t.Errorf("age should be positive, got %v", age)
-	}
-}
-
-func TestCacheFresh_ReportsStaleWhenNoFile(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-
-	fresh, _ := CacheFresh()
-	if fresh {
-		t.Error("no cache should report fresh=false")
-	}
-}
-
 func TestCacheTTL_IsPositive(t *testing.T) {
-	if CacheTTL() <= 0 {
-		t.Errorf("CacheTTL = %v, want positive", CacheTTL())
+	if cacheTTL <= 0 {
+		t.Errorf("cacheTTL = %v, want positive", cacheTTL)
 	}
 }

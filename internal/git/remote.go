@@ -162,14 +162,6 @@ func (r Remote) SSHCandidate() (string, bool) {
 	return "git@" + r.Host + ":" + cleanHostedRepository(r.Repository) + ".git", true
 }
 
-func KnownHostSSHCandidate(raw string) (string, bool) {
-	remote, err := ParseRemote(raw)
-	if err != nil {
-		return "", false
-	}
-	return remote.SSHCandidate()
-}
-
 func knownSSHHost(host string) bool {
 	switch strings.ToLower(host) {
 	case "github.com", "gitlab.com", "codeberg.org":
@@ -264,15 +256,6 @@ func configuredValues(repoPath, key string) ([]string, error) {
 		}
 	}
 	return values, nil
-}
-
-func HasRemote(repoPath string) bool {
-	cmd := exec.Command("git", "-C", repoPath, "remote")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return strings.TrimSpace(string(out)) != ""
 }
 
 func ParseRepoName(remote string) string {

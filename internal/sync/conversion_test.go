@@ -166,9 +166,7 @@ func TestRunContextCanceledConversionsRestoreOriginsBeforeSave(t *testing.T) {
 	}}
 	for _, project := range workspace.Projects {
 		barePath := layout.BarePath(filepath.Join(root, project.Path))
-		if err := git.CloneBare(sshRemote, barePath); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CloneBare(t, sshRemote, barePath)
 		if err := git.SetRemoteURL(barePath, testHTTPSRemote); err != nil {
 			t.Fatal(err)
 		}
@@ -305,9 +303,7 @@ func setupConvertibleProject(t *testing.T, blocked bool) (string, *config.Worksp
 		if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := git.CloneBare(remote, barePath); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CloneBare(t, remote, barePath)
 		if err := git.SetRemoteURL(barePath, testHTTPSRemote); err != nil {
 			t.Fatal(err)
 		}

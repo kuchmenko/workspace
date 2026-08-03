@@ -151,7 +151,7 @@ func TestResolveRemoteURLUsesExplicitBase(t *testing.T) {
 	}
 }
 
-func TestKnownHostSSHCandidate(t *testing.T) {
+func TestRemoteSSHCandidate(t *testing.T) {
 	tests := []struct {
 		raw  string
 		want string
@@ -165,9 +165,13 @@ func TestKnownHostSSHCandidate(t *testing.T) {
 		{"git@github.com:owner/project.git", "", false},
 	}
 	for _, test := range tests {
-		got, ok := git.KnownHostSSHCandidate(test.raw)
+		remote, err := git.ParseRemote(test.raw)
+		got, ok := remote.SSHCandidate()
+		if err != nil {
+			got, ok = "", false
+		}
 		if got != test.want || ok != test.ok {
-			t.Errorf("KnownHostSSHCandidate(%q) = (%q, %v), want (%q, %v)", test.raw, got, ok, test.want, test.ok)
+			t.Errorf("SSHCandidate(%q) = (%q, %v), want (%q, %v)", test.raw, got, ok, test.want, test.ok)
 		}
 	}
 }

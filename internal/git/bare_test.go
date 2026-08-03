@@ -18,9 +18,7 @@ func TestHasFetchRefspec_AbsentAfterCloneBare(t *testing.T) {
 	tmp := t.TempDir()
 	barePath := filepath.Join(tmp, "proj.bare")
 
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 
 	if git.HasFetchRefspec(barePath) {
 		t.Fatal("expected fresh clone --bare to have NO remote.origin.fetch; this is the bug we're fixing")
@@ -49,9 +47,7 @@ func TestSetFetchRefspec_MakesFetchPopulateOriginRefs(t *testing.T) {
 	// Bare clone the remote.
 	tmp := t.TempDir()
 	barePath := filepath.Join(tmp, "proj.bare")
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 
 	// Baseline: no origin/* refs yet (clone --bare writes to refs/heads/).
 	if git.RevParse(barePath, "refs/remotes/origin/main") != "" {
@@ -86,9 +82,7 @@ func TestSetFetchRefspec_Idempotent(t *testing.T) {
 	remote := testutil.InitFakeRemote(t, "proj", "main")
 	tmp := t.TempDir()
 	barePath := filepath.Join(tmp, "proj.bare")
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("first SetFetchRefspec: %v", err)
@@ -115,9 +109,7 @@ func TestAheadBehind_AccurateAfterFix(t *testing.T) {
 
 	tmp := t.TempDir()
 	barePath := filepath.Join(tmp, "proj.bare")
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("SetFetchRefspec: %v", err)
 	}

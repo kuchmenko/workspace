@@ -54,26 +54,6 @@ func HasRemoteBranch(repoPath, remote, branch string) bool {
 	return exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch).Run() == nil
 }
 
-func Pull(repoPath string) error {
-	return PullContext(context.Background(), repoPath)
-}
-
-func PullContext(ctx context.Context, repoPath string) error {
-	branch, err := CurrentBranch(repoPath)
-	if err != nil {
-		return err
-	}
-	return PullRemoteBranchContext(ctx, repoPath, "origin", branch)
-}
-
-func PullRemoteBranchContext(ctx context.Context, repoPath, remote, branch string) error {
-	out, err := remoteCommand(ctx, "-C", repoPath, "pull", "--ff-only", remote, branch).CombinedOutput()
-	if err != nil {
-		return commandError(ctx, fmt.Sprintf("git pull %s %s in %s", RedactRemote(remote), branch, repoPath), RedactDiagnostic(string(out), remote), err)
-	}
-	return nil
-}
-
 func FastForwardURLBranchContext(ctx context.Context, repoPath, remoteURL, branch string) error {
 	if err := FetchURLBranchContext(ctx, repoPath, remoteURL, branch); err != nil {
 		return err
@@ -81,22 +61,6 @@ func FastForwardURLBranchContext(ctx context.Context, repoPath, remoteURL, branc
 	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--ff-only", "refs/remotes/origin/"+branch).CombinedOutput()
 	if err != nil {
 		return commandError(ctx, "git merge --ff-only origin/"+branch+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), err)
-	}
-	return nil
-}
-
-func PullRebaseContext(ctx context.Context, repoPath string) error {
-	branch, err := CurrentBranch(repoPath)
-	if err != nil {
-		return err
-	}
-	return PullRebaseRemoteBranchContext(ctx, repoPath, "origin", branch)
-}
-
-func PullRebaseRemoteBranchContext(ctx context.Context, repoPath, remote, branch string) error {
-	out, err := remoteCommand(ctx, "-C", repoPath, "pull", "--rebase", remote, branch).CombinedOutput()
-	if err != nil {
-		return commandError(ctx, fmt.Sprintf("git pull --rebase %s %s in %s", RedactRemote(remote), branch, repoPath), RedactDiagnostic(string(out), remote), err)
 	}
 	return nil
 }
@@ -166,26 +130,6 @@ func Commit(repoPath, message string) error {
 	out, err := exec.Command("git", "-C", repoPath, "commit", "-m", message).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("git commit in %s: %s", repoPath, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func Push(repoPath string) error {
-	return PushContext(context.Background(), repoPath)
-}
-
-func PushContext(ctx context.Context, repoPath string) error {
-	branch, err := CurrentBranch(repoPath)
-	if err != nil {
-		return err
-	}
-	return PushRemoteBranchContext(ctx, repoPath, "origin", branch)
-}
-
-func PushRemoteBranchContext(ctx context.Context, repoPath, remote, branch string) error {
-	out, err := remoteCommand(ctx, "-C", repoPath, "push", remote, branch).CombinedOutput()
-	if err != nil {
-		return commandError(ctx, fmt.Sprintf("git push %s %s in %s", RedactRemote(remote), branch, repoPath), RedactDiagnostic(string(out), remote), err)
 	}
 	return nil
 }

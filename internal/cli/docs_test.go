@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/cli"
@@ -227,11 +228,15 @@ func TestJSONRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSortedCapabilityKeys(t *testing.T) {
+func TestGenerateAgentCapabilityMap_CapabilityKeys(t *testing.T) {
 	root := newTestTree()
 	m := cli.GenerateAgentCapabilityMap(root)
 
-	keys := cli.SortedCapabilityKeys(m.Capabilities)
+	keys := make([]string, 0, len(m.Capabilities))
+	for key := range m.Capabilities {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 	if len(keys) != 3 {
 		t.Fatalf("got %d keys, want 3", len(keys))
 	}

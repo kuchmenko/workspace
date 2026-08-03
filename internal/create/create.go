@@ -505,14 +505,6 @@ func isAlreadyExistsErr(stderr []byte) bool {
 	return strings.Contains(low, "name already exists")
 }
 
-func IsAuthErr(err error) bool {
-	return errors.Is(err, errGHAuth)
-}
-
-func IsRepoExistsErr(err error) bool {
-	return errors.Is(err, errRepoExists)
-}
-
 type sidecarPayload struct {
 	Mode  Mode   `json:"mode"`
 	Owner string `json:"owner,omitempty"`

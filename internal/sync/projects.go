@@ -4,41 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
 )
-
-func (r *Runner) syncProject(name string, project *config.Project, machine string, touched *bool) error {
-	mainPath := filepath.Join(r.root, project.Path)
-	barePath := layout.BarePath(mainPath)
-	state, diagnostic := classifyProject(mainPath, barePath)
-	planned := ProjectPlan{
-		Name:       name,
-		State:      state,
-		MainPath:   mainPath,
-		BarePath:   barePath,
-		Diagnostic: diagnostic,
-		Snapshot:   snapshotProject(*project),
-		MirrorURLs: make(map[string]string),
-	}
-	base := projectNetworkBase(r.root, planned)
-	planned.OriginURL, _ = git.ResolveRemoteURL(project.Remote, base)
-	selectedMirrors := make(map[string]bool, len(project.Mirrors))
-	for mirror, url := range project.Mirrors {
-		selectedMirrors[mirror] = true
-		planned.MirrorURLs[mirror], _ = git.ResolveRemoteURL(url, base)
-	}
-	result := r.syncPlannedProject(context.Background(), planned, project, machine, touched, selectedMirrors, nil, nil)
-	if result.Status == ResultFailed {
-		return errors.New(result.Diagnostic)
-	}
-	return nil
-}
 
 func (r *Runner) syncPlannedProject(ctx context.Context, planned ProjectPlan, project *config.Project, machine string, touched *bool, selectedMirrors map[string]bool, report *Report, onEvent func(Event)) OperationResult {
 	switch planned.State {

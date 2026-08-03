@@ -40,7 +40,7 @@ func keyRunes(s string) tui.KeyMsg {
 }
 
 func keyEnter() tui.KeyMsg     { return tui.KeyMsg{Type: tui.KeyEnter} }
-func keyEsc() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyEscape} }
+func keyEsc() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyEsc} }
 func keyDown() tui.KeyMsg      { return tui.KeyMsg{Type: tui.KeyDown} }
 func keyTab() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyTab} }
 func keyBackspace() tui.KeyMsg { return tui.KeyMsg{Type: tui.KeyBackspace} }
