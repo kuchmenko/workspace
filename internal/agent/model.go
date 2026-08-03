@@ -67,18 +67,39 @@ func (m *Model) rebuildItems() {
 	m.headerChips = buildHeaderChips(m.workspaces)
 
 	for _, ws := range m.workspaces {
+		projects := make([]*Project, 0, len(ws.Projects))
+		groupActivity := make(map[string]time.Time, len(ws.Groups))
 		for i := range ws.Projects {
 			p := &ws.Projects[i]
+			projects = append(projects, p)
+			if p.LastActiveAt.After(groupActivity[p.Group]) {
+				groupActivity[p.Group] = p.LastActiveAt
+			}
+		}
+		sort.SliceStable(projects, func(i, j int) bool {
+			if !projects[i].LastActiveAt.Equal(projects[j].LastActiveAt) {
+				return projects[i].LastActiveAt.After(projects[j].LastActiveAt)
+			}
+			return projects[i].Name < projects[j].Name
+		})
+
+		for _, p := range projects {
 			if p.Group == "" {
 				m.addProjectItem(p, 0)
 			}
 		}
 
-		for _, g := range ws.Groups {
+		groups := append([]string(nil), ws.Groups...)
+		sort.SliceStable(groups, func(i, j int) bool {
+			if !groupActivity[groups[i]].Equal(groupActivity[groups[j]]) {
+				return groupActivity[groups[i]].After(groupActivity[groups[j]])
+			}
+			return groups[i] < groups[j]
+		})
+		for _, g := range groups {
 			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
 			if m.expanded[g] {
-				for i := range ws.Projects {
-					p := &ws.Projects[i]
+				for _, p := range projects {
 					if p.Group == g {
 						m.addProjectItem(p, 1)
 					}
