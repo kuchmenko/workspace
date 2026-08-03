@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -554,7 +555,11 @@ func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
 		projID = p.ID
 	}
 	wsRoot := m.workspaceRootFor(p)
-	if err := DeleteWorktreeWithRegistry(p.Path, wt.Path, false, wsRoot, projID, wt.Branch); err != nil {
+	machine, err := explorerMachineName()
+	if err == nil {
+		err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
+	}
+	if err != nil {
 		s.statusMsg = err.Error()
 		return m, nil
 	}

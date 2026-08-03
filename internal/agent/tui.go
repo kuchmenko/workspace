@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -289,7 +289,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 				projID = it.parentProj.ID
 			}
 			wsRoot := m.workspaceRootFor(it.parentProj)
-			if err := DeleteWorktreeWithRegistry(it.parentProj.Path, it.worktree.Path, false, wsRoot, projID, it.worktree.Branch); err != nil {
+			machine, err := explorerMachineName()
+			if err == nil {
+				err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: it.worktree.Branch, Machine: machine})
+			}
+			if err != nil {
 				m.statusMsg = err.Error()
 				return m, nil
 			}
@@ -473,144 +477,15 @@ type Worktree struct {
 	Ahead  int
 }
 
-type WorktreeResult struct {
-	Path   string
-	Branch string
-}
-
-func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult, error) {
-	if strings.TrimSpace(branch) == "" {
-		return nil, fmt.Errorf("branch name required")
-	}
-	barePath := layout.BarePath(p.Path)
-	if _, err := os.Stat(barePath); err != nil {
-		return nil, fmt.Errorf("project not migrated (no bare repo at %s)", barePath)
-	}
-
-	mc, _ := config.LoadMachineConfig()
-	machine := "unknown"
-	if mc != nil && mc.MachineName != "" {
-		machine = mc.MachineName
-	}
-
-	if !git.HasFetchRefspec(barePath) {
-		_ = git.SetFetchRefspec(barePath)
-	}
-
-	_ = git.FetchRefspec(barePath, "origin", branch)
-	localExists := git.HasBranch(barePath, branch)
-	remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
-
-	if existingPath := findWorktreeForBranch(barePath, branch); existingPath != "" {
-		if wsRoot != "" && projID != "" {
-			if ws, err := config.Load(wsRoot); err == nil {
-				if proj, ok := ws.Projects[projID]; ok {
-					proj.ClaimBranch(branch, machine)
-					if remoteExists {
-						proj.MarkPushed(branch, machine, time.Now())
-					}
-					ws.Projects[projID] = proj
-					if err := config.Save(wsRoot, ws); err != nil {
-						return nil, fmt.Errorf("registry update failed: %w", err)
-					}
-				}
-			}
-		}
-		return &WorktreeResult{Path: existingPath, Branch: branch}, nil
-	}
-
-	wtPath := layout.WorktreePathForBranch(p.Path, machine, branch)
-	if _, err := os.Stat(wtPath); err == nil {
-		return nil, fmt.Errorf("worktree path already exists: %s", wtPath)
-	}
-
-	attachedToRemote := false
-	switch {
-	case localExists:
-
-		if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
-			return nil, fmt.Errorf("git worktree add: %w", err)
-		}
-		attachedToRemote = remoteExists
-	case remoteExists:
-
-		if err := git.WorktreeAdd(barePath, wtPath, branch, "origin/"+branch); err != nil {
-			return nil, fmt.Errorf("git worktree add: %w", err)
-		}
-		attachedToRemote = true
-	default:
-		base := p.DefaultBranch
-		if base == "" {
-			base = "main"
-		}
-		if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
-			return nil, fmt.Errorf("git worktree add: %w", err)
-		}
-	}
-
-	if wsRoot != "" && projID != "" {
-		if ws, err := config.Load(wsRoot); err == nil {
-			if proj, ok := ws.Projects[projID]; ok {
-				proj.ClaimBranch(branch, machine)
-				if attachedToRemote {
-					proj.MarkPushed(branch, machine, time.Now())
-				}
-				ws.Projects[projID] = proj
-				if err := config.Save(wsRoot, ws); err != nil {
-					return nil, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
-				}
-			}
-		}
-	}
-
-	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
-}
-
-func DeleteWorktreeWithRegistry(mainPath, wtPath string, force bool, wsRoot, projID, branch string) error {
-	if wtPath == mainPath {
-		return fmt.Errorf("cannot delete main worktree")
-	}
-	barePath := layout.BarePath(mainPath)
-	if err := git.WorktreeRemove(barePath, wtPath, force); err != nil {
-		return err
-	}
-	if wsRoot == "" || projID == "" || branch == "" {
-		return nil
-	}
-	mc, _ := config.LoadMachineConfig()
-	machine := "unknown"
-	if mc != nil && mc.MachineName != "" {
-		machine = mc.MachineName
-	}
-	ws, err := config.Load(wsRoot)
+func explorerMachineName() (string, error) {
+	machine, err := config.LoadMachineConfig()
 	if err != nil {
-		return nil
+		return "", fmt.Errorf("load machine config: %w", err)
 	}
-	proj, ok := ws.Projects[projID]
-	if !ok {
-		return nil
+	if machine == nil || machine.MachineName == "" {
+		return "", fmt.Errorf("machine name is not configured")
 	}
-	if changed, _ := proj.ReleaseBranch(branch, machine); changed {
-		ws.Projects[projID] = proj
-		_ = config.Save(wsRoot, ws)
-	}
-	return nil
-}
-
-func findWorktreeForBranch(barePath, branch string) string {
-	wts, err := git.WorktreeList(barePath)
-	if err != nil {
-		return ""
-	}
-	for _, wt := range wts {
-		if wt.Bare {
-			continue
-		}
-		if wt.Branch == branch {
-			return wt.Path
-		}
-	}
-	return ""
+	return machine.MachineName, nil
 }
 
 func worktreeDisplayName(wt Worktree) string {
@@ -718,7 +593,10 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	}
 
 	wsRoot := m.workspaceRootFor(m.popupProj)
-	_, err := CreateWorktree(m.popupProj, branch, wsRoot, m.popupProj.ID)
+	machine, err := explorerMachineName()
+	if err == nil {
+		_, err = repo.AddWorktree(repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: m.popupProj.ID, Branch: branch, Machine: machine})
+	}
 	if err != nil {
 		m.statusMsg = err.Error()
 		m.mode = viewList

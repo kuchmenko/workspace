@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/spf13/cobra"
 )
 
@@ -65,16 +65,7 @@ func locateWorktreeForBranch(barePath, branch string) string {
 }
 
 func validateBranchName(branch string) error {
-	cmd := exec.Command("git", "check-ref-format", "--branch", branch)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		hint := strings.TrimSpace(string(out))
-		if hint == "" {
-			hint = "git check-ref-format rejected this name"
-		}
-		return fmt.Errorf("invalid branch name %q: %s", branch, hint)
-	}
-	return nil
+	return repo.ValidateWorktreeBranch(branch)
 }
 
 func newWorktreeAddCmd() *cobra.Command {
@@ -120,118 +111,37 @@ EXAMPLES
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, branch := args[0], strings.TrimSpace(args[1])
-			if branch == "" {
-				return errors.New("branch must not be empty")
-			}
-			if err := validateBranchName(branch); err != nil {
-				return err
-			}
-
 			machine, err := ensureMachineName()
 			if err != nil {
 				return err
 			}
-
-			proj, mainPath, barePath, err := resolveProject(projectName)
+			result, err := repo.AddWorktree(repo.WorktreeAddOptions{
+				WorkspaceRoot: wsRoot,
+				Project:       projectName,
+				Branch:        branch,
+				Machine:       machine,
+				From:          fromBase,
+			})
 			if err != nil {
 				return err
 			}
-
-			if !git.HasFetchRefspec(barePath) {
-				_ = git.SetFetchRefspec(barePath)
+			if result.Warning != "" {
+				fmt.Fprintf(os.Stderr, "warning: %s\n", result.Warning)
 			}
-
-			_ = git.FetchRefspec(barePath, "origin", branch)
-			localExists := git.HasBranch(barePath, branch)
-			remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
-
-			if existingWtPath := locateWorktreeForBranch(barePath, branch); existingWtPath != "" {
-				p := ws.Projects[projectName]
-				changed, _ := p.ClaimBranch(branch, machine)
-				if remoteExists && p.MarkPushed(branch, machine, time.Now()) {
-					changed = true
-				}
-				if changed {
-					ws.Projects[projectName] = p
-					if err := saveWorkspace(); err != nil {
-						return fmt.Errorf("registry update failed: %w", err)
-					}
-				}
-				machines := strings.Join(p.LookupBranch(branch).Machines, ", ")
+			machines := strings.Join(result.Machines, ", ")
+			if result.ReRegistered {
 				fmt.Printf("re-registered existing worktree %s\n  branch: %s\n  registered in workspace.toml (machines=[%s])\n",
-					existingWtPath, branch, machines)
+					result.Path, branch, machines)
 				return nil
 			}
-
-			wtPath := layout.WorktreePathForBranch(mainPath, machine, branch)
-			if _, err := os.Stat(wtPath); err == nil {
-				return fmt.Errorf("worktree path already exists: %s", wtPath)
-			}
-
-			source := ""
-			switch {
-			case localExists:
-				if fromBase != "" {
-					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists locally\n", branch)
-				}
-				if err := git.WorktreeAdd(barePath, wtPath, branch, ""); err != nil {
-					return err
-				}
-				if remoteExists {
-					source = "fetched"
-				} else {
-					source = "local"
-				}
-			case remoteExists:
-				if fromBase != "" {
-					fmt.Fprintf(os.Stderr, "warning: --from ignored: branch %s already exists on origin\n", branch)
-				}
-				if err := git.WorktreeAdd(barePath, wtPath, branch, "origin/"+branch); err != nil {
-					return err
-				}
-				source = "fetched"
-			default:
-				base := fromBase
-				if base == "" {
-					base = proj.DefaultBranch
-				}
-				if base == "" {
-					return fmt.Errorf("project %s has no default_branch and --from was not given", projectName)
-				}
-				if err := git.WorktreeAdd(barePath, wtPath, branch, base); err != nil {
-					return err
-				}
-			}
-			if source != "" {
-				_ = git.SetBranchUpstream(wtPath, branch, "origin")
-			}
-
-			p := ws.Projects[projectName]
-			changed, _ := p.ClaimBranch(branch, machine)
-			if source == "fetched" && p.MarkPushed(branch, machine, time.Now()) {
-				changed = true
-			}
-			if changed {
-				ws.Projects[projectName] = p
-				if err := saveWorkspace(); err != nil {
-					return fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
-				}
-			}
-
-			machines := strings.Join(p.LookupBranch(branch).Machines, ", ")
-
-			fmt.Printf("created worktree %s\n", wtPath)
-			switch source {
+			fmt.Printf("created worktree %s\n", result.Path)
+			switch result.Source {
 			case "fetched":
 				fmt.Printf("  branch: %s (checked out existing remote)\n", branch)
 			case "local":
 				fmt.Printf("  branch: %s (attached to existing local branch)\n", branch)
 			default:
-				base := fromBase
-				if base == "" {
-					base = proj.DefaultBranch
-				}
-				fmt.Printf("  branch: %s\n  base:   %s\n", branch, base)
+				fmt.Printf("  branch: %s\n  base:   %s\n", branch, result.Base)
 			}
 			fmt.Printf("  registered in workspace.toml (machines=[%s])\n", machines)
 			return nil
@@ -440,46 +350,17 @@ func newWorktreeRmCmd() *cobra.Command {
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, branch := args[0], strings.TrimSpace(args[1])
-			if branch == "" {
-				return errors.New("branch must not be empty")
-			}
 			machine, err := ensureMachineName()
 			if err != nil {
 				return err
 			}
-			_, mainPath, barePath, err := resolveProject(projectName)
-			if err != nil {
-				return err
+			_, _, barePath, resolveErr := resolveProject(projectName)
+			if resolveErr != nil {
+				return resolveErr
 			}
 			wtPath := locateWorktreeForBranch(barePath, branch)
-			if wtPath == "" {
-				return fmt.Errorf("no worktree on branch %s in project %s", branch, projectName)
-			}
-
-			if wtPath == mainPath {
-				return fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", projectName, branch, mainPath)
-			}
-
-			if !force {
-				if git.IsDirty(wtPath) {
-					return fmt.Errorf("worktree %s is dirty; commit/stash or use --force", wtPath)
-				}
-				ahead, _, has := git.AheadBehind(wtPath, branch)
-				if has && ahead > 0 {
-					return fmt.Errorf("branch %s has %d unpushed commits; push or use --force", branch, ahead)
-				}
-			}
-
-			if err := git.WorktreeRemove(barePath, wtPath, force); err != nil {
+			if err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projectName, Branch: branch, Machine: machine, Force: force}); err != nil {
 				return err
-			}
-
-			p := ws.Projects[projectName]
-			if changed, _ := p.ReleaseBranch(branch, machine); changed {
-				ws.Projects[projectName] = p
-				if err := saveWorkspace(); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: worktree removed but workspace.toml save failed: %v\n", err)
-				}
 			}
 			fmt.Printf("removed worktree %s\n", wtPath)
 			return nil
