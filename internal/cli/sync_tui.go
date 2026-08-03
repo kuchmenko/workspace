@@ -370,7 +370,9 @@ func (m syncModel) beginRun() (tui.Model, tui.Cmd) {
 func (m syncModel) startRun(ctx context.Context) tui.Cmd {
 	return func() tui.Msg {
 		runner := workspacesync.NewRunner(m.root, log.New(io.Discard, "", 0))
+		notifier := newSyncConflictNotifier(m.root)
 		report := runner.RunContext(ctx, m.selection, func(event workspacesync.Event) {
+			notifier.notifyNew()
 			m.runMessages <- syncRunEventMsg{event: event}
 		})
 		m.runMessages <- syncRunDoneMsg{report: report}
