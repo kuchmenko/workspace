@@ -52,8 +52,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindWorktree:
 			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
-		case KindPortal:
-			line = m.renderSession(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
 		}
 
 		rows = append(rows, line)
@@ -70,7 +68,7 @@ func (m *Model) itemGroupKey(item listItem) string {
 			return "g:" + item.project.Group
 		}
 		return "ungrouped"
-	case KindWorktree, KindPortal:
+	case KindWorktree:
 		if item.parentProj != nil && item.parentProj.Group != "" {
 			return "g:" + item.parentProj.Group
 		}
@@ -114,9 +112,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	var badgeParts []string
 	if p.WorktreeCount > 1 {
 		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
-	}
-	if p.SessionCount > 0 {
-		badgeParts = append(badgeParts, fmt.Sprintf("%ds", p.SessionCount))
 	}
 	badges := strings.Join(badgeParts, " · ")
 
@@ -193,33 +188,6 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 		return m.renderSelected(label, wtStyle, w)
 	}
 	return wtStyle.Width(w).Render(label)
-}
-
-func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("    ", item.indent)
-	title := "(session)"
-	if item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated), item.session.Title)
-	}
-	if inFlash && isMatch && item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated),
-			flashInlineLabel(item.session.Title, m.flashQuery, flashLabel))
-	}
-
-	prefix := fmt.Sprintf(" %s%s ", indent, iconSession)
-	maxTitle := w - len([]rune(prefix)) - 1
-	if maxTitle > 0 {
-		title = truncateStr(title, maxTitle)
-	}
-	label := prefix + title
-
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, sessionStyle, w)
-	}
-	return sessionStyle.Width(w).Render(label)
 }
 
 func truncateStr(s string, maxLen int) string {
@@ -512,7 +480,6 @@ var (
 	dimStyle       = tui.Amber.Dim
 
 	wtStyle       = tui.NewStyle().Foreground("108")
-	sessionStyle  = tui.NewStyle().Foreground("110")
 	badgeStyle    = tui.NewStyle().Foreground("240")
 	wtStatusStyle = tui.NewStyle().Foreground("173")
 
@@ -648,10 +615,6 @@ func (m *Model) itemSearchName(item listItem) string {
 		return item.project.Name
 	case KindWorktree:
 		return item.group
-	case KindPortal:
-		if item.session != nil {
-			return item.session.Title
-		}
 	}
 	return ""
 }
@@ -685,15 +648,4 @@ func flashInlineLabel(name, query string, label rune) string {
 		}
 	}
 	return b.String()
-}
-
-func (m *Model) openSheetForChip(c Chip) {
-	switch c.Kind {
-	case KindProject:
-		if c.Project != nil {
-			m.sheet = newProjectSheet(m, c.Project, nil)
-		}
-	case KindGroup:
-		m.sheet = newGroupSheet(m, c.Name)
-	}
 }

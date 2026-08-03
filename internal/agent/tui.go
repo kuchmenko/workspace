@@ -1,11 +1,8 @@
 package agent
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -24,7 +21,6 @@ const (
 	viewList viewMode = iota
 	viewNewWorktree
 	viewFlash
-	viewPromptInput
 	viewWhichKey
 	viewEditProject
 )
@@ -32,7 +28,6 @@ const (
 const (
 	iconProject  = ""
 	iconWorktree = ""
-	iconSession  = ""
 	iconSearch   = ""
 )
 
@@ -41,17 +36,13 @@ type listItem struct {
 	group      string
 	project    *Project
 	worktree   *Worktree
-	session    *Session
 	indent     int
 	path       string
 	parentProj *Project
 }
 
 type LaunchRequest struct {
-	Cwd       string
-	ResumeID  string
-	ShellOnly bool
-	Prompt    string
+	Cwd string
 }
 
 type Model struct {
@@ -66,8 +57,7 @@ type Model struct {
 
 	sheet *sheet
 
-	sessCache *SessionCache
-	wtCache   *WorktreeCache
+	wtCache *WorktreeCache
 
 	statusMsg string
 
@@ -76,17 +66,13 @@ type Model struct {
 
 	popupProj *Project
 
-	wtBranch   string
-	wtNoLaunch bool
-	wtField    int
+	wtBranch string
+	wtField  int
 
 	editGroup    string
 	editCategory config.Category
 	editField    int
 	editErr      string
-
-	pendingLaunch *LaunchRequest
-	promptInput   string
 
 	flashQuery    string
 	flashMatches  []int
@@ -101,15 +87,11 @@ type Model struct {
 	width, height int
 }
 
-func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
-	if sessCache == nil {
-		sessCache = NewSessionCache()
-	}
+func NewModel(workspaces []WorkspaceData) *Model {
 	m := &Model{
 		workspaces: workspaces,
 		mode:       viewList,
 		expanded:   make(map[string]bool),
-		sessCache:  sessCache,
 		wtCache:    NewWorktreeCache(),
 	}
 
@@ -140,12 +122,9 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if msg.String() == "ctrl+s" {
 			item := m.currentItem()
 			if item != nil && item.path != "" {
-				m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+				m.Launch = &LaunchRequest{Cwd: item.path}
 				return m, tui.Quit
 			}
-		}
-		if m.mode == viewPromptInput {
-			return m.updatePromptInput(msg)
 		}
 		if m.mode == viewFlash {
 			return m.updateFlash(msg)
@@ -170,9 +149,6 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 func (m *Model) View() string {
 	if m.width == 0 {
 		return "loading…"
-	}
-	if m.mode == viewPromptInput {
-		return m.viewPromptInput()
 	}
 	if m.mode == viewNewWorktree {
 		return m.viewNewWorktree()
@@ -267,9 +243,9 @@ func (m *Model) footerHints() (actions, nav string) {
 	}
 	switch item.kind {
 	case KindGroup:
-		actions = "⏎:sheet  tab:expand  p:+prompt  l:shell"
+		actions = "⏎:sheet  tab:expand  l:shell"
 	case KindProject:
-		actions = "⏎:sheet  p:+prompt  w:worktree  e:edit  l:shell"
+		actions = "⏎:sheet  w:worktree  e:edit  l:shell"
 	default:
 		actions = "⏎:open"
 	}
@@ -289,7 +265,7 @@ func (m *Model) breadcrumb() string {
 			return item.project.Group + " ›"
 		}
 		return "ws"
-	case KindWorktree, KindPortal:
+	case KindWorktree:
 		if item.parentProj != nil {
 			if item.parentProj.Group != "" {
 				return item.parentProj.Group + " › " + item.parentProj.Name
@@ -334,8 +310,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 		idx := int(s[0] - '1')
 		if idx < len(m.headerChips) {
-			m.openSheetForChip(m.headerChips[idx])
-			return m, nil
+			m.Launch = &LaunchRequest{Cwd: m.headerChips[idx].Path}
+			return m, tui.Quit
 		}
 	}
 
@@ -367,33 +343,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		case KindWorktree:
 			m.Launch = &LaunchRequest{Cwd: item.path}
 			return m, tui.Quit
-		case KindPortal:
-			if item.session != nil {
-				m.Launch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
-				return m, tui.Quit
-			}
-		}
-
-	case "p":
-
-		if item != nil && item.path != "" && (item.kind == KindGroup || item.kind == KindProject || item.kind == KindWorktree) {
-			m.pendingLaunch = &LaunchRequest{Cwd: item.path}
-			m.promptInput = ""
-			m.mode = viewPromptInput
-			return m, nil
-		}
-
-		if item != nil && item.kind == KindPortal && item.session != nil {
-			m.pendingLaunch = &LaunchRequest{Cwd: item.session.Cwd, ResumeID: item.session.ID}
-			m.promptInput = ""
-			m.mode = viewPromptInput
-			return m, nil
 		}
 
 	case "w":
 
 		if item != nil && item.kind == KindProject {
-			m.wtNoLaunch = true
 			m.wtBranch = ""
 			m.wtField = 0
 			m.popupProj = item.project
@@ -418,7 +372,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	case "l", "right":
 		if item != nil && item.path != "" {
-			m.Launch = &LaunchRequest{Cwd: item.path, ShellOnly: true}
+			m.Launch = &LaunchRequest{Cwd: item.path}
 			return m, tui.Quit
 		}
 
@@ -725,210 +679,6 @@ func LoadWorktrees(mainPath string) []Worktree {
 	return result
 }
 
-type Session struct {
-	ID      string
-	Title   string
-	Cwd     string
-	Updated time.Time
-}
-
-func LoadSessions(paths []string) []Session {
-	claudeRoot := claudeProjectsDir()
-	if claudeRoot == "" {
-		return nil
-	}
-
-	pathLookup := make(map[string]string, len(paths))
-	for _, p := range paths {
-		encoded := encodeCwd(p)
-		pathLookup[encoded] = p
-	}
-
-	var sessions []Session
-
-	entries, err := os.ReadDir(claudeRoot)
-	if err != nil {
-		return nil
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		origPath, ok := pathLookup[entry.Name()]
-		if !ok {
-			continue
-		}
-
-		dirPath := filepath.Join(claudeRoot, entry.Name())
-		files, err := filepath.Glob(filepath.Join(dirPath, "*.jsonl"))
-		if err != nil {
-			continue
-		}
-
-		for _, f := range files {
-			id := strings.TrimSuffix(filepath.Base(f), ".jsonl")
-			info, err := os.Stat(f)
-			if err != nil {
-				continue
-			}
-
-			title := extractTitle(f)
-			if title == "" {
-				title = "(untitled)"
-			}
-
-			sessions = append(sessions, Session{
-				ID:      id,
-				Title:   title,
-				Cwd:     origPath,
-				Updated: info.ModTime(),
-			})
-		}
-	}
-
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].Updated.After(sessions[j].Updated)
-	})
-	return sessions
-}
-
-func extractTitle(path string) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 256*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if !strings.Contains(string(line), `"type":"user"`) {
-			continue
-		}
-		var entry struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal(line, &entry); err != nil || entry.Type != "user" {
-			continue
-		}
-
-		var text string
-		if err := json.Unmarshal(entry.Message.Content, &text); err != nil {
-			var parts []struct {
-				Text string `json:"text"`
-			}
-			if err := json.Unmarshal(entry.Message.Content, &parts); err == nil && len(parts) > 0 {
-				text = parts[0].Text
-			}
-		}
-		if len(text) > 60 {
-			text = text[:57] + "…"
-		}
-		return text
-	}
-	return ""
-}
-
-func encodeCwd(path string) string {
-	return strings.ReplaceAll(path, "/", "-")
-}
-
-func claudeProjectsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	dir := filepath.Join(home, ".claude", "projects")
-	if _, err := os.Stat(dir); err != nil {
-		return ""
-	}
-	return dir
-}
-
-func FindSession(id string) *Session {
-	claudeRoot := claudeProjectsDir()
-	if claudeRoot == "" {
-		return nil
-	}
-
-	entries, err := os.ReadDir(claudeRoot)
-	if err != nil {
-		return nil
-	}
-
-	target := id + ".jsonl"
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		f := filepath.Join(claudeRoot, entry.Name(), target)
-		info, err := os.Stat(f)
-		if err != nil {
-			continue
-		}
-
-		cwd := strings.ReplaceAll(entry.Name(), "-", "/")
-
-		if _, err := os.Stat(cwd); err != nil {
-			continue
-		}
-		return &Session{
-			ID:      id,
-			Title:   extractTitle(f),
-			Cwd:     cwd,
-			Updated: info.ModTime(),
-		}
-	}
-	return nil
-}
-
-type SessionCache struct {
-	data map[string][]Session
-}
-
-func NewSessionCache() *SessionCache {
-	return &SessionCache{data: make(map[string][]Session)}
-}
-
-func (c *SessionCache) Get(mainPath string) []Session {
-	if sessions, ok := c.data[mainPath]; ok {
-		return sessions
-	}
-	sessions := LoadSessions([]string{mainPath})
-	c.data[mainPath] = sessions
-	return sessions
-}
-
-func (c *SessionCache) Count(mainPath string) int {
-	return len(c.Get(mainPath))
-}
-
-func (c *SessionCache) Invalidate(mainPath string) {
-	delete(c.data, mainPath)
-}
-
-func TimeAgo(t time.Time) string {
-	d := time.Since(t)
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	default:
-		return t.Format("Jan 2")
-	}
-}
-
 func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 
@@ -968,7 +718,7 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	}
 
 	wsRoot := m.workspaceRootFor(m.popupProj)
-	result, err := CreateWorktree(m.popupProj, branch, wsRoot, m.popupProj.ID)
+	_, err := CreateWorktree(m.popupProj, branch, wsRoot, m.popupProj.ID)
 	if err != nil {
 		m.statusMsg = err.Error()
 		m.mode = viewList
@@ -976,18 +726,10 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	}
 	m.wtCache.Invalidate(m.popupProj.Path)
 
-	if m.wtNoLaunch {
-		m.wtNoLaunch = false
-		m.mode = viewList
-		m.rebuildItems()
-		m.ensureVisible()
-		m.statusMsg = "worktree created"
-		return m, nil
-	}
-
-	m.pendingLaunch = &LaunchRequest{Cwd: result.Path}
-	m.promptInput = ""
-	m.mode = viewPromptInput
+	m.mode = viewList
+	m.rebuildItems()
+	m.ensureVisible()
+	m.statusMsg = "worktree created"
 	return m, nil
 }
 
@@ -1037,61 +779,6 @@ func (m *Model) viewNewWorktree() string {
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
 
-	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
-		tui.WithWhitespaceBackground(tui.Color("234")))
-}
-
-func (m *Model) updatePromptInput(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
-	key := msg.String()
-	switch key {
-	case "esc":
-		m.mode = viewList
-		m.pendingLaunch = nil
-	case "enter":
-
-		m.pendingLaunch.Prompt = strings.TrimSpace(m.promptInput)
-		m.Launch = m.pendingLaunch
-		m.pendingLaunch = nil
-		return m, tui.Quit
-	case "backspace":
-		if len(m.promptInput) > 0 {
-			m.promptInput = m.promptInput[:len(m.promptInput)-1]
-		}
-	default:
-		if len(key) == 1 && key[0] >= 32 {
-			m.promptInput += key
-		} else if key == "space" || key == " " {
-			m.promptInput += " "
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) viewPromptInput() string {
-	if m.pendingLaunch == nil {
-		m.mode = viewList
-		return m.viewList()
-	}
-	popupW := 56
-	if m.width < 62 {
-		popupW = m.width - 6
-	}
-	innerW := popupW - 6
-
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render("Launch claude"))
-	lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("in: %s", m.pendingLaunch.Cwd)))
-	lines = append(lines, "")
-	lines = append(lines, popupItemStyle.Width(innerW).Render("  Initial prompt (optional):"))
-
-	input := m.promptInput + "█"
-	lines = append(lines, popupSelectedStyle.Width(innerW).Render("  "+input))
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("  Enter: launch (empty = interactive)"))
-	lines = append(lines, popupDimStyle.Width(innerW).Render("  Esc: back"))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
 	return tui.Place(m.width, m.height, tui.Center, tui.Center, popup,
 		tui.WithWhitespaceBackground(tui.Color("234")))
 }
@@ -1363,7 +1050,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	case KindGroup:
 		return []whichKeyAction{
 			{"⏎", "open sheet"},
-			{"p", "+prompt"},
 			{"f", m.favoriteToggleLabelGroup(item.group)},
 			{"l", "shell"},
 			{"tab", "expand"},
@@ -1373,7 +1059,6 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	case KindProject:
 		return []whichKeyAction{
 			{"⏎", "open sheet"},
-			{"p", "+prompt"},
 			{"f", m.favoriteToggleLabel(item)},
 			{"w", "worktree ›"},
 			{"e", "edit"},
@@ -1412,7 +1097,6 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			return m, nil
 		case "n":
 			if item != nil && item.kind == KindProject {
-				m.wtNoLaunch = true
 				m.wtBranch = ""
 				m.wtField = 0
 				m.popupProj = item.project
@@ -1566,14 +1250,6 @@ func (m *Model) whichKeyTitle() string {
 		return item.project.Name
 	case KindWorktree:
 		return item.group
-	case KindPortal:
-		if item.session != nil {
-			t := item.session.Title
-			if len(t) > 16 {
-				t = t[:16] + "…"
-			}
-			return t
-		}
 	}
 	return "actions"
 }
@@ -1633,27 +1309,6 @@ func (m *Model) viewWhichKey() string {
 		tui.Center, tui.Center,
 		combined,
 	)
-}
-
-func LaunchClaude(cwd, resumeID, prompt string) error {
-	bin, err := exec.LookPath("claude")
-	if err != nil {
-		return fmt.Errorf("claude not found in PATH: %w", err)
-	}
-
-	args := []string{"claude"}
-	if resumeID != "" {
-		args = append(args, "--resume", resumeID)
-	}
-	if prompt != "" {
-		args = append(args, "-p", prompt)
-	}
-
-	if err := os.Chdir(cwd); err != nil {
-		return fmt.Errorf("chdir %s: %w", cwd, err)
-	}
-
-	return syscall.Exec(bin, args, os.Environ())
 }
 
 func LaunchShell(cwd string) error {

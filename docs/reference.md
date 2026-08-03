@@ -252,7 +252,7 @@ See [Explorer TUI](explorer.md) for keys and behavior.
 
 ```sh
 ws docs --agent               # JSON dump of every command's annotations
-                              # (used by Claude Code agent integration)
+                              # capability metadata for AI agents
 ws completion <shell>         # cobra-generated shell completion
 ```
 

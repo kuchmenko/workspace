@@ -13,11 +13,11 @@ func newExplorerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "explorer",
 		Aliases: []string{"agent"},
-		Short:   "TUI explorer for projects, worktrees, and Claude sessions",
+		Short:   "TUI explorer for projects and worktrees",
 		Annotations: map[string]string{
 			"capability":   "explorer",
-			"agent:when":   "Browse workspaces, projects, and worktrees, then launch or resume Claude Code sessions",
-			"agent:safety": "Interactive TUI. Use subcommands (launch, shell, resume) for non-interactive access.",
+			"agent:when":   "Browse workspaces, projects, and worktrees, then open a shell",
+			"agent:safety": "Interactive TUI. Use the shell subcommand for non-interactive access.",
 		},
 		Long: `Launch the interactive TUI explorer over every registered workspace.
 The pinned quick-nav header shows up to nine numbered chips (favorites
@@ -31,37 +31,15 @@ access to the same actions.`,
 			return runExplorerTUI()
 		},
 	}
-	cmd.AddCommand(
-		newExplorerLaunchCmd(),
-		newExplorerShellCmd(),
-		newExplorerResumeCmd(),
-	)
-	return cmd
-}
-
-func newExplorerLaunchCmd() *cobra.Command {
-	var prompt string
-	cmd := &cobra.Command{
-		Use:   "launch <project-path>",
-		Short: "Launch claude in a project directory (non-interactive)",
-		Annotations: map[string]string{
-			"capability": "agent",
-			"agent:when": "Start a new Claude Code session in a specific project directory",
-		},
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			stampLaunchActivity(args[0])
-			return agent.LaunchClaude(args[0], "", prompt)
-		},
-	}
-	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "initial prompt for claude")
+	cmd.AddCommand(newExplorerShellCmd())
 	return cmd
 }
 
 func newExplorerShellCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "shell <path>",
-		Short: "Open shell in a directory (non-interactive)",
+		Use:     "shell <path>",
+		Aliases: []string{"launch"},
+		Short:   "Open shell in a directory (non-interactive)",
 		Annotations: map[string]string{
 			"capability": "agent",
 			"agent:when": "Open a new shell in a specific project directory",
@@ -74,33 +52,9 @@ func newExplorerShellCmd() *cobra.Command {
 	}
 }
 
-func newExplorerResumeCmd() *cobra.Command {
-	var prompt string
-	cmd := &cobra.Command{
-		Use:   "resume <session-id>",
-		Short: "Resume a Claude Code session by ID",
-		Annotations: map[string]string{
-			"capability": "agent",
-			"agent:when": "Resume a previously started Claude Code session by its session ID",
-		},
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sessionID := args[0]
-			session := agent.FindSession(sessionID)
-			if session == nil {
-				return fmt.Errorf("session %s not found", sessionID)
-			}
-			stampLaunchActivity(session.Cwd)
-			return agent.LaunchClaude(session.Cwd, session.ID, prompt)
-		},
-	}
-	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "additional prompt for the resumed session")
-	return cmd
-}
-
 func runExplorerTUI() error {
 	cwd, _ := os.Getwd()
-	workspaces, sessCache, diagnostics := agent.LoadWorkspaces(cwd)
+	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {
 		fmt.Fprintf(os.Stderr, "ws agent: %s\n", d)
 	}
@@ -108,7 +62,7 @@ func runExplorerTUI() error {
 		return fmt.Errorf("no workspaces found")
 	}
 
-	m := agent.NewModel(workspaces, sessCache)
+	m := agent.NewModel(workspaces)
 	p := tui.NewProgram(m, tui.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
@@ -117,10 +71,7 @@ func runExplorerTUI() error {
 
 	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
 		stampLaunchActivity(final.Launch.Cwd)
-		if final.Launch.ShellOnly {
-			return agent.LaunchShell(final.Launch.Cwd)
-		}
-		return agent.LaunchClaude(final.Launch.Cwd, final.Launch.ResumeID, final.Launch.Prompt)
+		return agent.LaunchShell(final.Launch.Cwd)
 	}
 	return nil
 }

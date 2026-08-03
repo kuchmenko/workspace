@@ -44,7 +44,7 @@ var capabilityMeta = map[string]struct {
 	"observability": {"Project status and health checks", 4},
 	"organization":  {"Workspace discovery, shell aliases, and project filtering", 5},
 	"auth":          {"GitHub authentication for repo discovery", 6},
-	"agent":         {"Launch and manage Claude Code sessions", 7},
+	"agent":         {"Open shells in project directories", 7},
 }
 
 var agentDocConstraints = []string{

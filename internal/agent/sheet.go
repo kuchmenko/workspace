@@ -22,7 +22,6 @@ const (
 	rowHeader sheetRowKind = iota
 	rowAction
 	rowWorktree
-	rowSession
 	rowProject
 )
 
@@ -30,9 +29,7 @@ type sheetAction int
 
 const (
 	actNone sheetAction = iota
-	actClaudeMain
 	actShellMain
-	actPrompt
 	actNewWorktree
 	actSearch
 	actEdit
@@ -46,7 +43,6 @@ type sheetRow struct {
 	keyHint string
 	action  sheetAction
 	wt      *Worktree
-	session *Session
 	proj    *Project
 	indent  int
 	section string
@@ -62,7 +58,6 @@ type sheet struct {
 	cursor     int
 	filter     string
 	filterMode bool
-	wtOpen     map[string]bool
 	parent     *sheet
 	pendingDel *Worktree
 	statusMsg  string
@@ -72,7 +67,6 @@ func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
 	s := &sheet{
 		mode:   sheetProject,
 		target: p,
-		wtOpen: map[string]bool{},
 		parent: parent,
 	}
 	s.rebuild(m)
@@ -99,7 +93,7 @@ func groupRootPath(m *Model, group string) string {
 
 func (s *sheet) rebuild(m *Model) {
 	if s.mode == sheetProject {
-		s.rows = buildProjectSheetRows(m, s.target, s.wtOpen)
+		s.rows = buildProjectSheetRows(m, s.target)
 	} else {
 		s.rows = buildGroupSheetRows(m, s.group, s.groupPath)
 	}
@@ -134,40 +128,8 @@ func (s *sheet) applyFilter() {
 		if r.kind == rowHeader {
 			continue
 		}
-		if r.kind == rowSession {
-			// Sessions surface only if their owning worktree row also survives
-			// (handled in second pass) — match the session's own label here.
-			if strings.Contains(strings.ToLower(r.label), q) {
-				keep[i] = true
-			}
-			continue
-		}
 		if strings.Contains(strings.ToLower(r.label), q) {
 			keep[i] = true
-		}
-	}
-
-	// Drop session rows whose owning worktree row is hidden.
-	var ownerVisible bool
-	for i, r := range s.rows {
-		switch r.kind {
-		case rowWorktree:
-			ownerVisible = keep[i]
-		case rowSession:
-			if !ownerVisible {
-				keep[i] = false
-			}
-		}
-	}
-
-	// Re-add worktree headers whose sessions matched.
-	lastWt := -1
-	for i, r := range s.rows {
-		if r.kind == rowWorktree {
-			lastWt = i
-		}
-		if r.kind == rowSession && keep[i] && lastWt >= 0 {
-			keep[lastWt] = true
 		}
 	}
 
@@ -237,20 +199,16 @@ func (s *sheet) rowAt(visIdx int) *sheetRow {
 
 func (s *sheet) focused() *sheetRow { return s.rowAt(s.cursor) }
 
-func buildProjectSheetRows(m *Model, p *Project, wtOpen map[string]bool) []sheetRow {
+func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	var rows []sheetRow
 
 	rows = append(rows,
-		sheetRow{kind: rowAction, action: actClaudeMain, label: "claude", hint: "in main", keyHint: "c", section: "main"},
 		sheetRow{kind: rowAction, action: actShellMain, label: "shell", hint: "in main", keyHint: "s", section: "main"},
-		sheetRow{kind: rowAction, action: actPrompt, label: "+ prompt", hint: "claude w/ prompt", keyHint: "p", section: "main"},
-		sheetRow{kind: rowAction, action: actNewWorktree, label: "+ worktree", hint: "create new + claude", keyHint: "w", section: "main"},
+		sheetRow{kind: rowAction, action: actNewWorktree, label: "+ worktree", hint: "create new", keyHint: "w", section: "main"},
 		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "main"},
 	)
 
 	wts := m.wtCache.Get(p.Path)
-
-	sessByPath := sheetSessions(m, p, wts)
 
 	rows = append(rows, sheetRow{
 		kind:    rowHeader,
@@ -279,55 +237,13 @@ func buildProjectSheetRows(m *Model, p *Project, wtOpen map[string]bool) []sheet
 		wt := &wts[idx]
 		label := worktreeDisplayName(*wt)
 		hint := wtHint(wt)
-		expanded := wtOpen[wt.Path]
-		prefix := "▸"
-		if expanded {
-			prefix = "▾"
-		}
 		rows = append(rows, sheetRow{
 			kind:    rowWorktree,
-			label:   prefix + " " + label,
+			label:   label,
 			hint:    hint,
 			wt:      wt,
 			section: "worktrees",
 		})
-		if !expanded {
-			continue
-		}
-		for _, sess := range sessByPath[wt.Path] {
-			ss := sess
-			title := ss.Title
-			if title == "" {
-				title = "(untitled)"
-			}
-			rows = append(rows, sheetRow{
-				kind:    rowSession,
-				label:   "  " + title,
-				hint:    TimeAgo(ss.Updated),
-				session: &ss,
-				indent:  1,
-				section: "worktrees",
-			})
-		}
-	}
-
-	if orphan := sessByPath["__orphan__"]; len(orphan) > 0 {
-		rows = append(rows, sheetRow{kind: rowHeader, label: "orphan sessions", section: "orphan"})
-		for _, sess := range orphan {
-			ss := sess
-			title := ss.Title
-			if title == "" {
-				title = "(untitled)"
-			}
-			rows = append(rows, sheetRow{
-				kind:    rowSession,
-				label:   "  " + title,
-				hint:    TimeAgo(ss.Updated),
-				session: &ss,
-				indent:  1,
-				section: "orphan",
-			})
-		}
 	}
 
 	rows = append(rows, sheetRow{kind: rowHeader, label: "manage", section: "manage"})
@@ -344,9 +260,7 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 
 	inHint := "in @" + group
 	rows = append(rows,
-		sheetRow{kind: rowAction, action: actClaudeMain, label: "claude", hint: inHint, keyHint: "c", section: "root"},
 		sheetRow{kind: rowAction, action: actShellMain, label: "shell", hint: inHint, keyHint: "s", section: "root"},
-		sheetRow{kind: rowAction, action: actPrompt, label: "+ prompt", hint: "claude w/ prompt", keyHint: "p", section: "root"},
 		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "root"},
 	)
 
@@ -383,33 +297,6 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 		})
 	}
 
-	var sessions []Session
-	if groupPath != "" {
-		sessions = m.sessCache.Get(groupPath)
-	}
-	if len(sessions) > 0 {
-		rows = append(rows, sheetRow{
-			kind:    rowHeader,
-			label:   fmt.Sprintf("recent claude (%d)", len(sessions)),
-			section: "sessions",
-		})
-		for i := range sessions {
-			ss := sessions[i]
-			title := ss.Title
-			if title == "" {
-				title = "(untitled)"
-			}
-			rows = append(rows, sheetRow{
-				kind:    rowSession,
-				label:   "  " + title,
-				hint:    TimeAgo(ss.Updated),
-				session: &ss,
-				indent:  1,
-				section: "sessions",
-			})
-		}
-	}
-
 	rows = append(rows,
 		sheetRow{kind: rowHeader, label: "manage", section: "manage"},
 		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, group), keyHint: "f", section: "manage"},
@@ -425,32 +312,6 @@ func groupFavoriteLabel(m *Model, group string) string {
 		}
 	}
 	return "favorite group"
-}
-
-// sheetSessions gathers sessions for the project main path and every worktree
-// path. Sessions whose Cwd matches none of the live worktree paths are
-// returned under the "__orphan__" key.
-func sheetSessions(m *Model, p *Project, wts []Worktree) map[string][]Session {
-	out := make(map[string][]Session, len(wts)+1)
-	live := map[string]bool{p.Path: true}
-	out[p.Path] = m.sessCache.Get(p.Path)
-	for i := range wts {
-		wt := &wts[i]
-		if wt.Path == p.Path {
-			continue
-		}
-		live[wt.Path] = true
-		out[wt.Path] = m.sessCache.Get(wt.Path)
-	}
-	// Anything cached for the project but not attributable stays under main —
-	// LoadSessions already filters by encoded cwd so this is a no-op safety net.
-	for path := range out {
-		if !live[path] {
-			out["__orphan__"] = append(out["__orphan__"], out[path]...)
-			delete(out, path)
-		}
-	}
-	return out
 }
 
 func wtHint(wt *Worktree) string {
@@ -515,8 +376,6 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "/":
 		s.filterMode = true
 		return m, nil
-	case "tab":
-		return s.toggleWorktreeExpand(m), nil
 	}
 
 	row := s.focused()
@@ -529,8 +388,6 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		return s.dispatchAction(m, row.action, key)
 	case rowWorktree:
 		return s.dispatchWorktree(m, row.wt, key)
-	case rowSession:
-		return s.dispatchSession(m, row.session, key)
 	case rowProject:
 		if key == "enter" {
 			m.sheet = newProjectSheet(m, row.proj, s)
@@ -591,20 +448,6 @@ func abs(n int) int {
 	return n
 }
 
-func (s *sheet) toggleWorktreeExpand(m *Model) *Model {
-	row := s.focused()
-	if row == nil || row.kind != rowWorktree || row.wt == nil {
-		return m
-	}
-	key := row.wt.Path
-	if s.wtOpen == nil {
-		s.wtOpen = map[string]bool{}
-	}
-	s.wtOpen[key] = !s.wtOpen[key]
-	s.rebuild(m)
-	return m
-}
-
 func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 	if s.parent != nil {
 		m.sheet = s.parent
@@ -619,32 +462,16 @@ func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model, tui.Cmd) {
 	path := s.primaryPath()
 	switch act {
-	case actClaudeMain:
-		switch key {
-		case "enter", "c":
-			m.Launch = &LaunchRequest{Cwd: path}
-			return m, tui.Quit
-		case "p":
-			return s.openPrompt(m, path, "")
-		case "s", "l":
-			m.Launch = &LaunchRequest{Cwd: path, ShellOnly: true}
-			return m, tui.Quit
-		}
 	case actShellMain:
 		if key == "enter" || key == "s" || key == "l" {
-			m.Launch = &LaunchRequest{Cwd: path, ShellOnly: true}
+			m.Launch = &LaunchRequest{Cwd: path}
 			return m, tui.Quit
-		}
-	case actPrompt:
-		if key == "enter" || key == "p" {
-			return s.openPrompt(m, path, "")
 		}
 	case actNewWorktree:
 		if (key == "enter" || key == "w") && s.target != nil {
 			m.popupProj = s.target
 			m.wtBranch = ""
 			m.wtField = 0
-			m.wtNoLaunch = true
 			m.sheet = nil
 			m.mode = viewNewWorktree
 			return m, nil
@@ -687,14 +514,9 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 		return m, nil
 	}
 	switch key {
-	case "enter", "c":
+	case "enter", "c", "s", "l":
 		m.Launch = &LaunchRequest{Cwd: wt.Path}
 		return m, tui.Quit
-	case "s", "l":
-		m.Launch = &LaunchRequest{Cwd: wt.Path, ShellOnly: true}
-		return m, tui.Quit
-	case "p":
-		return s.openPrompt(m, wt.Path, "")
 	case "d":
 		if wt.IsMain {
 			return m, nil
@@ -703,28 +525,6 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 		s.statusMsg = fmt.Sprintf("delete %s? y to confirm", worktreeDisplayName(*wt))
 		return m, nil
 	}
-	return m, nil
-}
-
-func (s *sheet) dispatchSession(m *Model, sess *Session, key string) (tui.Model, tui.Cmd) {
-	if sess == nil {
-		return m, nil
-	}
-	switch key {
-	case "enter", "c":
-		m.Launch = &LaunchRequest{Cwd: sess.Cwd, ResumeID: sess.ID}
-		return m, tui.Quit
-	case "p":
-		return s.openPrompt(m, sess.Cwd, sess.ID)
-	}
-	return m, nil
-}
-
-func (s *sheet) openPrompt(m *Model, cwd, resumeID string) (tui.Model, tui.Cmd) {
-	m.pendingLaunch = &LaunchRequest{Cwd: cwd, ResumeID: resumeID}
-	m.promptInput = ""
-	m.sheet = nil
-	m.mode = viewPromptInput
 	return m, nil
 }
 
@@ -930,12 +730,10 @@ func (s *sheet) footerHint() string {
 	}
 	switch r.kind {
 	case rowWorktree:
-		if r.wt != nil && r.wt.IsMain {
-			return "  ⏎:claude  s:shell  p:+prompt  tab:sessions"
+		if r.wt != nil && !r.wt.IsMain {
+			return "  ⏎:shell  d:delete"
 		}
-		return "  ⏎:claude  s:shell  p:+prompt  d:delete  tab:sessions"
-	case rowSession:
-		return "  ⏎:resume  p:+prompt"
+		return "  ⏎:shell"
 	case rowAction:
 		return "  ⏎:run  /:filter  esc:back"
 	}

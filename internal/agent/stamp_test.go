@@ -13,7 +13,7 @@ import (
 // launch into the main worktree, where the default branch has never
 // been registered in [[branches]], creates a minimal branch entry and
 // stamps last_active_at. This is the common case: the user opens a
-// claude session on `main` and expects the project to show up in
+// Explorer shell on `main` and expects the project to show up in
 // Recent on the next ws agent invocation.
 func TestStampLaunchFromPath_BumpsActivityOnMainBranch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

@@ -21,7 +21,6 @@ const (
 	KindGroup
 	KindProject
 	KindWorktree
-	KindPortal
 )
 
 type Project struct {
@@ -32,7 +31,6 @@ type Project struct {
 	Path              string
 	DefaultBranch     string
 	WorktreeCount     int
-	SessionCount      int
 	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
@@ -303,27 +301,26 @@ func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
 	return nil
 }
 
-func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, *SessionCache, []string) {
+func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
 	if len(roots) == 0 {
 		diagnostics = append(diagnostics, "no workspace found; run from inside a workspace")
-		return nil, nil, diagnostics
+		return nil, diagnostics
 	}
 
-	cache := NewSessionCache()
 	var result []WorkspaceData
 	for _, root := range roots {
-		ws, diags := loadOneWorkspace(root, cache)
+		ws, diags := loadOneWorkspace(root)
 		diagnostics = append(diagnostics, diags...)
 		if ws != nil {
 			result = append(result, *ws)
 		}
 	}
-	return result, cache, diagnostics
+	return result, diagnostics
 }
 
-func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []string) {
+func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 	var diagnostics []string
 	w, err := config.Load(root)
 	if err != nil {
@@ -387,8 +384,6 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 				proj.WorktreeCount = count
 			}
 		}
-
-		proj.SessionCount = sessCache.Count(mainPath)
 
 		ws.Projects = append(ws.Projects, proj)
 	}
