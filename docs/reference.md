@@ -243,7 +243,7 @@ the two authentications don't share state.
 
 ```sh
 ws                            # bare invocation, in a TTY → explorer TUI
-ws agent                      # explicit
+ws explorer                   # explicit
 ```
 
 See [Explorer TUI](explorer.md) for keys and behavior.

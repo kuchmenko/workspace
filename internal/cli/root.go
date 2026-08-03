@@ -18,7 +18,7 @@ var (
 )
 
 var workspaceIndependentCommands = map[string]bool{
-	"help": true, "completion": true, "docs": true, "agent": true,
+	"help": true, "completion": true, "docs": true,
 	"explorer": true, "ws": true, "workspace": true,
 }
 

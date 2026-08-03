@@ -11,9 +11,8 @@ import (
 
 func newExplorerCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "explorer",
-		Aliases: []string{"agent"},
-		Short:   "TUI explorer for projects and worktrees",
+		Use:   "explorer",
+		Short: "TUI explorer for projects and worktrees",
 		Annotations: map[string]string{
 			"capability":   "explorer",
 			"agent:when":   "Browse workspaces, projects, and worktrees, then open a shell",
@@ -56,7 +55,7 @@ func runExplorerTUI() error {
 	cwd, _ := os.Getwd()
 	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {
-		fmt.Fprintf(os.Stderr, "ws agent: %s\n", d)
+		fmt.Fprintf(os.Stderr, "ws explorer: %s\n", d)
 	}
 	if len(workspaces) == 0 {
 		return fmt.Errorf("no workspaces found")
@@ -78,6 +77,6 @@ func runExplorerTUI() error {
 
 func stampLaunchActivity(cwd string) {
 	if err := agent.StampLaunchFromPath(cwd); err != nil {
-		fmt.Fprintf(os.Stderr, "ws agent: stamp activity: %v\n", err)
+		fmt.Fprintf(os.Stderr, "ws explorer: stamp activity: %v\n", err)
 	}
 }

@@ -8,7 +8,6 @@ to a shell in the right directory.
 ```sh
 ws                          # bare invocation; same as `ws explorer`
 ws explorer                 # explicit
-ws agent                    # legacy alias, still works
 ```
 
 When stdout is not a TTY, `ws` falls through to `cmd.Help()` so

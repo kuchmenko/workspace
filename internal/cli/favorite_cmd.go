@@ -13,15 +13,15 @@ import (
 func newFavoriteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "favorite",
-		Short: "Pin projects to the Favorites section of `ws agent`",
-		Long: `Manage the project favorites shown at the top of ` + "`" + `ws agent` + "`" + `.
+		Short: "Pin projects to the Favorites section of `ws explorer`",
+		Long: `Manage the project favorites shown at the top of ` + "`" + `ws explorer` + "`" + `.
 
 Favorites are stored in workspace.toml and sync across machines via
 'ws sync'. The same toggle is available in the TUI as the f hotkey on
 any project row.`,
 		Annotations: map[string]string{
 			"capability": "organization",
-			"agent:when": "Pin / unpin projects shown in the Favorites section of `ws agent`",
+			"agent:when": "Pin / unpin projects shown in the Favorites section of `ws explorer`",
 		},
 	}
 	cmd.AddCommand(
