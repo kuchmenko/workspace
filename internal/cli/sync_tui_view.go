@@ -85,17 +85,7 @@ func (m syncModel) visibleRows() (int, int) {
 	if limit < 5 {
 		limit = 5
 	}
-	if limit >= len(m.rows) {
-		return 0, len(m.rows)
-	}
-	start := m.cursor - limit/2
-	if start < 0 {
-		start = 0
-	}
-	if start+limit > len(m.rows) {
-		start = len(m.rows) - limit
-	}
-	return start, start + limit
+	return tui.WindowAround(m.cursor, len(m.rows), limit)
 }
 
 func (m syncModel) renderReviewRow(index int, row syncReviewRow) string {

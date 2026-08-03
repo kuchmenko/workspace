@@ -416,7 +416,7 @@ func (m AddModel) viewBrowse() string {
 	}
 
 	const visibleRows = 16
-	start, end := windowAround(cursorRow, len(rows), visibleRows)
+	start, end := tui.WindowAround(cursorRow, len(rows), visibleRows)
 	for i := start; i < end; i++ {
 		r := rows[i]
 		switch r.kind {
@@ -565,26 +565,6 @@ func groupKey(s Suggestion) (key, label string, order int) {
 	default:
 		return "_other", "Other", 3
 	}
-}
-
-func windowAround(cursor, total, size int) (start, end int) {
-	if total <= size {
-		return 0, total
-	}
-	if cursor < 0 {
-		return 0, size
-	}
-	half := size / 2
-	start = cursor - half
-	if start < 0 {
-		start = 0
-	}
-	end = start + size
-	if end > total {
-		end = total
-		start = end - size
-	}
-	return start, end
 }
 
 func renderItemLine(cursor string, s *Suggestion) string {

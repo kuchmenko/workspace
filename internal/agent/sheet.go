@@ -476,7 +476,7 @@ func (s *sheet) view(width, height int) string {
 	} else {
 		// Window the visible rows around the cursor so the popup stays bounded.
 		const maxRows = 18
-		start, end := windowAround(s.cursor, len(s.visible), maxRows)
+		start, end := tui.WindowAround(s.cursor, len(s.visible), maxRows)
 		for i := start; i < end; i++ {
 			lines = append(lines, s.renderRow(i, innerW))
 		}
@@ -500,23 +500,6 @@ func (s *sheet) view(width, height int) string {
 	popup := popupBorderStyle.Render(content)
 	return tui.Place(width, height, tui.Center, tui.Center, popup,
 		tui.WithWhitespaceBackground(tui.Color("234")))
-}
-
-func windowAround(cursor, total, max int) (int, int) {
-	if total <= max {
-		return 0, total
-	}
-	half := max / 2
-	start := cursor - half
-	if start < 0 {
-		start = 0
-	}
-	end := start + max
-	if end > total {
-		end = total
-		start = end - max
-	}
-	return start, end
 }
 
 func (s *sheet) renderRow(visIdx, innerW int) string {
