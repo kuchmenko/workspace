@@ -64,10 +64,6 @@ func locateWorktreeForBranch(barePath, branch string) string {
 	return ""
 }
 
-func validateBranchName(branch string) error {
-	return repo.ValidateWorktreeBranch(branch)
-}
-
 func newWorktreeAddCmd() *cobra.Command {
 	var fromBase string
 	cmd := &cobra.Command{

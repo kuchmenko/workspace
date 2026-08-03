@@ -12,37 +12,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
-func TestValidateBranchName_AcceptsValidNames(t *testing.T) {
-	cases := []string{
-		"feat/auth-refactor",
-		"main",
-		"fix/prod-1234",
-		"chore/cleanup",
-		"a/b/c",
-		"wt/linux/legacy-foo", // legacy form must still validate
-	}
-	for _, name := range cases {
-		if err := validateBranchName(name); err != nil {
-			t.Errorf("validateBranchName(%q) unexpectedly rejected: %v", name, err)
-		}
-	}
-}
-
-func TestValidateBranchName_RejectsInvalidNames(t *testing.T) {
-	cases := []string{
-		"feat/with spaces",
-		"feat/double..dots",
-		"feat~tilde",
-		"-leadingdash",
-		"trailing/.lock",
-	}
-	for _, name := range cases {
-		if err := validateBranchName(name); err == nil {
-			t.Errorf("validateBranchName(%q): expected error, got nil", name)
-		}
-	}
-}
-
 // setupTestWorkspace builds a workspace directory with one project that
 // has a fake remote, a bare repo cloned from it, and a main worktree on
 // the default branch. Returns the workspace root.

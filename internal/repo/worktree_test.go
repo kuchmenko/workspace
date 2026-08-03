@@ -41,6 +41,19 @@ func addOptions(root, branch string) WorktreeAddOptions {
 	return WorktreeAddOptions{WorkspaceRoot: root, Project: "app", Branch: branch, Machine: "linux"}
 }
 
+func TestValidateWorktreeBranch(t *testing.T) {
+	for _, name := range []string{"feat/auth-refactor", "main", "fix/prod-1234", "chore/cleanup", "a/b/c", "wt/linux/legacy-foo"} {
+		if err := ValidateWorktreeBranch(name); err != nil {
+			t.Errorf("ValidateWorktreeBranch(%q) unexpectedly rejected: %v", name, err)
+		}
+	}
+	for _, name := range []string{"feat/with spaces", "feat/double..dots", "feat~tilde", "-leadingdash", "trailing/.lock"} {
+		if err := ValidateWorktreeBranch(name); err == nil {
+			t.Errorf("ValidateWorktreeBranch(%q): expected error, got nil", name)
+		}
+	}
+}
+
 func TestAddWorktreeNewBranchFromDefault(t *testing.T) {
 	root, _, _ := setupWorktreeProject(t, "main")
 	result, err := AddWorktree(addOptions(root, "feat/new"))
