@@ -103,35 +103,42 @@ func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	switch key {
 	case "esc":
+		m.wtBranch.Blur()
 		m.mode = viewList
 		return m, nil
 	case "tab", "down":
 		m.wtField = (m.wtField + 1) % 2
+		if m.wtField == 0 {
+			return m, m.wtBranch.Focus()
+		}
+		m.wtBranch.Blur()
 		return m, nil
 	case "shift+tab", "up":
 		m.wtField = (m.wtField + 1) % 2
+		if m.wtField == 0 {
+			return m, m.wtBranch.Focus()
+		}
+		m.wtBranch.Blur()
 		return m, nil
 	case "enter":
 		if m.wtField == 1 {
 			return m.executeNewWorktree()
 		}
 		m.wtField = (m.wtField + 1) % 2
-		return m, nil
-	case "backspace":
-		if m.wtField == 0 && len(m.wtBranch) > 0 {
-			m.wtBranch = m.wtBranch[:len(m.wtBranch)-1]
-		}
+		m.wtBranch.Blur()
 		return m, nil
 	default:
-		if m.wtField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			m.wtBranch += key
+		if m.wtField == 0 {
+			var cmd tui.Cmd
+			m.wtBranch, cmd = m.wtBranch.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
 }
 
 func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
-	branch := strings.TrimSpace(m.wtBranch)
+	branch := strings.TrimSpace(m.wtBranch.Value())
 	if branch == "" {
 		return m, nil
 	}
@@ -143,11 +150,13 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	}
 	if err != nil {
 		m.statusMsg = err.Error()
+		m.wtBranch.Blur()
 		m.mode = viewList
 		return m, nil
 	}
 	m.wtCache.Invalidate(m.popupProj.Path)
 
+	m.wtBranch.Blur()
 	m.mode = viewList
 	m.rebuildItems()
 	m.ensureVisible()
@@ -168,9 +177,9 @@ func (m *Model) viewNewWorktree() string {
 	lines = append(lines, "")
 
 	branchLabel := "  Branch name:"
-	branchVal := m.wtBranch + "█"
+	branchVal := m.wtBranch.View()
 	if m.wtField != 0 {
-		branchVal = m.wtBranch
+		branchVal = m.wtBranch.Value()
 		if branchVal == "" {
 			branchVal = "(required)"
 		}
@@ -182,7 +191,7 @@ func (m *Model) viewNewWorktree() string {
 		lines = append(lines, popupItemStyle.Width(innerW).Render(branchLabel))
 		lines = append(lines, popupDimStyle.Width(innerW).Render("  "+branchVal))
 	}
-	if branch := strings.TrimSpace(m.wtBranch); branch != "" {
+	if branch := strings.TrimSpace(m.wtBranch.Value()); branch != "" {
 		pathPreview := fmt.Sprintf("  → dir: %s-wt-<machine>-%s", p.Name, layout.SlugifyBranch(branch))
 		lines = append(lines, popupDimStyle.Width(innerW).Render(pathPreview))
 	}

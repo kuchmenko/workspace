@@ -78,7 +78,8 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			return m, nil
 		case "n":
 			if item != nil && item.kind == KindProject {
-				m.wtBranch = ""
+				m.wtBranch.SetValue("")
+				m.wtBranch.Focus()
 				m.wtField = 0
 				m.popupProj = item.project
 				m.mode = viewNewWorktree

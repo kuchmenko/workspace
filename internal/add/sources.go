@@ -38,7 +38,7 @@ func (m AddModel) updateManual(msg tui.Msg) (tui.Model, tui.Cmd) {
 			m.editFocus = 0
 			m.editErr = ""
 			m.transitionTo(addStateEdit)
-			return m, nil
+			return m, m.seedEditInputs()
 		case "esc":
 			m.transitionTo(addStateBrowse)
 			m.manualInput.Blur()

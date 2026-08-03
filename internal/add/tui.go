@@ -42,9 +42,12 @@ type AddModel struct {
 	manualInput tui.TextInput
 	manualErr   string
 
-	editFields editFields
-	editFocus  int
-	editErr    string
+	editFields     editFields
+	editNameInput  tui.TextInput
+	editURLInput   tui.TextInput
+	editGroupInput tui.TextInput
+	editFocus      int
+	editErr        string
 
 	queue        []editFields
 	currentIdx   int
@@ -101,18 +104,31 @@ func NewAddModel(opts AddModelOptions) AddModel {
 	filter.SetCharLimit(60)
 	filter.SetWidth(50)
 
+	editName := tui.NewTextInput()
+	editName.SetPrompt("")
+	editName.SetWidth(60)
+	editURL := tui.NewTextInput()
+	editURL.SetPrompt("")
+	editURL.SetWidth(60)
+	editGroup := tui.NewTextInput()
+	editGroup.SetPrompt("")
+	editGroup.SetWidth(60)
+
 	return AddModel{
-		state:       addStateGathering,
-		wsRoot:      opts.WsRoot,
-		ws:          opts.Workspace,
-		saveFn:      opts.Save,
-		sources:     opts.Sources,
-		gatherTO:    opts.GatherTimeout,
-		standalone:  opts.Standalone,
-		preURLs:     opts.PreURLs,
-		spinner:     sp,
-		manualInput: manual,
-		filterInput: filter,
+		state:          addStateGathering,
+		wsRoot:         opts.WsRoot,
+		ws:             opts.Workspace,
+		saveFn:         opts.Save,
+		sources:        opts.Sources,
+		gatherTO:       opts.GatherTimeout,
+		standalone:     opts.Standalone,
+		preURLs:        opts.PreURLs,
+		spinner:        sp,
+		manualInput:    manual,
+		filterInput:    filter,
+		editNameInput:  editName,
+		editURLInput:   editURL,
+		editGroupInput: editGroup,
 	}
 }
 
@@ -299,7 +315,7 @@ func (m AddModel) updateBrowse(msg tui.Msg) (tui.Model, tui.Cmd) {
 		m.editFocus = 0
 		m.editErr = ""
 		m.transitionTo(addStateEdit)
-		return m, nil
+		return m, m.seedEditInputs()
 	case " ":
 
 		if len(view) == 0 {
@@ -638,8 +654,10 @@ func (m AddModel) updateEdit(msg tui.Msg) (tui.Model, tui.Cmd) {
 	switch key.String() {
 	case "tab", "down":
 		m.editFocus = (m.editFocus + 1) % 4
+		return m, m.focusEditInput()
 	case "shift+tab", "up":
 		m.editFocus = (m.editFocus + 3) % 4
+		return m, m.focusEditInput()
 	case "enter":
 
 		if err := m.validateEdit(); err != nil {
@@ -647,66 +665,71 @@ func (m AddModel) updateEdit(msg tui.Msg) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		m.editFields.Path = buildPath(m.editFields.Group, m.editFields.Category, m.editFields.Name)
+		m.blurEditInputs()
 		m.transitionTo(addStateConfirm)
 		return m, nil
 	case "esc":
+		m.blurEditInputs()
 		m.transitionTo(addStateBrowse)
 		return m, nil
 	default:
-
-		s := key.String()
-
-		if key.Type == tui.KeyRunes {
-			runes := key.Runes
-			m.applyEditRunes(runes)
-			return m, nil
-		}
-		if s == "backspace" {
-			m.applyEditBackspace()
-			return m, nil
+		if m.editFocus == 2 {
+			if key.String() == " " {
+				if m.editFields.Category == config.CategoryPersonal {
+					m.editFields.Category = config.CategoryWork
+				} else {
+					m.editFields.Category = config.CategoryPersonal
+				}
+			}
+		} else {
+			var cmd tui.Cmd
+			switch m.editFocus {
+			case 0:
+				m.editNameInput, cmd = m.editNameInput.Update(msg)
+			case 1:
+				m.editURLInput, cmd = m.editURLInput.Update(msg)
+			case 3:
+				m.editGroupInput, cmd = m.editGroupInput.Update(msg)
+			}
+			m.syncEditFields()
+			return m, cmd
 		}
 	}
+	m.editFields.Path = buildPath(m.editFields.Group, m.editFields.Category, m.editFields.Name)
 	return m, nil
 }
 
-func (m *AddModel) applyEditRunes(runes []rune) {
-	r := string(runes)
-	switch m.editFocus {
-	case 0:
-		m.editFields.Name += r
-	case 1:
-		m.editFields.URL += r
-	case 2:
-
-		if r == " " {
-			if m.editFields.Category == config.CategoryPersonal {
-				m.editFields.Category = config.CategoryWork
-			} else {
-				m.editFields.Category = config.CategoryPersonal
-			}
-		}
-	case 3:
-		m.editFields.Group += r
-	}
+func (m *AddModel) syncEditFields() {
+	m.editFields.Name = m.editNameInput.Value()
+	m.editFields.URL = m.editURLInput.Value()
+	m.editFields.Group = m.editGroupInput.Value()
 	m.editFields.Path = buildPath(m.editFields.Group, m.editFields.Category, m.editFields.Name)
 }
 
-func (m *AddModel) applyEditBackspace() {
+func (m *AddModel) seedEditInputs() tui.Cmd {
+	m.editNameInput.SetValue(m.editFields.Name)
+	m.editURLInput.SetValue(m.editFields.URL)
+	m.editGroupInput.SetValue(m.editFields.Group)
+	return m.focusEditInput()
+}
+
+func (m *AddModel) blurEditInputs() {
+	m.editNameInput.Blur()
+	m.editURLInput.Blur()
+	m.editGroupInput.Blur()
+}
+
+func (m *AddModel) focusEditInput() tui.Cmd {
+	m.blurEditInputs()
 	switch m.editFocus {
 	case 0:
-		if len(m.editFields.Name) > 0 {
-			m.editFields.Name = m.editFields.Name[:len(m.editFields.Name)-1]
-		}
+		return m.editNameInput.Focus()
 	case 1:
-		if len(m.editFields.URL) > 0 {
-			m.editFields.URL = m.editFields.URL[:len(m.editFields.URL)-1]
-		}
+		return m.editURLInput.Focus()
 	case 3:
-		if len(m.editFields.Group) > 0 {
-			m.editFields.Group = m.editFields.Group[:len(m.editFields.Group)-1]
-		}
+		return m.editGroupInput.Focus()
 	}
-	m.editFields.Path = buildPath(m.editFields.Group, m.editFields.Category, m.editFields.Name)
+	return nil
 }
 
 func (m AddModel) validateEdit() error {
@@ -731,10 +754,17 @@ func (m AddModel) viewEdit() string {
 	b.WriteString("\n\n")
 
 	rows := []struct{ label, value string }{
-		{"Name", m.editFields.Name},
-		{"URL", m.editFields.URL},
+		{"Name", m.editNameInput.Value()},
+		{"URL", m.editURLInput.Value()},
 		{"Category", string(m.editFields.Category) + addDim.Render("   (space to toggle: personal | work)")},
-		{"Group", m.editFields.Group + addDim.Render("   (auto-inferred; empty → category)")},
+		{"Group", m.editGroupInput.Value() + addDim.Render("   (auto-inferred; empty → category)")},
+	}
+	if m.editFocus == 0 {
+		rows[0].value = m.editNameInput.View()
+	} else if m.editFocus == 1 {
+		rows[1].value = m.editURLInput.View()
+	} else if m.editFocus == 3 {
+		rows[3].value = m.editGroupInput.View() + addDim.Render("   (auto-inferred; empty → category)")
 	}
 	for i, r := range rows {
 		marker := "  "

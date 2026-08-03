@@ -72,7 +72,7 @@ func TestSheetFilter_KeepsSectionHeadersOnlyWhenSectionMatches(t *testing.T) {
 	m := newTestModel(p, wts)
 	s := newProjectSheet(m, p, nil)
 
-	s.filter = "perf"
+	s.filter.SetValue("perf")
 	s.applyFilter()
 
 	for _, idx := range s.visible {
@@ -85,6 +85,21 @@ func TestSheetFilter_KeepsSectionHeadersOnlyWhenSectionMatches(t *testing.T) {
 		case rowAction:
 			t.Errorf("action row %q should be filtered out by 'perf'", r.label)
 		}
+	}
+}
+
+func TestSheetFilter_BackspaceRemovesCompleteMultibyteRune(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	m := newTestModel(p, nil)
+	s := newProjectSheet(m, p, nil)
+	s.filterMode = true
+	s.filter.SetValue("café")
+	s.filter.Focus()
+
+	s.updateFilterMode(m, tui.KeyMsg{Type: tui.KeyBackspace})
+
+	if got := s.filter.Value(); got != "caf" {
+		t.Fatalf("filter = %q, want %q", got, "caf")
 	}
 }
 

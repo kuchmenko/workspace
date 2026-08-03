@@ -56,7 +56,7 @@ type sheet struct {
 	rows       []sheetRow
 	visible    []int
 	cursor     int
-	filter     string
+	filter     tui.TextInput
 	filterMode bool
 	parent     *sheet
 	pendingDel *Worktree
@@ -64,20 +64,26 @@ type sheet struct {
 }
 
 func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
+	filter := tui.NewTextInput()
+	filter.SetPrompt("")
 	s := &sheet{
 		mode:   sheetProject,
 		target: p,
 		parent: parent,
+		filter: filter,
 	}
 	s.rebuild(m)
 	return s
 }
 
 func newGroupSheet(m *Model, group string) *sheet {
+	filter := tui.NewTextInput()
+	filter.SetPrompt("")
 	s := &sheet{
 		mode:      sheetGroup,
 		group:     group,
 		groupPath: groupRootPath(m, group),
+		filter:    filter,
 	}
 	s.rebuild(m)
 	return s
@@ -111,7 +117,7 @@ func (s *sheet) primaryPath() string {
 }
 
 func (s *sheet) applyFilter() {
-	q := strings.ToLower(strings.TrimSpace(s.filter))
+	q := strings.ToLower(strings.TrimSpace(s.filter.Value()))
 	s.visible = s.visible[:0]
 
 	if q == "" {
@@ -240,7 +246,7 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		return m, nil
 	case "/":
 		s.filterMode = true
-		return m, nil
+		return m, s.filter.Focus()
 	}
 
 	row := s.focused()
@@ -267,20 +273,17 @@ func (s *sheet) updateFilterMode(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) 
 	switch key {
 	case "esc":
 		s.filterMode = false
-		s.filter = ""
+		s.filter.SetValue("")
+		s.filter.Blur()
 		s.applyFilter()
 	case "enter":
 		s.filterMode = false
-	case "backspace":
-		if len(s.filter) > 0 {
-			s.filter = s.filter[:len(s.filter)-1]
-			s.applyFilter()
-		}
+		s.filter.Blur()
 	default:
-		if len(msg.Runes) > 0 {
-			s.filter += string(msg.Runes)
-			s.applyFilter()
-		}
+		var cmd tui.Cmd
+		s.filter, cmd = s.filter.Update(msg)
+		s.applyFilter()
+		return m, cmd
 	}
 	return m, nil
 }
@@ -335,7 +338,8 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 	case actNewWorktree:
 		if (key == "enter" || key == "w") && s.target != nil {
 			m.popupProj = s.target
-			m.wtBranch = ""
+			m.wtBranch.SetValue("")
+			m.wtBranch.Focus()
 			m.wtField = 0
 			m.sheet = nil
 			m.mode = viewNewWorktree
@@ -349,7 +353,8 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 		if (key == "enter" || key == "e") && s.target != nil {
 			p := s.target
 			m.popupProj = p
-			m.editGroup = p.Group
+			m.editGroup.SetValue(p.Group)
+			m.editGroup.Focus()
 			m.editCategory = config.Category(p.Category)
 			if m.editCategory == "" {
 				m.editCategory = config.CategoryPersonal
@@ -397,7 +402,8 @@ func (s *sheet) openGlobalSearch(m *Model) (tui.Model, tui.Cmd) {
 	m.sheet = nil
 	m.mode = viewFlash
 	m.flashGlobal = true
-	m.flashQuery = ""
+	m.flashQuery.SetValue("")
+	m.flashQuery.Focus()
 	m.savedExpanded = make(map[string]bool)
 	for k, v := range m.expanded {
 		m.savedExpanded[k] = v
@@ -452,10 +458,10 @@ func (s *sheet) view(width, height int) string {
 	}
 
 	// Filter prompt sits below the title.
-	if s.filterMode || s.filter != "" {
-		prompt := "/" + s.filter
+	if s.filterMode || s.filter.Value() != "" {
+		prompt := "/" + s.filter.Value()
 		if s.filterMode {
-			prompt += "█"
+			prompt = "/" + s.filter.View()
 		}
 		lines = append(lines, popupSelectedStyle.Width(innerW).Render(" "+prompt))
 	}
@@ -463,7 +469,7 @@ func (s *sheet) view(width, height int) string {
 
 	if len(s.visible) == 0 {
 		empty := "(no matches)"
-		if s.filter == "" {
+		if s.filter.Value() == "" {
 			empty = "(empty)"
 		}
 		lines = append(lines, popupDimStyle.Width(innerW).Render(empty))

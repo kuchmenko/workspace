@@ -59,20 +59,30 @@ func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
 	case "esc":
+		m.editGroup.Blur()
 		m.mode = viewList
 		m.editErr = ""
 		return m, nil
 	case "tab", "down":
 		m.editField = (m.editField + 1) % 3
+		if m.editField == 0 {
+			return m, m.editGroup.Focus()
+		}
+		m.editGroup.Blur()
 		return m, nil
 	case "shift+tab", "up":
 		m.editField = (m.editField + 2) % 3
+		if m.editField == 0 {
+			return m, m.editGroup.Focus()
+		}
+		m.editGroup.Blur()
 		return m, nil
 	case "enter":
 		if m.editField == 2 {
 			return m.executeEditProject()
 		}
 		m.editField = (m.editField + 1) % 3
+		m.editGroup.Blur()
 		return m, nil
 	case " ":
 		if m.editField == 1 {
@@ -84,17 +94,15 @@ func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		if m.editField == 0 {
-			m.editGroup += " "
-			return m, nil
+			var cmd tui.Cmd
+			m.editGroup, cmd = m.editGroup.Update(msg)
+			return m, cmd
 		}
-	case "backspace":
-		if m.editField == 0 && len(m.editGroup) > 0 {
-			m.editGroup = m.editGroup[:len(m.editGroup)-1]
-		}
-		return m, nil
 	default:
-		if m.editField == 0 && len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			m.editGroup += key
+		if m.editField == 0 {
+			var cmd tui.Cmd
+			m.editGroup, cmd = m.editGroup.Update(msg)
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -112,7 +120,7 @@ func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 		return m, nil
 	}
 
-	newGroup := strings.TrimSpace(m.editGroup)
+	newGroup := strings.TrimSpace(m.editGroup.Value())
 	newCat := m.editCategory
 
 	if err := EditProjectMetadata(wsRoot, proj.ID, newGroup, newCat); err != nil {
@@ -141,6 +149,7 @@ func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 	}
 
 	m.editErr = ""
+	m.editGroup.Blur()
 	m.mode = viewList
 	m.statusMsg = fmt.Sprintf("updated %s: group=%s category=%s",
 		proj.Name, displayGroup(newGroup), newCat)
@@ -190,9 +199,9 @@ func (m *Model) viewEditProject() string {
 	lines = append(lines, "")
 
 	groupLabel := "  Group:"
-	groupVal := m.editGroup
+	groupVal := m.editGroup.Value()
 	if m.editField == 0 {
-		groupVal += "█"
+		groupVal = m.editGroup.View()
 	} else if groupVal == "" {
 		groupVal = "(none)"
 	}

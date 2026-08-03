@@ -60,15 +60,15 @@ type Model struct {
 
 	popupProj *Project
 
-	wtBranch string
+	wtBranch tui.TextInput
 	wtField  int
 
-	editGroup    string
+	editGroup    tui.TextInput
 	editCategory config.Category
 	editField    int
 	editErr      string
 
-	flashQuery    string
+	flashQuery    tui.TextInput
 	flashMatches  []int
 	flashLabels   []rune
 	flashGlobal   bool
@@ -82,11 +82,20 @@ type Model struct {
 }
 
 func NewModel(workspaces []WorkspaceData) *Model {
+	wtBranch := tui.NewTextInput()
+	wtBranch.SetPrompt("")
+	editGroup := tui.NewTextInput()
+	editGroup.SetPrompt("")
+	flashQuery := tui.NewTextInput()
+	flashQuery.SetPrompt("")
 	m := &Model{
 		workspaces: workspaces,
 		mode:       viewList,
 		expanded:   make(map[string]bool),
 		wtCache:    NewWorktreeCache(),
+		wtBranch:   wtBranch,
+		editGroup:  editGroup,
+		flashQuery: flashQuery,
 	}
 
 	for _, ws := range workspaces {
@@ -346,7 +355,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "w":
 
 		if item != nil && item.kind == KindProject {
-			m.wtBranch = ""
+			m.wtBranch.SetValue("")
+			m.wtBranch.Focus()
 			m.wtField = 0
 			m.popupProj = item.project
 			m.mode = viewNewWorktree
@@ -357,7 +367,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.popupProj = item.project
-			m.editGroup = item.project.Group
+			m.editGroup.SetValue(item.project.Group)
+			m.editGroup.Focus()
 			m.editCategory = config.Category(item.project.Category)
 			if m.editCategory == "" {
 				m.editCategory = config.CategoryPersonal
@@ -425,7 +436,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "s", "/":
 		m.flashGlobal = false
 		m.mode = viewFlash
-		m.flashQuery = ""
+		m.flashQuery.SetValue("")
+		m.flashQuery.Focus()
 		m.recomputeFlash()
 
 	case "S":
@@ -446,7 +458,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		m.rebuildItems()
 		m.mode = viewFlash
-		m.flashQuery = ""
+		m.flashQuery.SetValue("")
+		m.flashQuery.Focus()
 		m.recomputeFlash()
 
 	case "?", " ":

@@ -84,7 +84,7 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 	}
 	name := item.group
 	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 	label := fmt.Sprintf("   %s %s", arrow, name)
 
@@ -103,7 +103,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 
 	name := p.Name
 	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 
 	icon := DetectIcon(p.Path)
@@ -142,7 +142,7 @@ func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool,
 		name = "worktree"
 	}
 	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 
 	var status string
@@ -241,7 +241,7 @@ func (m *Model) viewList() string {
 		if m.flashGlobal {
 			prefix = iconSearch + " all"
 		}
-		searchLine := fmt.Sprintf(" %s %s█", prefix, m.flashQuery)
+		searchLine := fmt.Sprintf(" %s %s", prefix, m.flashQuery.View())
 		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
 	} else {
 		bc := m.breadcrumb()
@@ -516,8 +516,8 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "esc":
 		m.exitFlash(false)
 	case "backspace":
-		if len(m.flashQuery) > 0 {
-			m.flashQuery = m.flashQuery[:len(m.flashQuery)-1]
+		if m.flashQuery.Value() != "" {
+			m.flashQuery, _ = m.flashQuery.Update(msg)
 			m.recomputeFlash()
 		} else {
 			m.exitFlash(false)
@@ -530,10 +530,11 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		m.exitFlash(true)
 	default:
-		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			ch := rune(key[0])
+		if msg.Type == tui.KeyRunes {
+			runes := msg.Runes
 
-			if m.flashQuery != "" {
+			if m.flashQuery.Value() != "" && len(runes) == 1 {
+				ch := runes[0]
 				for i, label := range m.flashLabels {
 					if label != 0 && ch == label && i < len(m.flashMatches) {
 						m.cursor = m.flashMatches[i]
@@ -544,7 +545,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 				}
 			}
 
-			m.flashQuery += key
+			m.flashQuery, _ = m.flashQuery.Update(msg)
 			m.recomputeFlash()
 		}
 	}
@@ -552,6 +553,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) exitFlash(jumped bool) {
+	m.flashQuery.Blur()
 	m.mode = viewList
 	if m.flashGlobal && !jumped && m.savedExpanded != nil {
 		m.expanded = m.savedExpanded
@@ -563,7 +565,7 @@ func (m *Model) exitFlash(jumped bool) {
 }
 
 func (m *Model) recomputeFlash() {
-	query := strings.ToLower(m.flashQuery)
+	query := strings.ToLower(m.flashQuery.Value())
 	m.flashMatches = nil
 	m.flashLabels = nil
 
@@ -585,7 +587,7 @@ func (m *Model) recomputeFlash() {
 }
 
 func (m *Model) availableJumpLabels() []rune {
-	query := strings.ToLower(m.flashQuery)
+	query := strings.ToLower(m.flashQuery.Value())
 	if query == "" {
 		return nil
 	}
@@ -623,14 +625,20 @@ func flashInlineLabel(name, query string, label rune) string {
 	if query == "" {
 		return name
 	}
-	lower := strings.ToLower(name)
-	q := strings.ToLower(query)
-	idx := strings.Index(lower, q)
+	runes := []rune(name)
+	lower := []rune(strings.ToLower(name))
+	q := []rune(strings.ToLower(query))
+	idx := -1
+	for i := 0; i+len(q) <= len(lower); i++ {
+		if string(lower[i:i+len(q)]) == string(q) {
+			idx = i
+			break
+		}
+	}
 	if idx < 0 {
 		return name
 	}
 	matchEnd := idx + len(q)
-	runes := []rune(name)
 
 	var b strings.Builder
 	if idx > 0 {

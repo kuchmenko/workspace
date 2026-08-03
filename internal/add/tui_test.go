@@ -342,6 +342,7 @@ func TestAddModel_Edit_TypingNameUpdatesPath(t *testing.T) {
 		Category: config.CategoryPersonal,
 	}
 	m.editFocus = 0 // Name
+	m.seedEditInputs()
 	for _, r := range "acme" {
 		m, _ = driveModel(m, keyRunes(string(r)))
 	}
@@ -362,14 +363,15 @@ func TestAddModel_Edit_EscReturnsToBrowse(t *testing.T) {
 	}
 }
 
-func TestAddModel_Edit_BackspaceClipsName(t *testing.T) {
+func TestAddModel_Edit_BackspaceRemovesCompleteMultibyteRune(t *testing.T) {
 	m := newTestModel(t, nil)
 	m.state = addStateEdit
-	m.editFields = editFields{Name: "abc"}
+	m.editFields = editFields{Name: "café"}
 	m.editFocus = 0
+	m.seedEditInputs()
 	m, _ = driveModel(m, keyBackspace())
-	if m.editFields.Name != "ab" {
-		t.Errorf("Name = %q", m.editFields.Name)
+	if m.editFields.Name != "caf" {
+		t.Errorf("Name = %q, want caf", m.editFields.Name)
 	}
 }
 
