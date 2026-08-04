@@ -8,7 +8,6 @@ import (
 func presentLabel(value string) string {
 	var b strings.Builder
 	for i := 0; i < len(value); {
-		r := rune(value[i])
 		if value[i] == 0x1b {
 			i = skipEscape(value, i+1)
 			continue

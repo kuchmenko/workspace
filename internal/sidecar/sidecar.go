@@ -170,26 +170,29 @@ func AcquireLock(wsRoot string, kind Kind) (*Lock, error) {
 
 	idBytes := make([]byte, 16)
 	if _, err := rand.Read(idBytes); err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		closeLockFile(f)
 		return nil, fmt.Errorf("create sidecar lock owner: %w", err)
 	}
 	owner := hex.EncodeToString(idBytes)
 	data, err := json.Marshal(lockOwner{ID: owner, PID: os.Getpid(), Started: time.Now().UTC()})
 	if err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		closeLockFile(f)
 		return nil, fmt.Errorf("encode sidecar lock owner: %w", err)
 	}
-	if err := f.Truncate(0); err == nil {
-		_, err = f.WriteAt(data, 0)
+	if err := f.Truncate(0); err != nil {
+		closeLockFile(f)
+		return nil, fmt.Errorf("write sidecar lock owner: %w", err)
 	}
-	if err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+	if _, err := f.WriteAt(data, 0); err != nil {
+		closeLockFile(f)
 		return nil, fmt.Errorf("write sidecar lock owner: %w", err)
 	}
 	return &Lock{file: f, owner: owner}, nil
+}
+
+func closeLockFile(file *os.File) {
+	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	_ = file.Close()
 }
 
 func (l *Lock) Release() error {

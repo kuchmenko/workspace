@@ -128,18 +128,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 	return itemStyle.Width(w).Render(line)
 }
-
-func truncateStr(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	if maxLen <= 1 {
-		return "…"
-	}
-	return string(runes[:maxLen-1]) + "…"
-}
-
 func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
 

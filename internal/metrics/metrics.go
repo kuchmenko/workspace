@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -162,7 +163,7 @@ func update(change func(*Counters)) {
 	if syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
 		return
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
 
 	counters := Counters{Version: schemaVersion}
 	if data, readErr := os.ReadFile(path); readErr == nil {
@@ -209,44 +210,35 @@ func statePath() (string, error) {
 }
 
 func family(c *Counters, path string) *CommandCounters {
-	switch path {
-	case "ws", "ws explorer", "ws explorer shell":
-		return &c.Commands.Explorer
-	case "ws add":
-		return &c.Commands.Add
-	case "ws alias", "ws alias list", "ws alias add", "ws alias rm", "ws alias init", "ws alias install":
-		return &c.Commands.Alias
-	case "ws doctor":
-		return &c.Commands.Doctor
-	case "ws sync", "ws sync resolve":
-		return &c.Commands.Sync
-	case "ws worktree", "ws worktree add", "ws worktree list", "ws worktree rm", "ws worktree push":
-		return &c.Commands.Worktree
-	case "ws workspace", "ws workspace add", "ws workspace rm", "ws workspace list":
-		return &c.Commands.Workspace
-	case "ws setup":
-		return &c.Commands.Setup
-	case "ws create":
-		return &c.Commands.Create
-	case "ws bootstrap":
-		return &c.Commands.Bootstrap
-	case "ws migrate":
-		return &c.Commands.Migrate
-	case "ws status":
-		return &c.Commands.Status
-	case "ws scan":
-		return &c.Commands.Scan
-	case "ws path":
-		return &c.Commands.Path
-	case "ws favorite", "ws favorite add", "ws favorite rm", "ws favorite list":
-		return &c.Commands.Favorite
-	case "ws auth", "ws auth login", "ws auth logout", "ws auth status":
-		return &c.Commands.Auth
-	case "ws docs":
-		return &c.Commands.Docs
-	default:
-		return &c.Commands.Other
+	byName := map[string]*CommandCounters{
+		"explorer":  &c.Commands.Explorer,
+		"add":       &c.Commands.Add,
+		"alias":     &c.Commands.Alias,
+		"doctor":    &c.Commands.Doctor,
+		"sync":      &c.Commands.Sync,
+		"worktree":  &c.Commands.Worktree,
+		"workspace": &c.Commands.Workspace,
+		"setup":     &c.Commands.Setup,
+		"create":    &c.Commands.Create,
+		"bootstrap": &c.Commands.Bootstrap,
+		"migrate":   &c.Commands.Migrate,
+		"status":    &c.Commands.Status,
+		"scan":      &c.Commands.Scan,
+		"path":      &c.Commands.Path,
+		"favorite":  &c.Commands.Favorite,
+		"auth":      &c.Commands.Auth,
+		"docs":      &c.Commands.Docs,
 	}
+	parts := strings.Fields(path)
+	if len(parts) == 1 && parts[0] == "ws" {
+		return byName["explorer"]
+	}
+	if len(parts) > 1 && parts[0] == "ws" {
+		if command := byName[parts[1]]; command != nil {
+			return command
+		}
+	}
+	return &c.Commands.Other
 }
 
 func increment(counter *uint64, amount uint64) {
