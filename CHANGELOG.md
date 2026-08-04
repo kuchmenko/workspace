@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.9.0](https://github.com/kuchmenko/workspace/compare/v0.8.1...v0.9.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* explorer session discovery, resume, and prompt launch support are removed.
+* **sync:** replace daemon with explicit interactive sync ([#7](https://github.com/kuchmenko/workspace/issues/7))
+
+### Features
+
+* **sync:** per-project push-only mirror remotes ([#2](https://github.com/kuchmenko/workspace/issues/2)) ([cef8fc9](https://github.com/kuchmenko/workspace/commit/cef8fc9c6023a2b57515229c966c2840befd1c60))
+* **sync:** replace daemon with explicit interactive sync ([#7](https://github.com/kuchmenko/workspace/issues/7)) ([cccc360](https://github.com/kuchmenko/workspace/commit/cccc3608daef880ee62c719ec183304faa485941))
+
+
+### Bug Fixes
+
+* **installer:** download releases from GitHub ([b508e58](https://github.com/kuchmenko/workspace/commit/b508e58bbdcc43b2688b44cbd792a9da1ef48b04))
+* **installer:** support private GitHub releases ([48a582a](https://github.com/kuchmenko/workspace/commit/48a582a615ff114d310b04cda47b772deae477b3))
+* **sync:** stale ahead counter, uncommitted .gitattributes, dead branch param ([#5](https://github.com/kuchmenko/workspace/issues/5)) ([98f37dc](https://github.com/kuchmenko/workspace/commit/98f37dc58f4ba2315bc68ca02aebf9401a16c22e))
+
+
+### Code Refactoring
+
+* simplify explorer and remove unused code ([#64](https://github.com/kuchmenko/workspace/issues/64)) ([9d74ce3](https://github.com/kuchmenko/workspace/commit/9d74ce3b162c13b8371dccdabab26b5831badc9e))
+
 ## [0.8.0](https://github.com/kuchmenko/workspace/compare/v0.7.0...v0.8.0) (2026-06-01)
 
 
