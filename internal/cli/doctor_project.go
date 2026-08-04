@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +14,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/layout"
 )
 
-func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
+func (r *Runner) projectChecks(ctx context.Context, name string, proj config.Project) []Finding {
 	barePath, layoutFinding := r.checkLayout(name, proj)
 	findings := []Finding{layoutFinding}
 	if barePath == "" {
@@ -27,7 +26,7 @@ func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
 	)
 	findings = append(findings, r.checkMirrorRemotes(name, proj, barePath)...)
 	if !r.SkipRemote {
-		findings = append(findings, r.checkRemoteReach(name, barePath))
+		findings = append(findings, r.checkRemoteReach(ctx, name, barePath))
 	}
 	findings = append(findings,
 		r.checkDefaultBranch(name, proj, barePath),
@@ -38,7 +37,14 @@ func (r *Runner) projectChecks(name string, proj config.Project) []Finding {
 }
 
 func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding) {
-	mainPath := filepath.Join(r.WsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(r.WsRoot, proj.Path)
+	if err != nil {
+		return "", Finding{
+			Scope: name, Check: "layout", Severity: Error,
+			Message: "invalid project path in workspace.toml",
+			FixHint: fmt.Sprintf("set projects.%s.path to a relative path inside the workspace", name),
+		}
+	}
 	barePath := layout.BarePath(mainPath)
 	bareExists := pathExists(barePath)
 	mainExists := pathExists(mainPath)
@@ -99,7 +105,7 @@ func (r *Runner) checkMirrorRemotes(name string, proj config.Project, barePath s
 		mirrorName, mirrorURL := mirror, url
 		findings = append(findings, Finding{
 			Scope: name, Check: "mirror:" + mirror, Severity: Error,
-			Message: fmt.Sprintf("mirror remote %q missing or misconfigured (want %s)", mirror, url),
+			Message: fmt.Sprintf("mirror remote %q missing or misconfigured (want %s)", mirror, git.RedactRemote(url)),
 			FixHint: "install the mirror remote with skipFetchAll",
 			Fix:     func() error { return git.EnsureMirrorRemote(barePath, mirrorName, mirrorURL) },
 		})
@@ -132,7 +138,7 @@ func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath strin
 	if err != nil {
 		return Finding{
 			Scope: name, Check: "remote-url", Severity: Error,
-			Message: fmt.Sprintf("cannot read origin URL: %v", err), FixHint: "check bare repo integrity",
+			Message: fmt.Sprintf("cannot read origin URL: %s", git.RedactDiagnostic(err.Error())), FixHint: "check bare repo integrity",
 		}
 	}
 	if strings.TrimSpace(actual) == strings.TrimSpace(proj.Remote) {
@@ -141,28 +147,31 @@ func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath strin
 	declared := proj.Remote
 	return Finding{
 		Scope: name, Check: "remote-url", Severity: Error,
-		Message: fmt.Sprintf("origin URL %q does not match workspace.toml %q", actual, declared),
+		Message: fmt.Sprintf("origin URL %q does not match workspace.toml %q", git.RedactRemote(actual), git.RedactRemote(declared)),
 		FixHint: "reset origin URL to match workspace.toml",
 		Fix:     func() error { return git.SetRemoteURL(barePath, declared) },
 	}
 }
 
-func (r *Runner) checkRemoteReach(name, barePath string) Finding {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (r *Runner) checkRemoteReach(ctx context.Context, name, barePath string) Finding {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	remote, _ := git.RemoteURL(barePath)
 	cmd := exec.CommandContext(ctx, "git", "-C", barePath, "ls-remote", "--exit-code", "origin", "HEAD")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(out))
 		if ctx.Err() == context.DeadlineExceeded {
 			message = "timed out after 10s"
+		} else if ctx.Err() == context.Canceled {
+			message = "canceled"
 		}
 		if message == "" {
 			message = err.Error()
 		}
 		return Finding{
 			Scope: name, Check: "remote-reach", Severity: Warn,
-			Message: fmt.Sprintf("cannot reach origin: %s", truncate(message, 120)),
+			Message: fmt.Sprintf("cannot reach origin: %s", truncate(git.RedactDiagnostic(message, remote), 120)),
 			FixHint: "check network / SSH key / gh auth status",
 		}
 	}

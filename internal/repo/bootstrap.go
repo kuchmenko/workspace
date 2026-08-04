@@ -88,7 +88,10 @@ func classify(wsRoot string, proj config.Project, selfRemote string) (State, str
 	if selfRemote != "" && remotesEqual(proj.Remote, selfRemote) {
 		return StateSelf, "this is the workspace repository itself"
 	}
-	mainPath := filepath.Join(wsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return StateBlocked, err.Error()
+	}
 	barePath := layout.BarePath(mainPath)
 
 	if statExists(barePath) {

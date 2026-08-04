@@ -21,10 +21,6 @@ func newWorktreeCmd() *cobra.Command {
 		Use:     "worktree",
 		Aliases: []string{"wt"},
 		Short:   "Manage per-project worktrees (repo-native branch names)",
-		Annotations: map[string]string{
-			"capability": "worktree",
-			"agent:when": "Manage per-feature worktrees under a bare+worktree project layout",
-		},
 	}
 	cmd.AddCommand(
 		newWorktreeAddCmd(),
@@ -40,7 +36,10 @@ func resolveProject(name string) (config.Project, string, string, error) {
 	if !ok {
 		return config.Project{}, "", "", fmt.Errorf("project %q not found in workspace.toml", name)
 	}
-	mainPath := filepath.Join(wsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return proj, "", "", fmt.Errorf("project %q: %w", name, err)
+	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
 		return proj, mainPath, barePath, fmt.Errorf("project %q is not migrated yet (no %s); run `ws migrate %s`", name, filepath.Base(barePath), name)
@@ -67,12 +66,9 @@ func locateWorktreeForBranch(barePath, branch string) string {
 func newWorktreeAddCmd() *cobra.Command {
 	var fromBase string
 	cmd := &cobra.Command{
-		Use:   "add <project> <branch>",
-		Short: "Create or attach a worktree for the named branch",
-		Annotations: map[string]string{
-			"capability": "worktree",
-			"agent:when": "Start a new feature in an isolated worktree, or check out an existing local/remote branch",
-		},
+		Use:         "add <project> <branch>",
+		Short:       "Create or attach a worktree for the named branch",
+		Annotations: agentAnnotations("worktree-add", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectRead, "text", "0,1"),
 		Long: `Create a new worktree for <project> on the literal branch <branch>.
 
 The branch name is taken verbatim — no prefix injection, no slug
@@ -149,13 +145,10 @@ EXAMPLES
 
 func newWorktreeListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list [project]",
-		Short: "List worktrees across projects",
-		Annotations: map[string]string{
-			"capability": "worktree",
-			"agent:when": "List all worktrees across projects with branch, dirty/clean state, and ownership info",
-		},
-		Args: cobra.MaximumNArgs(1),
+		Use:         "list [project]",
+		Short:       "List worktrees across projects",
+		Annotations: agentAnnotations("worktree-list", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "table", "0,1"),
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			machine, _ := config.LoadMachineConfig()
 			myMachine := ""
@@ -181,7 +174,11 @@ func newWorktreeListCmd() *cobra.Command {
 				if !ok {
 					continue
 				}
-				mainPath := filepath.Join(wsRoot, proj.Path)
+				mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+				if err != nil {
+					fmt.Printf("%-20s ERROR %v\n", name, err)
+					continue
+				}
 				barePath := layout.BarePath(mainPath)
 				if _, err := os.Stat(barePath); err != nil {
 					fmt.Printf("%-20s %s\n", name, "(not migrated)")
@@ -266,12 +263,9 @@ func worktreeStateString(proj *config.Project, wt git.Worktree, myMachine, defau
 func newWorktreePushCmd() *cobra.Command {
 	var forceDirty bool
 	cmd := &cobra.Command{
-		Use:   "push <project> <branch>",
-		Short: "Push the branch to origin and stamp last_active_* in workspace.toml",
-		Annotations: map[string]string{
-			"capability": "worktree",
-			"agent:when": "Publish a worktree's branch to origin and update the registry's last_active_* fields",
-		},
+		Use:         "push <project> <branch>",
+		Short:       "Push the branch to origin and stamp last_active_* in workspace.toml",
+		Annotations: agentAnnotations("worktree-push", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectWrite, "text", "0,1"),
 		Long: `Push <branch> to origin from its local worktree. Updates
 last_active_machine and last_active_at in workspace.toml so other machines
 see the activity. Refuses dirty worktrees unless --force-dirty is set, and
@@ -336,14 +330,10 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 func newWorktreeRmCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
-		Use:   "rm <project> <branch>",
-		Short: "Remove a worktree (refuses if dirty or unpushed unless --force)",
-		Annotations: map[string]string{
-			"capability":   "worktree",
-			"agent:when":   "Remove a worktree after its branch has been merged or is no longer needed",
-			"agent:safety": "Refuses if dirty or has unpushed commits unless --force. Does not delete the branch on origin.",
-		},
-		Args: cobra.ExactArgs(2),
+		Use:         "rm <project> <branch>",
+		Short:       "Remove a worktree (refuses if dirty or unpushed unless --force)",
+		Annotations: agentAnnotations("worktree-remove", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			projectName, branch := args[0], strings.TrimSpace(args[1])
 			machine, err := ensureMachineName()
@@ -355,10 +345,16 @@ func newWorktreeRmCmd() *cobra.Command {
 				return resolveErr
 			}
 			wtPath := locateWorktreeForBranch(barePath, branch)
-			if err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projectName, Branch: branch, Machine: machine, Force: force}); err != nil {
+			result, err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projectName, Branch: branch, Machine: machine, Force: force})
+			if result.Removed {
+				fmt.Printf("removed worktree %s\n", wtPath)
+			}
+			if err != nil {
 				return err
 			}
-			fmt.Printf("removed worktree %s\n", wtPath)
+			if !result.Removed && result.MetadataReleased {
+				fmt.Printf("released stale workspace.toml ownership for %s\n", branch)
+			}
 			return nil
 		},
 	}

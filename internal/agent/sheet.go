@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -49,18 +50,19 @@ type sheetRow struct {
 }
 
 type sheet struct {
-	mode       sheetMode
-	target     *Project
-	group      string
-	groupPath  string
-	rows       []sheetRow
-	visible    []int
-	cursor     int
-	filter     tui.TextInput
-	filterMode bool
-	parent     *sheet
-	pendingDel *Worktree
-	statusMsg  string
+	mode          sheetMode
+	target        *Project
+	group         string
+	workspaceRoot string
+	groupPath     string
+	rows          []sheetRow
+	visible       []int
+	cursor        int
+	filter        tui.TextInput
+	filterMode    bool
+	parent        *sheet
+	pendingDel    *Worktree
+	statusMsg     string
 }
 
 func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
@@ -73,35 +75,40 @@ func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
 		filter: filter,
 	}
 	s.rebuild(m)
+	if strings.HasPrefix(m.statusMsg, "inspect worktrees:") {
+		s.statusMsg = m.statusMsg
+		m.statusMsg = ""
+	}
 	return s
 }
 
-func newGroupSheet(m *Model, group string) *sheet {
+func newGroupSheet(m *Model, workspaceRoot, group string) *sheet {
 	filter := tui.NewTextInput()
 	filter.SetPrompt("")
 	s := &sheet{
-		mode:      sheetGroup,
-		group:     group,
-		groupPath: groupRootPath(m, group),
-		filter:    filter,
+		mode:          sheetGroup,
+		workspaceRoot: workspaceRoot,
+		group:         group,
+		groupPath:     groupRootPath(workspaceRoot, group),
+		filter:        filter,
 	}
 	s.rebuild(m)
 	return s
 }
 
-func groupRootPath(m *Model, group string) string {
-	root := m.workspaceRootForGroup(group)
-	if root == "" {
+func groupRootPath(workspaceRoot, group string) string {
+	path, err := layout.ProjectPath(workspaceRoot, group)
+	if err != nil {
 		return ""
 	}
-	return GroupPath(root, group)
+	return path
 }
 
 func (s *sheet) rebuild(m *Model) {
 	if s.mode == sheetProject {
 		s.rows = buildProjectSheetRows(m, s.target)
 	} else {
-		s.rows = buildGroupSheetRows(m, s.group, s.groupPath)
+		s.rows = buildGroupSheetRows(m, s.workspaceRoot, s.group, s.groupPath)
 	}
 	s.applyFilter()
 }
@@ -332,8 +339,7 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 	switch act {
 	case actShellMain:
 		if key == "enter" || key == "s" || key == "l" {
-			m.Launch = &LaunchRequest{Cwd: path}
-			return m, tui.Quit
+			return m.launch(s.workspaceRootForTarget(), path)
 		}
 	case actNewWorktree:
 		if (key == "enter" || key == "w") && s.target != nil {
@@ -370,7 +376,7 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 			if s.target != nil {
 				m.toggleFavoriteFor(s.target)
 			} else if s.group != "" {
-				m.toggleFavoriteGroup(s.group)
+				m.toggleFavoriteGroup(s.workspaceRoot, s.group)
 			}
 			s.rebuild(m)
 			return m, nil
@@ -385,8 +391,7 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 	}
 	switch key {
 	case "enter", "c", "s", "l":
-		m.Launch = &LaunchRequest{Cwd: wt.Path}
-		return m, tui.Quit
+		return m.launch(m.workspaceRootFor(s.target), wt.Path)
 	case "d":
 		if wt.IsMain {
 			return m, nil
@@ -410,12 +415,22 @@ func (s *sheet) openGlobalSearch(m *Model) (tui.Model, tui.Cmd) {
 	}
 	for _, ws := range m.workspaces {
 		for _, g := range ws.Groups {
-			m.expanded[g] = true
+			m.expanded[groupKey(ws.Root, g)] = true
 		}
 	}
 	m.rebuildItems()
 	m.recomputeFlash()
 	return m, nil
+}
+
+func (s *sheet) workspaceRootForTarget() string {
+	if s.mode == sheetGroup {
+		return s.workspaceRoot
+	}
+	if s.target != nil {
+		return s.target.WorkspaceRoot
+	}
+	return ""
 }
 
 func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
@@ -426,15 +441,18 @@ func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
 	}
 	wsRoot := m.workspaceRootFor(p)
 	machine, err := explorerMachineName()
+	result := repo.WorktreeRemoveResult{}
 	if err == nil {
-		err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
+		result, err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
+	}
+	if result.Removed {
+		m.wtCache.Invalidate(p.Path)
+		s.rebuild(m)
 	}
 	if err != nil {
 		s.statusMsg = err.Error()
 		return m, nil
 	}
-	m.wtCache.Invalidate(p.Path)
-	s.rebuild(m)
 	s.statusMsg = "worktree deleted"
 	return m, nil
 }
@@ -490,7 +508,7 @@ func (s *sheet) view(width, height int) string {
 
 	if s.statusMsg != "" {
 		lines = append(lines, "")
-		lines = append(lines, statusMsgStyle.Width(innerW).Render(" "+s.statusMsg))
+		lines = append(lines, statusMsgStyle.Width(innerW).Render(" "+presentLabel(s.statusMsg)))
 	}
 
 	lines = append(lines, "")
@@ -514,8 +532,8 @@ func (s *sheet) renderRow(visIdx, innerW int) string {
 		return popupDimStyle.Width(innerW).Render(text)
 	}
 
-	label := r.label
-	hint := r.hint
+	label := presentLabel(r.label)
+	hint := presentLabel(r.hint)
 	key := r.keyHint
 
 	left := "  " + label
@@ -550,10 +568,10 @@ func (s *sheet) renderRow(visIdx, innerW int) string {
 
 func (s *sheet) title() string {
 	if s.mode == sheetGroup {
-		return fmt.Sprintf("@%s", s.group)
+		return fmt.Sprintf("@%s", presentLabel(s.group))
 	}
 	if s.target != nil {
-		return s.target.Name
+		return presentLabel(s.target.Name)
 	}
 	return "launch"
 }

@@ -72,7 +72,10 @@ func CloneIntoLayoutContext(ctx context.Context, wsRoot, name string, proj *conf
 	if err := validateCloneInputs(name, proj); err != nil {
 		return nil, err
 	}
-	mainPath := filepath.Join(wsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return nil, fmt.Errorf("clone %s: %w", name, err)
+	}
 	barePath := layout.BarePath(mainPath)
 	if err := preflightLayout(barePath, mainPath); err != nil {
 		return nil, err
@@ -90,6 +93,51 @@ func CloneIntoLayoutContext(ctx context.Context, wsRoot, name string, proj *conf
 		}
 	}()
 	return cloneAndMaterializeContext(ctx, name, proj, opts, barePath, mainPath)
+}
+
+func ResumeCloneIntoLayout(wsRoot, name string, proj *config.Project) (*CloneResult, error) {
+	if err := validateCloneInputs(name, proj); err != nil {
+		return nil, err
+	}
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return nil, fmt.Errorf("resume clone %s: %w", name, err)
+	}
+	barePath := layout.BarePath(mainPath)
+	if !IsRepo(barePath) || !IsRepo(mainPath) {
+		return nil, ErrAlreadyCloned
+	}
+	origin, err := RemoteURL(barePath)
+	if err != nil || origin != proj.Remote {
+		return nil, ErrAlreadyCloned
+	}
+	commonDir, err := gitCommonDir(mainPath)
+	if err != nil || !samePath(commonDir, barePath) {
+		return nil, ErrAlreadyCloned
+	}
+	branch, err := CurrentBranch(mainPath)
+	if err != nil || branch == "" || !HasBranch(barePath, branch) {
+		return nil, ErrAlreadyCloned
+	}
+	if proj.DefaultBranch != "" && proj.DefaultBranch != branch {
+		return nil, ErrAlreadyCloned
+	}
+	proj.DefaultBranch = branch
+	return &CloneResult{Project: name, BarePath: barePath, MainWorktree: mainPath, DefaultBranch: branch}, nil
+}
+
+func gitCommonDir(repoPath string) (string, error) {
+	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func samePath(left, right string) bool {
+	leftPath, leftErr := filepath.EvalSymlinks(left)
+	rightPath, rightErr := filepath.EvalSymlinks(right)
+	return leftErr == nil && rightErr == nil && filepath.Clean(leftPath) == filepath.Clean(rightPath)
 }
 
 func cloneAndMaterializeContext(ctx context.Context, name string, proj *config.Project, opts CloneOptions, barePath, mainPath string) (*CloneResult, error) {

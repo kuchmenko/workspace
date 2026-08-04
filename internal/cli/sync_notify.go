@@ -2,14 +2,16 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
 )
 
 type syncConflictNotifier struct {
-	root  string
-	store *conflict.Store
-	known map[string]bool
+	store      *conflict.Store
+	known      map[string]bool
+	workspaces map[string]bool
 }
 
 func newSyncConflictNotifier(root string) *syncConflictNotifier {
@@ -25,7 +27,7 @@ func newSyncConflictNotifier(root string) *syncConflictNotifier {
 	for _, stored := range conflicts {
 		known[stored.ID] = true
 	}
-	return &syncConflictNotifier{root: root, store: store, known: known}
+	return &syncConflictNotifier{store: store, known: known, workspaces: syncNotificationWorkspaces(root)}
 }
 
 func (n *syncConflictNotifier) notifyNew() {
@@ -41,10 +43,37 @@ func (n *syncConflictNotifier) notifyNew() {
 			continue
 		}
 		n.known[stored.ID] = true
-		if stored.Workspace == n.root {
+		if n.workspaces[cleanAbsolutePath(stored.Workspace)] {
 			notifySyncConflict(stored)
 		}
 	}
+}
+
+func syncNotificationWorkspaces(root string) map[string]bool {
+	identities := map[string]bool{cleanAbsolutePath(root): true}
+	tomlPath, err := filepath.EvalSymlinks(filepath.Join(root, "workspace.toml"))
+	if err != nil {
+		return identities
+	}
+	for dir := filepath.Dir(tomlPath); ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			identities[cleanAbsolutePath(dir)] = true
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+	}
+	return identities
+}
+
+func cleanAbsolutePath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
 }
 
 func notifySyncConflict(stored conflict.Conflict) {

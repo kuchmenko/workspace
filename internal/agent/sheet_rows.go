@@ -15,7 +15,10 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "main"},
 	)
 
-	wts := m.wtCache.Get(p.Path)
+	wts, err := m.wtCache.Get(p.Path)
+	if err != nil {
+		m.statusMsg = "inspect worktrees: " + err.Error()
+	}
 
 	rows = append(rows, sheetRow{
 		kind:    rowHeader,
@@ -62,7 +65,7 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	return rows
 }
 
-func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
+func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []sheetRow {
 	var rows []sheetRow
 
 	inHint := "in @" + group
@@ -74,6 +77,9 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 	var projects []*Project
 	for wi := range m.workspaces {
 		ws := &m.workspaces[wi]
+		if ws.Root != workspaceRoot {
+			continue
+		}
 		for pi := range ws.Projects {
 			p := &ws.Projects[pi]
 			if p.Group == group {
@@ -106,15 +112,15 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 
 	rows = append(rows,
 		sheetRow{kind: rowHeader, label: "manage", section: "manage"},
-		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, group), keyHint: "f", section: "manage"},
+		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, workspaceRoot, group), keyHint: "f", section: "manage"},
 	)
 
 	return rows
 }
 
-func groupFavoriteLabel(m *Model, group string) string {
+func groupFavoriteLabel(m *Model, workspaceRoot, group string) string {
 	for _, ws := range m.workspaces {
-		if ws.FavoriteGroups[group] {
+		if ws.Root == workspaceRoot && ws.FavoriteGroups[group] {
 			return "unfavorite group"
 		}
 	}

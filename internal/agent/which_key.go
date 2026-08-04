@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -31,7 +32,7 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	case KindGroup:
 		return []whichKeyAction{
 			{"⏎", "open sheet"},
-			{"f", m.favoriteToggleLabelGroup(item.group)},
+			{"f", m.favoriteToggleLabelGroup(item.workspaceRoot, item.group)},
 			{"l", "shell"},
 			{"tab", "expand"},
 			{"", ""},
@@ -58,9 +59,9 @@ func (m *Model) favoriteToggleLabel(it *listItem) string {
 	return "favorite"
 }
 
-func (m *Model) favoriteToggleLabelGroup(group string) string {
+func (m *Model) favoriteToggleLabelGroup(workspaceRoot, group string) string {
 	for _, ws := range m.workspaces {
-		if ws.FavoriteGroups[group] {
+		if ws.Root == workspaceRoot && ws.FavoriteGroups[group] {
 			return "unfavorite"
 		}
 	}
@@ -124,7 +125,7 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.toggleFavoriteFor(item.project)
 		}
 		if item != nil && item.kind == KindGroup && item.group != "" {
-			m.toggleFavoriteGroup(item.group)
+			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 		return m, nil
 	case "tab":
@@ -134,8 +135,7 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m *Model) toggleFavoriteGroup(group string) {
-	root := m.workspaceRootForGroup(group)
+func (m *Model) toggleFavoriteGroup(root, group string) {
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for group"
 		return
@@ -174,17 +174,7 @@ func (m *Model) toggleFavoriteGroup(group string) {
 	m.rebuildItems()
 	m.clampCursor()
 	m.ensureVisible()
-}
-
-func (m *Model) workspaceRootForGroup(name string) string {
-	for _, ws := range m.workspaces {
-		for _, g := range ws.Groups {
-			if g == name {
-				return ws.Root
-			}
-		}
-	}
-	return ""
+	metrics.RecordExplorerFavoriteChanged()
 }
 
 func (m *Model) toggleFavoriteFor(proj *Project) {
@@ -215,6 +205,7 @@ func (m *Model) toggleFavoriteFor(proj *Project) {
 	m.rebuildItems()
 	m.clampCursor()
 	m.ensureVisible()
+	metrics.RecordExplorerFavoriteChanged()
 }
 
 func (m *Model) whichKeyTitle() string {
@@ -227,11 +218,9 @@ func (m *Model) whichKeyTitle() string {
 	}
 	switch item.kind {
 	case KindGroup:
-		return item.group
+		return presentLabel(item.group)
 	case KindProject:
-		return item.project.Name
-	case KindWorktree:
-		return item.group
+		return presentLabel(item.project.Name)
 	}
 	return "actions"
 }

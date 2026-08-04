@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,7 +25,6 @@ type WorktreeAddOptions struct {
 
 type WorktreeAddResult struct {
 	Path         string
-	Branch       string
 	Base         string
 	Machines     []string
 	Source       string
@@ -40,6 +40,11 @@ type WorktreeRemoveOptions struct {
 	Force         bool
 }
 
+type WorktreeRemoveResult struct {
+	Removed          bool
+	MetadataReleased bool
+}
+
 func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	branch := strings.TrimSpace(options.Branch)
 	if branch == "" {
@@ -48,7 +53,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	if options.Machine == "" {
 		return nil, errors.New("machine name is required")
 	}
-	if err := ValidateWorktreeBranch(branch); err != nil {
+	if err := validateWorktreeBranch(branch); err != nil {
 		return nil, err
 	}
 	workspace, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
@@ -61,8 +66,12 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	_ = git.FetchRefspec(barePath, "origin", branch)
 	localExists := git.HasBranch(barePath, branch)
 	remoteExists := git.HasRemoteBranch(barePath, "origin", branch)
-	if existingPath := worktreeForBranch(barePath, branch); existingPath != "" {
-		result := &WorktreeAddResult{Path: existingPath, Branch: branch, ReRegistered: true}
+	existingPath, err := worktreeForBranch(barePath, branch)
+	if err != nil {
+		return nil, err
+	}
+	if existingPath != "" {
+		result := &WorktreeAddResult{Path: existingPath, ReRegistered: true}
 		setAddMetadata(&project, branch, options.Machine, remoteExists, result)
 		workspace.Projects[options.Project] = project
 		if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
@@ -71,7 +80,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 		return result, nil
 	}
 
-	result := &WorktreeAddResult{Branch: branch}
+	result := &WorktreeAddResult{}
 	result.Path = layout.WorktreePathForBranch(mainPath, options.Machine, branch)
 	if _, err := os.Stat(result.Path); err == nil {
 		return nil, fmt.Errorf("worktree path already exists: %s", result.Path)
@@ -116,43 +125,56 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	return result, nil
 }
 
-func RemoveWorktree(options WorktreeRemoveOptions) error {
+func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error) {
+	result := WorktreeRemoveResult{}
 	if strings.TrimSpace(options.Branch) == "" {
-		return errors.New("branch must not be empty")
+		return result, errors.New("branch must not be empty")
 	}
 	if options.Machine == "" {
-		return errors.New("machine name is required")
+		return result, errors.New("machine name is required")
 	}
 	workspace, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
 	if err != nil {
-		return err
+		return result, err
 	}
-	wtPath := worktreeForBranch(barePath, options.Branch)
+	wtPath, err := worktreeForBranch(barePath, options.Branch)
+	if err != nil {
+		return result, err
+	}
 	if wtPath == "" {
-		return fmt.Errorf("no worktree on branch %s in project %s", options.Branch, options.Project)
-	}
-	if wtPath == mainPath {
-		return fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", options.Project, options.Branch, mainPath)
-	}
-	if !options.Force {
-		if git.IsDirty(wtPath) {
-			return fmt.Errorf("worktree %s is dirty; commit/stash or use --force", wtPath)
+		meta := project.LookupBranch(options.Branch)
+		if meta == nil || !slices.Contains(meta.Machines, options.Machine) {
+			return result, fmt.Errorf("no worktree on branch %s in project %s", options.Branch, options.Project)
 		}
-		ahead, _, has := git.AheadBehind(wtPath, options.Branch)
-		if has && ahead > 0 {
-			return fmt.Errorf("branch %s has %d unpushed commits; push or use --force", options.Branch, ahead)
+	} else {
+		if wtPath == mainPath {
+			return result, fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", options.Project, options.Branch, mainPath)
 		}
-	}
-	if err := git.WorktreeRemove(barePath, wtPath, options.Force); err != nil {
-		return err
+		if !options.Force {
+			if git.IsDirty(wtPath) {
+				return result, fmt.Errorf("worktree %s is dirty; commit/stash or use --force", wtPath)
+			}
+			ahead, _, has := git.AheadBehind(wtPath, options.Branch)
+			if has && ahead > 0 {
+				return result, fmt.Errorf("branch %s has %d unpushed commits; push or use --force", options.Branch, ahead)
+			}
+		}
+		if err := git.WorktreeRemove(barePath, wtPath, options.Force); err != nil {
+			return result, err
+		}
+		result.Removed = true
 	}
 	if changed, _ := project.ReleaseBranch(options.Branch, options.Machine); changed {
 		workspace.Projects[options.Project] = project
 		if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
-			return fmt.Errorf("worktree removed but workspace.toml save failed: %w", err)
+			if result.Removed {
+				return result, fmt.Errorf("worktree removed but workspace.toml ownership release failed: %w", err)
+			}
+			return result, fmt.Errorf("workspace.toml ownership release failed: %w", err)
 		}
+		result.MetadataReleased = true
 	}
-	return nil
+	return result, nil
 }
 
 func loadWorktreeProject(root, name string) (*config.Workspace, config.Project, string, string, error) {
@@ -164,7 +186,10 @@ func loadWorktreeProject(root, name string) (*config.Workspace, config.Project, 
 	if !ok {
 		return nil, config.Project{}, "", "", fmt.Errorf("project %q not found in workspace.toml", name)
 	}
-	mainPath := filepath.Join(root, project.Path)
+	mainPath, err := layout.ProjectPath(root, project.Path)
+	if err != nil {
+		return nil, config.Project{}, "", "", fmt.Errorf("project %q: %w", name, err)
+	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
 		return nil, config.Project{}, "", "", fmt.Errorf("project %q is not migrated yet (no %s); run `ws migrate %s`", name, filepath.Base(barePath), name)
@@ -172,7 +197,7 @@ func loadWorktreeProject(root, name string) (*config.Workspace, config.Project, 
 	return workspace, project, mainPath, barePath, nil
 }
 
-func ValidateWorktreeBranch(branch string) error {
+func validateWorktreeBranch(branch string) error {
 	out, err := exec.Command("git", "check-ref-format", "--branch", branch).CombinedOutput()
 	if err == nil {
 		return nil
@@ -184,17 +209,17 @@ func ValidateWorktreeBranch(branch string) error {
 	return fmt.Errorf("invalid branch name %q: %s", branch, hint)
 }
 
-func worktreeForBranch(barePath, branch string) string {
+func worktreeForBranch(barePath, branch string) (string, error) {
 	worktrees, err := git.WorktreeList(barePath)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("list worktrees: %w", err)
 	}
 	for _, worktree := range worktrees {
 		if !worktree.Bare && worktree.Branch == branch {
-			return worktree.Path
+			return worktree.Path, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func setAddMetadata(project *config.Project, branch, machine string, remote bool, result *WorktreeAddResult) {

@@ -20,12 +20,12 @@ const (
 	KindWorkspace NodeKind = iota
 	KindGroup
 	KindProject
-	KindWorktree
 )
 
 type Project struct {
 	ID                string
 	Name              string
+	WorkspaceRoot     string
 	Group             string
 	Category          string
 	Path              string
@@ -36,8 +36,8 @@ type Project struct {
 	LastActiveMachine string
 }
 
-func GroupPath(wsRoot, group string) string {
-	return filepath.Join(wsRoot, group)
+func groupKey(wsRoot, group string) string {
+	return wsRoot + "\x00" + group
 }
 
 type WorkspaceData struct {
@@ -69,6 +69,9 @@ func (m *Model) rebuildItems() {
 		groupActivity := make(map[string]time.Time, len(ws.Groups))
 		for i := range ws.Projects {
 			p := &ws.Projects[i]
+			if p.WorkspaceRoot == "" {
+				p.WorkspaceRoot = ws.Root
+			}
 			projects = append(projects, p)
 			if p.LastActiveAt.After(groupActivity[p.Group]) {
 				groupActivity[p.Group] = p.LastActiveAt
@@ -95,8 +98,10 @@ func (m *Model) rebuildItems() {
 			return groups[i] < groups[j]
 		})
 		for _, g := range groups {
-			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
-			if m.expanded[g] {
+			key := groupKey(ws.Root, g)
+			groupPath := filepath.Join(ws.Root, g)
+			m.items = append(m.items, listItem{kind: KindGroup, workspaceRoot: ws.Root, group: g, indent: 0, path: groupPath})
+			if m.expanded[key] {
 				for _, p := range projects {
 					if p.Group == g {
 						m.addProjectItem(p, 1)
@@ -122,7 +127,7 @@ func (m *Model) clampCursor() {
 }
 
 func (m *Model) addProjectItem(p *Project, indent int) {
-	m.items = append(m.items, listItem{kind: KindProject, project: p, indent: indent, path: p.Path})
+	m.items = append(m.items, listItem{kind: KindProject, workspaceRoot: p.WorkspaceRoot, project: p, indent: indent, path: p.Path})
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -171,7 +176,11 @@ func loadMachineName() string {
 func findProjectByPath(ws *config.Workspace, wsRoot, abs string) (string, *config.Project) {
 	abs = filepath.Clean(abs)
 	for id, p := range ws.Projects {
-		projPath := filepath.Clean(filepath.Join(wsRoot, p.Path))
+		projPath, err := layout.ProjectPath(wsRoot, p.Path)
+		if err != nil {
+			continue
+		}
+		projPath = filepath.Clean(projPath)
 		if abs == projPath || strings.HasPrefix(abs, projPath+string(filepath.Separator)) {
 			cp := p
 			return id, &cp
@@ -341,10 +350,18 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 		}
 		names = append(names, n)
 		if p.Group != "" {
-			groupSet[p.Group] = true
+			if _, err := layout.ProjectPath(root, p.Group); err != nil {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: skip group %q: %s", filepath.Base(root), presentLabel(p.Group), presentLabel(err.Error())))
+			} else {
+				groupSet[p.Group] = true
+			}
 		}
 	}
 	for g := range w.Groups {
+		if _, err := layout.ProjectPath(root, g); err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip group %q: %s", filepath.Base(root), presentLabel(g), presentLabel(err.Error())))
+			continue
+		}
 		groupSet[g] = true
 	}
 	sort.Strings(names)
@@ -358,11 +375,20 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 
 	for _, name := range names {
 		p := w.Projects[name]
-		mainPath := filepath.Join(root, p.Path)
+		mainPath, err := layout.ProjectPath(root, p.Path)
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip project %q: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
+			continue
+		}
+		if p.Group != "" && !groupSet[p.Group] {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip project %q: unsafe group", filepath.Base(root), presentLabel(name)))
+			continue
+		}
 		lastAt, lastMachine := projectActivity(p.Branches)
 		proj := Project{
 			ID:                name,
 			Name:              name,
+			WorkspaceRoot:     root,
 			Group:             p.Group,
 			Category:          string(p.Category),
 			Path:              mainPath,
@@ -382,7 +408,11 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 					}
 				}
 				proj.WorktreeCount = count
+			} else {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 			}
+		} else if !os.IsNotExist(err) {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect layout: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 		}
 
 		ws.Projects = append(ws.Projects, proj)

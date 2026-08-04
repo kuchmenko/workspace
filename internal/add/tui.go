@@ -12,8 +12,11 @@ import (
 )
 
 type AddModel struct {
-	state          addState
-	stateChangedAt time.Time
+	ctx             context.Context
+	cancelOperation context.CancelFunc
+	externalContext context.Context
+	state           addState
+	stateChangedAt  time.Time
 
 	wsRoot   string
 	ws       *config.Workspace
@@ -72,6 +75,7 @@ const (
 	addStateBulkConfirm
 	addStateCloning
 	addStateBranchPrompt
+	addStateAborting
 	addStateDone
 )
 
@@ -90,6 +94,11 @@ type branchAnswer struct {
 }
 
 func NewAddModel(opts AddModelOptions) AddModel {
+	externalContext := opts.Context
+	if externalContext == nil {
+		externalContext = context.Background()
+	}
+	ctx, cancelOperation := context.WithCancel(context.Background())
 	sp := tui.NewSpinner()
 	sp.SetStyle(tui.DotSpinner)
 	sp.SetTextStyle(tui.NewStyle().Foreground("6"))
@@ -115,24 +124,28 @@ func NewAddModel(opts AddModelOptions) AddModel {
 	editGroup.SetWidth(60)
 
 	return AddModel{
-		state:          addStateGathering,
-		wsRoot:         opts.WsRoot,
-		ws:             opts.Workspace,
-		saveFn:         opts.Save,
-		sources:        opts.Sources,
-		gatherTO:       opts.GatherTimeout,
-		standalone:     opts.Standalone,
-		preURLs:        opts.PreURLs,
-		spinner:        sp,
-		manualInput:    manual,
-		filterInput:    filter,
-		editNameInput:  editName,
-		editURLInput:   editURL,
-		editGroupInput: editGroup,
+		ctx:             ctx,
+		cancelOperation: cancelOperation,
+		externalContext: externalContext,
+		state:           addStateGathering,
+		wsRoot:          opts.WsRoot,
+		ws:              opts.Workspace,
+		saveFn:          opts.Save,
+		sources:         opts.Sources,
+		gatherTO:        opts.GatherTimeout,
+		standalone:      opts.Standalone,
+		preURLs:         opts.PreURLs,
+		spinner:         sp,
+		manualInput:     manual,
+		filterInput:     filter,
+		editNameInput:   editName,
+		editURLInput:    editURL,
+		editGroupInput:  editGroup,
 	}
 }
 
 type AddModelOptions struct {
+	Context       context.Context
 	WsRoot        string
 	Workspace     *config.Workspace
 	Save          func(*config.Workspace) error
@@ -145,11 +158,22 @@ type AddModelOptions struct {
 }
 
 func (m AddModel) Init() tui.Cmd {
-	cmds := []tui.Cmd{m.spinner.Tick}
+	cmds := []tui.Cmd{m.spinner.Tick, m.waitForCancellation()}
 	for _, src := range m.sources {
 		cmds = append(cmds, m.startSource(src))
 	}
 	return tui.Batch(cmds...)
+}
+
+func (m AddModel) waitForCancellation() tui.Cmd {
+	return func() tui.Msg {
+		select {
+		case <-m.externalContext.Done():
+			return cancelAddMsg{}
+		case <-m.ctx.Done():
+			return nil
+		}
+	}
 }
 
 func (m AddModel) startSource(src Source) tui.Cmd {
@@ -178,17 +202,14 @@ func (m AddModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		m.height = msg.Height
 		return m, nil
 	case tui.KeyMsg:
-
+		if msg.String() == "ctrl+c" {
+			return m.cancel()
+		}
 		if !m.stateChangedAt.IsZero() && time.Since(m.stateChangedAt) < 100*time.Millisecond {
 			return m, nil
 		}
-		if msg.String() == "ctrl+c" {
-			done := m.toDone()
-			if m.standalone {
-				return done, tui.Sequence(emit(AddDoneMsg{}), tui.Quit)
-			}
-			return done, emit(AddDoneMsg{})
-		}
+	case cancelAddMsg:
+		return m.cancel()
 	case sourceDoneMsg:
 
 		return m.handleSourceDone(msg)
@@ -207,7 +228,7 @@ func (m AddModel) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		return m.updateConfirm(msg)
 	case addStateBulkConfirm:
 		return m.updateBulkConfirm(msg)
-	case addStateCloning:
+	case addStateCloning, addStateAborting:
 		return m.updateCloning(msg)
 	case addStateBranchPrompt:
 		return m.updateBranchPrompt(msg)
@@ -233,12 +254,30 @@ func (m AddModel) View() string {
 		return m.viewBulkConfirm()
 	case addStateCloning:
 		return m.viewCloning()
+	case addStateAborting:
+		return m.viewCloning()
 	case addStateBranchPrompt:
 		return m.branchPrompt.View()
 	case addStateDone:
 		return m.viewDone()
 	}
 	return ""
+}
+
+func (m AddModel) cancel() (tui.Model, tui.Cmd) {
+	if m.state == addStateCloning || m.state == addStateBranchPrompt || m.state == addStateAborting {
+		m.cancelOperation()
+		if m.state == addStateBranchPrompt {
+			m.resolveBranch("", context.Canceled)
+		}
+		m.transitionTo(addStateAborting)
+		return m, nil
+	}
+	done := m.toDone()
+	if m.standalone {
+		return done, tui.Sequence(emit(done.doneMsg()), tui.Quit)
+	}
+	return done, emit(done.doneMsg())
 }
 
 func (m *AddModel) transitionTo(s addState) {
@@ -739,11 +778,12 @@ func (m AddModel) viewEdit() string {
 		{"Category", string(m.editFields.Category) + addDim.Render("   (space to toggle: personal | work)")},
 		{"Group", m.editGroupInput.Value() + addDim.Render("   (auto-inferred; empty → category)")},
 	}
-	if m.editFocus == 0 {
+	switch m.editFocus {
+	case 0:
 		rows[0].value = m.editNameInput.View()
-	} else if m.editFocus == 1 {
+	case 1:
 		rows[1].value = m.editURLInput.View()
-	} else if m.editFocus == 3 {
+	case 3:
 		rows[3].value = m.editGroupInput.View() + addDim.Render("   (auto-inferred; empty → category)")
 	}
 	for i, r := range rows {

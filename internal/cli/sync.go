@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
@@ -15,12 +14,10 @@ import (
 
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sync",
-		Short: "Synchronize workspace and project state",
-		Annotations: map[string]string{
-			"capability": "sync",
-			"agent:when": "Explicitly preflight remote access, review run-only targets, then synchronize workspace.toml, selected projects, mirrors, and safe main worktree updates",
-		},
+		Use:         "sync",
+		Short:       "Synchronize workspace and project state",
+		Annotations: agentAnnotations("sync", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectWrite, "text", "0,1,130"),
+		Args:        cobra.NoArgs,
 		Long: `Synchronize this workspace right now.
 
 Before changing anything, builds a fresh plan and probes every unique
@@ -51,11 +48,7 @@ func newSyncResolveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resolve",
 		Short: "Inspect and act on unresolved sync conflicts",
-		Annotations: map[string]string{
-			"capability":   "sync",
-			"agent:when":   "View and resolve sync conflicts (branch divergence, merge failures, etc.)",
-			"agent:safety": "Interactive prompt — opens a shell for the user to resolve manually. Never auto-merges.",
-		},
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncResolve()
 		},
@@ -303,7 +296,11 @@ func findProjectBare(c conflict.Conflict) string {
 	if !ok {
 		return ""
 	}
-	return layout.BarePath(filepath.Join(c.Workspace, proj.Path))
+	mainPath, err := layout.ProjectPath(c.Workspace, proj.Path)
+	if err != nil {
+		return ""
+	}
+	return layout.BarePath(mainPath)
 }
 
 func resolveBranchOrphan(c conflict.Conflict) (bool, error) {

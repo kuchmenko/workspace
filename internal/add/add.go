@@ -49,10 +49,11 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("add.Run: unknown mode %d", opts.Mode)
 	}
 
-	if _, err := acquireSidecar(opts.WsRoot, opts.Mode, opts.URLs); err != nil {
+	lock, err := acquireSidecar(opts.WsRoot, opts.Mode, opts.URLs)
+	if err != nil {
 		return nil, err
 	}
-	defer releaseSidecar(opts.WsRoot)
+	defer releaseSidecar(opts.WsRoot, lock)
 
 	if useTUI {
 		return runTUI(ctx, opts)
@@ -64,6 +65,7 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	sources := buildSources(opts)
 
 	model := NewAddModel(AddModelOptions{
+		Context:       ctx,
 		WsRoot:        opts.WsRoot,
 		Workspace:     opts.Workspace,
 		Save:          resolveSaveFn(opts),
@@ -71,11 +73,11 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 		GatherTimeout: 10 * time.Second,
 		Standalone:    true,
 	})
+	defer model.cancelOperation()
 
 	prog := tui.NewProgram(
 		model,
 		tui.WithAltScreen(),
-		tui.WithContext(ctx),
 	)
 
 	finalModel, err := prog.Run()
@@ -173,13 +175,15 @@ func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 		}
 
 		perURL := opts
-		regRes, err := Register(perURL, url)
+		regRes, err := RegisterContext(ctx, perURL, url)
 		if err != nil {
+			redactedURL := git.RedactRemote(url)
+			redactedError := git.RedactDiagnostic(err.Error(), url)
 			if errors.Is(err, ErrAlreadyRegistered) {
-				res.Skipped = append(res.Skipped, SkipReason{URL: url, Reason: err.Error()})
+				res.Skipped = append(res.Skipped, SkipReason{URL: redactedURL, Reason: redactedError})
 				continue
 			}
-			res.Errors = append(res.Errors, fmt.Errorf("%s: %w", url, err))
+			res.Errors = append(res.Errors, fmt.Errorf("%s: %s", redactedURL, redactedError))
 			continue
 		}
 		res.Added = append(res.Added, regRes.Project)
@@ -196,6 +200,13 @@ type RegisterResult struct {
 }
 
 func Register(opts Options, url string) (*RegisterResult, error) {
+	return RegisterContext(context.TODO(), opts, url)
+}
+
+func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if opts.WsRoot == "" {
 		return nil, errors.New("register: empty WsRoot")
 	}
@@ -240,14 +251,18 @@ func Register(opts Options, url string) (*RegisterResult, error) {
 
 	cloned := false
 	if !opts.NoClone {
-		_, err := git.CloneIntoLayout(opts.WsRoot, name, &proj, git.CloneOptions{})
+		_, err := git.CloneIntoLayoutContext(ctx, opts.WsRoot, name, &proj, git.CloneOptions{})
+		if errors.Is(err, git.ErrAlreadyCloned) {
+			_, err = git.ResumeCloneIntoLayout(opts.WsRoot, name, &proj)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("clone %s: %w", name, err)
 		}
 		cloned = true
 	}
 
-	if opts.Workspace.Projects == nil {
+	projectsWasNil := opts.Workspace.Projects == nil
+	if projectsWasNil {
 		opts.Workspace.Projects = make(map[string]config.Project)
 	}
 	opts.Workspace.Projects[name] = proj
@@ -259,6 +274,14 @@ func Register(opts Options, url string) (*RegisterResult, error) {
 		}
 	}
 	if err := saveFn(opts.Workspace); err != nil {
+		delete(opts.Workspace.Projects, name)
+		if projectsWasNil {
+			opts.Workspace.Projects = nil
+		}
+		if cloned {
+			mainPath := filepath.Join(opts.WsRoot, proj.Path)
+			return nil, fmt.Errorf("save workspace.toml: %w; completed layout remains on disk at %s and %s", err, mainPath, filepath.Clean(mainPath+".bare"))
+		}
 		return nil, fmt.Errorf("save workspace.toml: %w", err)
 	}
 
@@ -338,6 +361,8 @@ type cloneDoneMsg struct {
 
 type allClonesDoneMsg struct{}
 
+type cancelAddMsg struct{}
+
 type needsBranchMsg struct {
 	project    string
 	candidates []string
@@ -352,19 +377,23 @@ type sourceDoneMsg struct {
 }
 
 type sidecarPayload struct {
-	Mode Mode     `json:"mode"`
-	URLs []string `json:"urls,omitempty"`
+	Mode     Mode `json:"mode"`
+	URLCount int  `json:"url_count,omitempty"`
 }
 
 const sidecarPayloadKey = "__session__"
 
-func acquireSidecar(wsRoot string, mode Mode, urls []string) (*sidecar.Sidecar, error) {
-	existing, err := sidecar.Load(wsRoot, sidecar.KindAdd)
+func acquireSidecar(wsRoot string, mode Mode, urls []string) (*sidecar.Lock, error) {
+	lock, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
 	if err != nil {
-		return nil, fmt.Errorf("read add sidecar: %w", err)
-	}
-	if existing != nil {
-		if sidecar.IsAlive(existing) {
+		if errors.Is(err, sidecar.ErrLocked) {
+			existing, loadErr := sidecar.Load(wsRoot, sidecar.KindAdd)
+			if loadErr != nil {
+				return nil, fmt.Errorf("read active add sidecar: %w", loadErr)
+			}
+			if existing == nil {
+				return nil, errors.New("another `ws add` is running")
+			}
 			var pay sidecarPayload
 			_, _ = existing.Get(sidecarPayloadKey, &pay)
 			return nil, fmt.Errorf(
@@ -374,24 +403,24 @@ func acquireSidecar(wsRoot string, mode Mode, urls []string) (*sidecar.Sidecar, 
 				describePayload(pay),
 			)
 		}
-
-		if err := sidecar.Delete(wsRoot, sidecar.KindAdd); err != nil {
-			return nil, fmt.Errorf("clear stale add sidecar: %w", err)
-		}
+		return nil, fmt.Errorf("acquire add lock: %w", err)
 	}
 
 	sc := sidecar.New(wsRoot, sidecar.KindAdd)
-	if err := sc.Set(sidecarPayloadKey, sidecarPayload{Mode: mode, URLs: urls}); err != nil {
+	if err := sc.Set(sidecarPayloadKey, sidecarPayload{Mode: mode, URLCount: len(urls)}); err != nil {
+		_ = lock.Release()
 		return nil, fmt.Errorf("encode sidecar payload: %w", err)
 	}
 	if err := sidecar.Save(sc); err != nil {
+		_ = lock.Release()
 		return nil, fmt.Errorf("save add sidecar: %w", err)
 	}
-	return sc, nil
+	return lock, nil
 }
 
-func releaseSidecar(wsRoot string) {
+func releaseSidecar(wsRoot string, lock *sidecar.Lock) {
 	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
+	_ = lock.Release()
 }
 
 func describePayload(p sidecarPayload) string {
@@ -404,12 +433,11 @@ func describePayload(p sidecarPayload) string {
 	case ModeEmbedded:
 		modeName = "embedded"
 	}
-	if len(p.URLs) == 0 {
+	if p.URLCount == 0 {
 		return modeName + " mode"
 	}
-	if len(p.URLs) == 1 {
-		return fmt.Sprintf("%s mode, adding %s", modeName, p.URLs[0])
+	if p.URLCount == 1 {
+		return modeName + " mode, adding 1 URL"
 	}
-	return fmt.Sprintf("%s mode, adding %d URLs: %s",
-		modeName, len(p.URLs), strings.Join(p.URLs, ", "))
+	return fmt.Sprintf("%s mode, adding %d URLs", modeName, p.URLCount)
 }

@@ -246,11 +246,10 @@ func TestRunContextRestoresOriginWhenConversionSaveFails(t *testing.T) {
 	if err := selection.SelectConversion(plan.Projects[0].OriginID); err != nil {
 		t.Fatal(err)
 	}
-	tomlPath := filepath.Join(root, "workspace.toml")
-	if err := os.Chmod(tomlPath, 0o444); err != nil {
+	if err := os.Chmod(root, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(tomlPath, 0o644)
+	defer os.Chmod(root, 0o755)
 
 	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
 	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultFailed {

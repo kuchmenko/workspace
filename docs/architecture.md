@@ -214,8 +214,8 @@ background process.
 
 The shared `internal/sidecar` package owns file, lock, pid, and stale
 process checks. Command-specific payloads remain with their command
-packages. `ws doctor --fix` may remove stale bootstrap and migrate
-sidecars.
+packages. `ws doctor` reports stale bootstrap and migrate sidecars for
+manual removal after the user confirms that no matching command is running.
 
 ## Conflicts
 

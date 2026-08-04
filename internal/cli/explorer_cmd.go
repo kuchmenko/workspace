@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/kuchmenko/workspace/internal/agent"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -13,11 +14,6 @@ func newExplorerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "explorer",
 		Short: "TUI explorer for projects and worktrees",
-		Annotations: map[string]string{
-			"capability":   "explorer",
-			"agent:when":   "Browse workspaces, projects, and worktrees, then open a shell",
-			"agent:safety": "Interactive TUI. Use the shell subcommand for non-interactive access.",
-		},
 		Long: `Launch the interactive TUI explorer over every registered workspace.
 The pinned quick-nav header shows up to nine numbered chips (favorites
 + recently-touched) — press 1-9 to launch the matching project. Below
@@ -26,6 +22,7 @@ the header, the full project tree scrolls with j/k navigation.
 Navigation: j/k to move, Enter to open, h/Esc to go back, q to quit.
 1-9 to launch a chip directly. Subcommands provide non-interactive
 access to the same actions.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExplorerTUI()
 		},
@@ -36,14 +33,9 @@ access to the same actions.`,
 
 func newExplorerShellCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "shell <path>",
-		Aliases: []string{"launch"},
-		Short:   "Open shell in a directory (non-interactive)",
-		Annotations: map[string]string{
-			"capability": "agent",
-			"agent:when": "Open a new shell in a specific project directory",
-		},
-		Args: cobra.ExactArgs(1),
+		Use:   "shell <path>",
+		Short: "Open shell in a directory",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stampLaunchActivity(args[0])
 			return agent.LaunchShell(args[0])
@@ -52,6 +44,7 @@ func newExplorerShellCmd() *cobra.Command {
 }
 
 func runExplorerTUI() error {
+	metrics.RecordExplorerInvoked()
 	cwd, _ := os.Getwd()
 	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
 	for _, d := range diagnostics {

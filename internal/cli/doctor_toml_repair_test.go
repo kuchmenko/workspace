@@ -42,7 +42,7 @@ category = "personal"
 	}
 }
 
-func TestRepairDuplicatedBranchKeysMergesDuplicatedMetadata(t *testing.T) {
+func TestRepairDuplicatedBranchKeysDeclinesConflictingScalarMetadata(t *testing.T) {
 	input := `
 [projects.app]
 remote = "git@example.com:app.git"
@@ -60,20 +60,44 @@ category = "personal"
   last_active_at = "2026-05-26T07:16:25Z"
 `
 	out, changed := repairDuplicatedBranchKeys(input)
-	if !changed {
-		t.Fatal("expected repair to change input")
+	if changed {
+		t.Fatalf("conflicting scalar metadata must not be repaired:\n%s", out)
 	}
-	for _, needle := range []string{
-		`machines = ["archlinux", "linux"]`,
-		`last_active_machine = "archlinux"`,
-		`last_active_at = "2026-05-26T07:16:25Z"`,
-	} {
-		if !strings.Contains(out, needle) {
-			t.Fatalf("repaired output missing %q:\n%s", needle, out)
-		}
+	if out != input {
+		t.Fatal("declined repair changed input")
 	}
-	if strings.Count(out, "machines =") != 1 {
-		t.Fatalf("duplicate machines still present:\n%s", out)
+}
+
+func TestRepairWorkspaceTOMLLeavesConflictingScalarMetadata(t *testing.T) {
+	root := t.TempDir()
+	input := `
+[projects.app]
+remote = "git@example.com:app.git"
+path = "personal/app"
+status = "active"
+
+[[projects.app.branches]]
+name = "main"
+machines = ["linux"]
+last_active_machine = "linux"
+last_active_machine = "archlinux"
+`
+	path := filepath.Join(root, "workspace.toml")
+	if err := os.WriteFile(path, []byte(input), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repairWorkspaceTOML(root); err == nil || !strings.Contains(err.Error(), "no safe TOML repair") {
+		t.Fatalf("expected clear declined repair, got %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != input {
+		t.Fatal("declined repair changed workspace.toml")
+	}
+	if _, err := os.Stat(path + ".doctor-bak"); !os.IsNotExist(err) {
+		t.Fatalf("declined repair created backup: %v", err)
 	}
 }
 
@@ -99,9 +123,7 @@ category = "personal"
 [[projects.app.branches]]
   name = "master"
   machines = ["linux"]
-  last_active_machine = "linux"
   machines = ["archlinux"]
-  last_active_machine = "archlinux"
 `
 	path := filepath.Join(root, "workspace.toml")
 	if err := os.WriteFile(path, []byte(broken), 0o644); err != nil {

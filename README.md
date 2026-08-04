@@ -64,8 +64,7 @@ worktree.
   shell launcher; keys, search, and worktree creation.
 - [Architecture](docs/architecture.md) — internals: data model,
   on-disk layout, foreground sync contract, conflict invariants.
-- [Command reference](docs/reference.md) — every command, every
-  flag.
+- [Command reference](docs/reference.md) — commands and flags.
 
 ## What `ws` deliberately doesn't do
 

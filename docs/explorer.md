@@ -51,31 +51,31 @@ Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
 
 ### Tree
 
-Group / project rows expand and collapse with `tab`. Worktrees show
-the same ownership tags as `ws worktree list` (`main`, `mine`,
-`shared with <machines>`, `legacy-wt`).
+Group rows expand and collapse with `tab`. Press `enter` on a group or
+project row to open its sheet. Project sheets contain the project's
+worktrees and show their dirty and ahead state.
 
 ## Keys
 
 Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
-- `tab` — toggle expand/collapse for groups and projects
-- `h` / `←` — collapse one level. Smart: from a worktree row it
-  closes the parent project; from a project row under a group it
-  closes the group.
+- `tab` — toggle expand/collapse for groups
+- `h` / `←` — collapse the selected group, or close the parent group
+  from one of its project rows.
 - `1`-`9` — open a shell for the matching chip
 - `q` — quit
 
 Per-row actions:
 
-- `enter` — open the selected sheet action; shell and worktree rows open a shell in their directory.
+- `enter` — open the selected group or project sheet. In a project
+  sheet, a worktree row opens a shell in that worktree.
 - `l` / `→` — open a shell directly in the selected row's directory.
 - `ctrl+s` — open a shell anywhere from anywhere.
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
 - `e` — on a project row, edit the project's group / category.
-- `d` — on a non-main worktree row, prompt for delete (with
+- `d` — in a project sheet, on a non-main worktree row, prompt for delete (with
   registry release; releases this machine from
   `[[branches]].machines`).
 - `f` — on a project row, toggle favorite. Equivalent to

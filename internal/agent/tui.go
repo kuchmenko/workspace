@@ -2,10 +2,10 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -26,13 +26,12 @@ const (
 )
 
 type listItem struct {
-	kind       NodeKind
-	group      string
-	project    *Project
-	worktree   *Worktree
-	indent     int
-	path       string
-	parentProj *Project
+	kind          NodeKind
+	workspaceRoot string
+	group         string
+	project       *Project
+	indent        int
+	path          string
 }
 
 type LaunchRequest struct {
@@ -54,9 +53,6 @@ type Model struct {
 	wtCache *WorktreeCache
 
 	statusMsg string
-
-	pendingDelete bool
-	deleteItem    *listItem
 
 	popupProj *Project
 
@@ -100,7 +96,7 @@ func NewModel(workspaces []WorkspaceData) *Model {
 
 	for _, ws := range workspaces {
 		for _, g := range ws.Groups {
-			m.expanded[g] = true
+			m.expanded[groupKey(ws.Root, g)] = true
 		}
 	}
 	m.rebuildItems()
@@ -125,8 +121,7 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if msg.String() == "ctrl+s" {
 			item := m.currentItem()
 			if item != nil && item.path != "" {
-				m.Launch = &LaunchRequest{Cwd: item.path}
-				return m, tui.Quit
+				return m.launch(item.workspaceRoot, item.path)
 			}
 		}
 		if m.mode == viewFlash {
@@ -176,6 +171,9 @@ func (m *Model) currentItem() *listItem {
 }
 
 func (m *Model) workspaceRootFor(proj *Project) string {
+	if proj != nil && proj.WorkspaceRoot != "" {
+		return proj.WorkspaceRoot
+	}
 	for _, ws := range m.workspaces {
 		for _, p := range ws.Projects {
 			if p.Path == proj.Path {
@@ -186,15 +184,35 @@ func (m *Model) workspaceRootFor(proj *Project) string {
 	return ""
 }
 
+func (m *Model) launch(workspaceRoot, path string) (tui.Model, tui.Cmd) {
+	root, err := filepath.EvalSymlinks(workspaceRoot)
+	if err != nil {
+		m.statusMsg = "shell: " + err.Error()
+		return m, nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		m.statusMsg = "shell: " + err.Error()
+		return m, nil
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		m.statusMsg = fmt.Sprintf("shell: path is outside workspace %s", filepath.Base(workspaceRoot))
+		return m, nil
+	}
+	m.Launch = &LaunchRequest{Cwd: path}
+	return m, tui.Quit
+}
+
 func (m *Model) toggleExpand(key string) {
 	m.expanded[key] = !m.expanded[key]
 	m.rebuildItems()
 	m.ensureVisible()
 }
 
-func (m *Model) jumpToGroup(group string) {
+func (m *Model) jumpToGroup(workspaceRoot, group string) {
 	for i, it := range m.items {
-		if it.kind == KindGroup && it.group == group {
+		if it.kind == KindGroup && it.workspaceRoot == workspaceRoot && it.group == group {
 			m.cursor = i
 			break
 		}
@@ -202,9 +220,9 @@ func (m *Model) jumpToGroup(group string) {
 	m.ensureVisible()
 }
 
-func (m *Model) jumpToProject(projID string) {
+func (m *Model) jumpToProject(workspaceRoot, projID string) {
 	for i, it := range m.items {
-		if it.kind == KindProject && it.project != nil && it.project.ID == projID {
+		if it.kind == KindProject && it.workspaceRoot == workspaceRoot && it.project != nil && it.project.ID == projID {
 			m.cursor = i
 			break
 		}
@@ -268,57 +286,19 @@ func (m *Model) breadcrumb() string {
 			return item.project.Group + " ›"
 		}
 		return "ws"
-	case KindWorktree:
-		if item.parentProj != nil {
-			if item.parentProj.Group != "" {
-				return item.parentProj.Group + " › " + item.parentProj.Name
-			}
-			return item.parentProj.Name
-		}
-		return "ws"
 	}
 	return "ws"
 }
 
 func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
-	if m.pendingDelete {
-		m.pendingDelete = false
-		if msg.String() == "y" && m.deleteItem != nil {
-			it := m.deleteItem
-			m.deleteItem = nil
-
-			projID := ""
-			if it.parentProj != nil {
-				projID = it.parentProj.ID
-			}
-			wsRoot := m.workspaceRootFor(it.parentProj)
-			machine, err := explorerMachineName()
-			if err == nil {
-				err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: it.worktree.Branch, Machine: machine})
-			}
-			if err != nil {
-				m.statusMsg = err.Error()
-				return m, nil
-			}
-			m.wtCache.Invalidate(it.parentProj.Path)
-			m.rebuildItems()
-			m.ensureVisible()
-			m.statusMsg = "worktree deleted"
-			return m, nil
-		}
-		m.deleteItem = nil
-		m.statusMsg = ""
-		return m, nil
-	}
-
 	m.statusMsg = ""
 	item := m.currentItem()
 
 	if s := msg.String(); len(s) == 1 && s[0] >= '1' && s[0] <= '9' {
 		idx := int(s[0] - '1')
 		if idx < len(m.headerChips) {
-			m.Launch = &LaunchRequest{Cwd: m.headerChips[idx].Path}
-			return m, tui.Quit
+			chip := m.headerChips[idx]
+			return m.launch(chip.WorkspaceRoot, chip.Path)
 		}
 	}
 
@@ -342,14 +322,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		switch item.kind {
 		case KindGroup:
-			m.sheet = newGroupSheet(m, item.group)
+			m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
 			return m, nil
 		case KindProject:
 			m.sheet = newProjectSheet(m, item.project, nil)
 			return m, nil
-		case KindWorktree:
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tui.Quit
 		}
 
 	case "w":
@@ -381,8 +358,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	case "l", "right":
 		if item != nil && item.path != "" {
-			m.Launch = &LaunchRequest{Cwd: item.path}
-			return m, tui.Quit
+			return m.launch(item.workspaceRoot, item.path)
 		}
 
 	case "f":
@@ -391,18 +367,19 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.toggleFavoriteFor(item.project)
 		}
 		if item != nil && item.kind == KindGroup && item.group != "" {
-			m.toggleFavoriteGroup(item.group)
+			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 
 	case "h", "left":
 		if item != nil {
 			switch {
 			case item.kind == KindProject && item.project.Group != "":
-				m.expanded[item.project.Group] = false
+				key := groupKey(item.workspaceRoot, item.project.Group)
+				m.expanded[key] = false
 				m.rebuildItems()
-				m.jumpToGroup(item.project.Group)
-			case item.kind == KindGroup && m.expanded[item.group]:
-				m.expanded[item.group] = false
+				m.jumpToGroup(item.workspaceRoot, item.project.Group)
+			case item.kind == KindGroup && m.expanded[groupKey(item.workspaceRoot, item.group)]:
+				m.expanded[groupKey(item.workspaceRoot, item.group)] = false
 				m.rebuildItems()
 				m.ensureVisible()
 			}
@@ -411,26 +388,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "tab":
 
 		if item != nil && item.kind == KindGroup {
-			m.toggleExpand(item.group)
-		}
-
-	case "d":
-		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
-			wt := item.worktree
-			if git.IsDirty(wt.Path) {
-				m.statusMsg = "cannot delete: uncommitted changes"
-				break
-			}
-			ahead, _, hasUpstream := git.AheadBehind(wt.Path, wt.Branch)
-			if hasUpstream && ahead > 0 {
-				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
-				break
-			}
-
-			name := worktreeDisplayName(*wt)
-			m.statusMsg = fmt.Sprintf("delete %s? y to confirm", name)
-			m.pendingDelete = true
-			m.deleteItem = item
+			m.toggleExpand(groupKey(item.workspaceRoot, item.group))
 		}
 
 	case "s", "/":
@@ -450,7 +408,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 		for _, ws := range m.workspaces {
 			for _, g := range ws.Groups {
-				m.expanded[g] = true
+				m.expanded[groupKey(ws.Root, g)] = true
 			}
 			for i := range ws.Projects {
 				m.expanded["proj:"+ws.Projects[i].ID] = true

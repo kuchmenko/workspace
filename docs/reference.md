@@ -151,7 +151,7 @@ ws doctor --skip-remote       # skip network-touching checks
 
 ```sh
 ws worktree add <project> <branch>
-   --from <ref>               # base ref (default: project default_branch).
+   --from <ref>               # base ref (otherwise default_branch is required).
                               # Ignored when the branch already exists on
                               # origin or locally.
 ```
@@ -163,7 +163,8 @@ Three cases, picked automatically:
    `wt/<machine>/*` re-registration and retries after a previous
    failed `saveWorkspace`.
 2. Branch exists on origin (or locally as a ref) → attach.
-3. Otherwise → create from `--from` (or `proj.default_branch`).
+3. Otherwise → create from `--from` or the required `proj.default_branch`;
+   error when neither is set.
 
 Slug collisions in the directory name get a deterministic
 `-<sha8>` suffix from `SHA-1(branch)`.
@@ -213,6 +214,18 @@ ws alias install              # write a sourcing line into ~/.zshrc (idempotent)
 Generated aliases land at `$XDG_STATE_HOME/ws/aliases.zsh` (default
 `~/.local/state/ws/aliases.zsh`). Currently zsh-only.
 
+## Local Metrics
+
+`ws` keeps bounded usage counters in `$XDG_STATE_HOME/ws/metrics.json`
+(default `~/.local/state/ws/metrics.json`). This machine-local file is never
+written to `workspace.toml` or synchronized. Its fixed schema contains only
+command-family, terminal-mode, outcome, duration-bucket, and fixed workflow
+counters. It does not contain names, paths, URLs, branches, arguments,
+searches, diagnostics, credentials, machine identity, timestamps, history, or
+dynamic keys. Recording is best effort; a busy lock or storage error drops the
+increment rather than delaying or failing the command. Generated aliases do
+not record metrics when invoked.
+
 ## Workspace Registry
 
 ```sh
@@ -251,8 +264,7 @@ See [Explorer TUI](explorer.md) for keys and behavior.
 ## Docs / completion (developer-facing)
 
 ```sh
-ws docs --agent               # JSON dump of every command's annotations
-                              # capability metadata for AI agents
+ws docs --agent               # JSON contract for the curated agent command inventory
 ws completion <shell>         # cobra-generated shell completion
 ```
 

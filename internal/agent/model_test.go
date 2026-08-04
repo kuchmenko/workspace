@@ -20,7 +20,7 @@ func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
 				{Name: "beta-fresh", Group: "beta", LastActiveAt: now.Add(-10 * time.Minute)},
 			},
 		}},
-		expanded: map[string]bool{"beta": true},
+		expanded: map[string]bool{groupKey("/ws", "beta"): true},
 	}
 
 	m.rebuildItems()

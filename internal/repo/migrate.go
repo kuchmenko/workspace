@@ -29,7 +29,10 @@ type CheckResult struct {
 }
 
 func Check(wsRoot string, name string, proj config.Project) CheckResult {
-	mainPath := filepath.Join(wsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return CheckResult{Project: name, State: "invalid-path"}
+	}
 	barePath := layout.BarePath(mainPath)
 	res := CheckResult{Project: name, MainPath: mainPath, BarePath: barePath}
 
@@ -171,7 +174,10 @@ type MigrateResult struct {
 var ErrAlreadyMigrated = errors.New("project already migrated")
 
 func MigrateProject(wsRoot string, name string, proj *config.Project, opts MigrateOptions) (*MigrateResult, error) {
-	mainPath := filepath.Join(wsRoot, proj.Path)
+	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		return nil, fmt.Errorf("project %q: %w", name, err)
+	}
 	barePath := layout.BarePath(mainPath)
 
 	if _, err := os.Stat(barePath); err == nil {

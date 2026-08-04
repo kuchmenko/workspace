@@ -16,11 +16,56 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+func ProjectPath(workspaceRoot, projectPath string) (string, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return "", errors.New("project path must not be empty")
+	}
+	if filepath.IsAbs(projectPath) {
+		return "", fmt.Errorf("project path %q must be relative", projectPath)
+	}
+	clean := filepath.Clean(projectPath)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("project path %q must stay inside the workspace", projectPath)
+	}
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	target := filepath.Join(root, clean)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	ancestor := target
+	for {
+		if _, err := os.Lstat(ancestor); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("inspect project path %q: %w", projectPath, err)
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", fmt.Errorf("project path %q has no existing workspace ancestor", projectPath)
+		}
+		ancestor = parent
+	}
+	resolvedAncestor, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("resolve project path %q: %w", projectPath, err)
+	}
+	inside, err := filepath.Rel(resolvedRoot, resolvedAncestor)
+	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) || filepath.IsAbs(inside) {
+		return "", fmt.Errorf("project path %q escapes the workspace through a symlink", projectPath)
+	}
+	return target, nil
+}
 
 func BarePath(mainWorktree string) string {
 	return mainWorktree + ".bare"

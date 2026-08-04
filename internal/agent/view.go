@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -50,8 +51,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindProject:
 			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
-		case KindWorktree:
-			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
 		}
 
 		rows = append(rows, line)
@@ -62,27 +61,22 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 func (m *Model) itemGroupKey(item listItem) string {
 	switch item.kind {
 	case KindGroup:
-		return "g:" + item.group
+		return "g:" + groupKey(item.workspaceRoot, item.group)
 	case KindProject:
 		if item.project.Group != "" {
-			return "g:" + item.project.Group
+			return "g:" + groupKey(item.workspaceRoot, item.project.Group)
 		}
-		return "ungrouped"
-	case KindWorktree:
-		if item.parentProj != nil && item.parentProj.Group != "" {
-			return "g:" + item.parentProj.Group
-		}
-		return "ungrouped"
+		return "ungrouped:" + item.workspaceRoot
 	}
 	return ""
 }
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
-	if m.expanded[item.group] {
+	if m.expanded[groupKey(item.workspaceRoot, item.group)] {
 		arrow = "▾"
 	}
-	name := item.group
+	name := presentLabel(item.group)
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
@@ -101,7 +95,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	p := item.project
 	indent := strings.Repeat("    ", item.indent)
 
-	name := p.Name
+	name := presentLabel(p.Name)
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
@@ -133,61 +127,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		return itemStyle.Render(leftPart) + strings.Repeat(" ", padding) + badgeStyle.Render(badges)
 	}
 	return itemStyle.Width(w).Render(line)
-}
-
-func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("    ", item.indent)
-	name := item.group
-	if name == "" {
-		name = "worktree"
-	}
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
-	}
-
-	var status string
-	if item.worktree != nil {
-		if item.worktree.Dirty {
-			status += "*"
-		}
-		if item.worktree.Ahead > 0 {
-			status += fmt.Sprintf(" ↑%d", item.worktree.Ahead)
-		}
-		status = strings.TrimSpace(status)
-	}
-
-	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
-
-	maxName := w - tui.Width(prefix) - tui.Width(status) - 2
-	if maxName > 0 && !inFlash {
-		name = truncateStr(name, maxName)
-	}
-
-	left := prefix + name
-	if status != "" {
-		line := m.padRight(left, status+" ", w)
-		if dimAll || (inFlash && !isMatch) {
-			return dimStyle.Width(w).Render(line)
-		}
-		if selected {
-			return m.renderSelected(line, wtStyle, w)
-		}
-		leftRendered := wtStyle.Render(left)
-		padding := w - tui.Width(left) - tui.Width(status) - 1
-		if padding < 1 {
-			padding = 1
-		}
-		return leftRendered + strings.Repeat(" ", padding) + wtStatusStyle.Render(status)
-	}
-
-	label := left
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, wtStyle, w)
-	}
-	return wtStyle.Width(w).Render(label)
 }
 
 func truncateStr(s string, maxLen int) string {
@@ -253,7 +192,7 @@ func (m *Model) viewList() string {
 	rows = append(rows, m.renderListRows(listW, false)...)
 
 	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
+		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+presentLabel(m.statusMsg)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump · esc cancel"
@@ -304,7 +243,7 @@ func buildHeaderChips(workspaces []WorkspaceData) []Chip {
 			favs = append(favs, Chip{
 				Kind:          KindGroup,
 				Name:          g,
-				Path:          GroupPath(ws.Root, g),
+				Path:          filepath.Join(ws.Root, g),
 				Favorite:      true,
 				WorkspaceRoot: ws.Root,
 			})
@@ -374,9 +313,9 @@ func formatChip(num int, c Chip) string {
 	if c.Favorite {
 		star = "*"
 	}
-	body := c.Name
+	body := presentLabel(c.Name)
 	if c.Kind == KindGroup {
-		body = "@" + c.Name
+		body = "@" + body
 	}
 	age := humanizeAge(c.LastActiveAt)
 	if age == "" {
@@ -479,9 +418,7 @@ var (
 	itemStyle      = tui.Amber.Item
 	dimStyle       = tui.Amber.Dim
 
-	wtStyle       = tui.NewStyle().Foreground("108")
-	badgeStyle    = tui.NewStyle().Foreground("240")
-	wtStatusStyle = tui.NewStyle().Foreground("173")
+	badgeStyle = tui.NewStyle().Foreground("240")
 
 	statusMsgStyle    = tui.NewStyle().Foreground("215").Bold(true)
 	favoriteStarStyle = tui.NewStyle().Foreground("215")
@@ -615,8 +552,6 @@ func (m *Model) itemSearchName(item listItem) string {
 		return item.group
 	case KindProject:
 		return item.project.Name
-	case KindWorktree:
-		return item.group
 	}
 	return ""
 }

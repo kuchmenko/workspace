@@ -3,64 +3,75 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 const (
-	KeyCapability  = "capability"
-	KeyAgentWhen   = "agent:when"
-	KeyAgentSafety = "agent:safety"
+	KeyAgentCapability  = "agent:capability"
+	KeyAgentInteraction = "agent:interaction"
+	KeyAgentApproval    = "agent:approval"
+	KeyAgentMutation    = "agent:mutation"
+	KeyAgentNetwork     = "agent:network"
+	KeyAgentStdout      = "agent:stdout"
+	KeyAgentExitCodes   = "agent:exit-codes"
+
+	AgentInteractionNone        = "none"
+	AgentInteractionHeadless    = "headless"
+	AgentInteractionConditional = "conditional"
+	AgentApprovalNone           = "none"
+	AgentApprovalRequired       = "required"
+	AgentApprovalConditional    = "conditional"
+	AgentEffectNone             = "none"
+	AgentEffectRead             = "read"
+	AgentEffectWrite            = "write"
+	AgentEffectConditional      = "conditional"
 )
 
-type AgentCapabilityMap struct {
-	Tool         string                     `json:"tool"`
-	Version      string                     `json:"version,omitempty"`
-	Description  string                     `json:"description"`
-	Capabilities map[string]CapabilityGroup `json:"capabilities"`
-	Constraints  []string                   `json:"constraints"`
-}
-
-type CapabilityGroup struct {
+type AgentContract struct {
+	Tool        string         `json:"tool"`
 	Description string         `json:"description"`
 	Commands    []AgentCommand `json:"commands"`
 }
 
 type AgentCommand struct {
-	Command string   `json:"command"`
-	When    string   `json:"when"`
-	Flags   []string `json:"flags,omitempty"`
-	Safety  string   `json:"safety,omitempty"`
+	Capability     string   `json:"capability"`
+	Canonical      string   `json:"canonical"`
+	Usage          string   `json:"usage"`
+	Aliases        []string `json:"aliases,omitempty"`
+	Deprecated     string   `json:"deprecated,omitempty"`
+	LocalFlags     []string `json:"local_flags,omitempty"`
+	InheritedFlags []string `json:"inherited_flags,omitempty"`
+	Interaction    string   `json:"interaction"`
+	Approval       string   `json:"approval"`
+	Mutation       string   `json:"mutation"`
+	Network        string   `json:"network"`
+	Stdout         string   `json:"stdout"`
+	ExitCodes      []int    `json:"exit_codes"`
 }
 
-var capabilityMeta = map[string]struct {
-	Description string
-	Order       int
-}{
-	"project":       {"Register, clone, and migrate projects", 1},
-	"sync":          {"Synchronize workspace state and resolve conflicts", 2},
-	"worktree":      {"Create, list, remove, and push per-feature worktrees", 3},
-	"observability": {"Project status and health checks", 4},
-	"organization":  {"Workspace discovery, shell aliases, and project filtering", 5},
-	"auth":          {"GitHub authentication for repo discovery", 6},
-	"agent":         {"Open shells in project directories", 7},
-}
-
-var agentDocConstraints = []string{
-	"Never run git rebase, reset --hard, or push --force inside a project while ws sync is running.",
-	"Project branches are never pushed to origin by ws sync; configured mirror pushes are selected sync targets.",
-	"ws sync never runs merge, project rebase, reset, force, branch deletion, or origin branch push inside a project repo.",
-	"workspace.toml is the single source of truth for project registration — edit it via ws commands, not by hand.",
-	"Bare repo directories (*.bare/) must not be modified directly.",
+func agentAnnotations(capability, interaction, approval, mutation, network, stdout, exitCodes string) map[string]string {
+	return map[string]string{
+		KeyAgentCapability:  capability,
+		KeyAgentInteraction: interaction,
+		KeyAgentApproval:    approval,
+		KeyAgentMutation:    mutation,
+		KeyAgentNetwork:     network,
+		KeyAgentStdout:      stdout,
+		KeyAgentExitCodes:   exitCodes,
+	}
 }
 
 func newDocsCmd() *cobra.Command {
 	var agent bool
-
 	cmd := &cobra.Command{
 		Use:   "docs",
 		Short: "Generate documentation from the command tree",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if agent {
 				return runDocsAgent(cmd)
@@ -68,58 +79,44 @@ func newDocsCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-
-	cmd.Flags().BoolVar(&agent, "agent", false, "emit JSON capability map for AI agents")
+	cmd.Flags().BoolVar(&agent, "agent", false, "emit JSON contract for approved agent commands")
 	return cmd
 }
 
 func runDocsAgent(cmd *cobra.Command) error {
-	m := GenerateAgentCapabilityMap(cmd.Root())
-
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	enc.SetEscapeHTML(false)
-	return enc.Encode(m)
+	return enc.Encode(GenerateAgentContract(cmd.Root()))
 }
 
-func GenerateAgentCapabilityMap(root *cobra.Command) *AgentCapabilityMap {
-	groups := map[string]*CapabilityGroup{}
-
+func GenerateAgentContract(root *cobra.Command) *AgentContract {
+	contract := &AgentContract{Tool: root.Name(), Description: root.Short}
 	walkCommands(root, func(cmd *cobra.Command) {
-		if cmd.Hidden {
+		capability := cmd.Annotations[KeyAgentCapability]
+		if cmd.Hidden || capability == "" {
 			return
 		}
-		cap := cmd.Annotations[KeyCapability]
-		when := cmd.Annotations[KeyAgentWhen]
-		if cap == "" || when == "" {
-			return
-		}
-
-		grp, ok := groups[cap]
-		if !ok {
-			desc := cap
-			if meta, known := capabilityMeta[cap]; known {
-				desc = meta.Description
-			}
-			grp = &CapabilityGroup{Description: desc}
-			groups[cap] = grp
-		}
-
-		ac := AgentCommand{
-			Command: fullCommandUse(cmd),
-			When:    when,
-			Flags:   collectFlags(cmd),
-			Safety:  cmd.Annotations[KeyAgentSafety],
-		}
-		grp.Commands = append(grp.Commands, ac)
+		contract.Commands = append(contract.Commands, AgentCommand{
+			Capability:     capability,
+			Canonical:      canonicalCommand(cmd),
+			Usage:          fullCommandUse(cmd),
+			Aliases:        commandAliases(cmd),
+			Deprecated:     cmd.Deprecated,
+			LocalFlags:     collectFlags(cmd.LocalNonPersistentFlags()),
+			InheritedFlags: collectFlags(cmd.InheritedFlags()),
+			Interaction:    cmd.Annotations[KeyAgentInteraction],
+			Approval:       cmd.Annotations[KeyAgentApproval],
+			Mutation:       cmd.Annotations[KeyAgentMutation],
+			Network:        cmd.Annotations[KeyAgentNetwork],
+			Stdout:         cmd.Annotations[KeyAgentStdout],
+			ExitCodes:      parseExitCodes(cmd.Annotations[KeyAgentExitCodes]),
+		})
 	})
-
-	return &AgentCapabilityMap{
-		Tool:         "ws",
-		Description:  root.Short,
-		Capabilities: toSortedMap(groups),
-		Constraints:  agentDocConstraints,
-	}
+	sort.Slice(contract.Commands, func(i, j int) bool {
+		return contract.Commands[i].Canonical < contract.Commands[j].Canonical
+	})
+	return contract
 }
 
 func walkCommands(cmd *cobra.Command, fn func(*cobra.Command)) {
@@ -129,57 +126,70 @@ func walkCommands(cmd *cobra.Command, fn func(*cobra.Command)) {
 	}
 }
 
-func fullCommandUse(cmd *cobra.Command) string {
-	parts := []string{}
-	for c := cmd; c != nil; c = c.Parent() {
-		parts = append([]string{c.Use}, parts...)
+func canonicalCommand(cmd *cobra.Command) string {
+	var names []string
+	for current := cmd; current != nil; current = current.Parent() {
+		names = append(names, current.Name())
 	}
+	for left, right := 0, len(names)-1; left < right; left, right = left+1, right-1 {
+		names[left], names[right] = names[right], names[left]
+	}
+	return strings.Join(names, " ")
+}
 
-	result := ""
-	for i, p := range parts {
-		if i == len(parts)-1 {
-			if result != "" {
-				result += " "
-			}
-			result += p
-		} else {
-			name := commandName(p)
-			if result != "" {
-				result += " "
-			}
-			result += name
+func fullCommandUse(cmd *cobra.Command) string {
+	return canonicalCommand(cmd.Parent()) + " " + cmd.Use
+}
+
+func collectFlags(flags *pflag.FlagSet) []string {
+	var result []string
+	flags.VisitAll(func(flag *pflag.Flag) {
+		if !flag.Hidden {
+			result = append(result, "--"+flag.Name)
 		}
-	}
+	})
 	return result
 }
 
-func commandName(use string) string {
-	for i, c := range use {
-		if c == ' ' {
-			return use[:i]
-		}
-	}
-	return use
-}
-
-func collectFlags(cmd *cobra.Command) []string {
-	var out []string
-	cmd.NonInheritedFlags().VisitAll(func(f *pflag.Flag) {
-		if f.Hidden {
-			return
-		}
-		out = append(out, "--"+f.Name)
-	})
-	if len(out) == 0 {
+func sortedCopy(values []string) []string {
+	if len(values) == 0 {
 		return nil
 	}
-	return out
+	result := append([]string(nil), values...)
+	sort.Strings(result)
+	return result
 }
 
-func toSortedMap(groups map[string]*CapabilityGroup) map[string]CapabilityGroup {
-	out := make(map[string]CapabilityGroup, len(groups))
-	for k, v := range groups {
-		out[k] = *v
+func commandAliases(cmd *cobra.Command) []string {
+	var path []*cobra.Command
+	for current := cmd; current != nil; current = current.Parent() {
+		path = append(path, current)
 	}
-	return out
+	for left, right := 0, len(path)-1; left < right; left, right = left+1, right-1 {
+		path[left], path[right] = path[right], path[left]
+	}
+	var result []string
+	for index, command := range path {
+		for _, alias := range command.Aliases {
+			names := make([]string, len(path))
+			for i, part := range path {
+				names[i] = part.Name()
+			}
+			names[index] = alias
+			result = append(result, strings.Join(names, " "))
+		}
+	}
+	return sortedCopy(result)
+}
+
+func parseExitCodes(value string) []int {
+	parts := strings.Split(value, ",")
+	result := make([]int, 0, len(parts))
+	for _, part := range parts {
+		code, err := strconv.Atoi(part)
+		if err == nil {
+			result = append(result, code)
+		}
+	}
+	return result
 }

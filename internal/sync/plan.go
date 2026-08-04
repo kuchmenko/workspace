@@ -128,7 +128,16 @@ func (p *Plan) addWorkspaceTarget() {
 }
 
 func (p *Plan) addProject(name string, project config.Project) {
-	mainPath := filepath.Join(p.Root, project.Path)
+	mainPath, err := layout.ProjectPath(p.Root, project.Path)
+	if err != nil {
+		p.Projects = append(p.Projects, ProjectPlan{
+			Name:       name,
+			State:      ProjectBlocked,
+			Diagnostic: err.Error(),
+			Snapshot:   snapshotProject(project),
+		})
+		return
+	}
 	projectPlan := ProjectPlan{
 		Name:       name,
 		MainPath:   mainPath,

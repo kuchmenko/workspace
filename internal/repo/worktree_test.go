@@ -1,7 +1,9 @@
 package repo
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,12 +45,12 @@ func addOptions(root, branch string) WorktreeAddOptions {
 
 func TestValidateWorktreeBranch(t *testing.T) {
 	for _, name := range []string{"feat/auth-refactor", "main", "fix/prod-1234", "chore/cleanup", "a/b/c", "wt/linux/legacy-foo"} {
-		if err := ValidateWorktreeBranch(name); err != nil {
+		if err := validateWorktreeBranch(name); err != nil {
 			t.Errorf("ValidateWorktreeBranch(%q) unexpectedly rejected: %v", name, err)
 		}
 	}
 	for _, name := range []string{"feat/with spaces", "feat/double..dots", "feat~tilde", "-leadingdash", "trailing/.lock"} {
-		if err := ValidateWorktreeBranch(name); err == nil {
+		if err := validateWorktreeBranch(name); err == nil {
 			t.Errorf("ValidateWorktreeBranch(%q): expected error, got nil", name)
 		}
 	}
@@ -137,7 +139,7 @@ func TestRemoveWorktreeRejectsDirty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(result.Path, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/dirty", Machine: "linux"})
+	_, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/dirty", Machine: "linux"})
 	if err == nil || !strings.Contains(err.Error(), "is dirty") {
 		t.Fatalf("error = %v", err)
 	}
@@ -158,7 +160,7 @@ func TestRemoveWorktreeRejectsAhead(t *testing.T) {
 	}
 	testutil.RunGit(t, result.Path, "add", "ahead.txt")
 	testutil.RunGit(t, result.Path, "commit", "-m", "ahead")
-	err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/ahead", Machine: "linux"})
+	_, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/ahead", Machine: "linux"})
 	if err == nil || !strings.Contains(err.Error(), "unpushed commits") {
 		t.Fatalf("error = %v", err)
 	}
@@ -173,9 +175,12 @@ func TestRemoveWorktreeForceReleasesRegistry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(result.Path, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/force", Machine: "linux", Force: true})
+	removeResult, err := RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/force", Machine: "linux", Force: true})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !removeResult.Removed || !removeResult.MetadataReleased {
+		t.Fatalf("result = %#v", removeResult)
 	}
 	if _, err := os.Stat(result.Path); !os.IsNotExist(err) {
 		t.Fatalf("worktree remains: %v", err)
@@ -184,5 +189,63 @@ func TestRemoveWorktreeForceReleasesRegistry(t *testing.T) {
 	project := workspace.Projects["app"]
 	if project.LookupBranch("feat/force") != nil {
 		t.Fatal("branch metadata was not released")
+	}
+}
+
+func TestRemoveWorktreeRetryReleasesMetadataAfterSaveFailure(t *testing.T) {
+	root, _, _ := setupWorktreeProject(t, "main")
+	added, err := AddWorktree(addOptions(root, "feat/retry"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(root, "workspace.toml")
+	tomlBackup := tomlPath + ".backup"
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	wrapper := filepath.Join(binDir, "git")
+	script := fmt.Sprintf("#!/bin/sh\n%s \"$@\"\nstatus=$?\ncase \" $* \" in *\" worktree remove \"*) if [ $status -eq 0 ]; then mv %s %s; mkdir %s; fi;; esac\nexit $status\n", realGit, tomlPath, tomlBackup, tomlPath)
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	result, err := RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/retry", Machine: "linux"})
+	if err == nil || !strings.Contains(err.Error(), "worktree removed but workspace.toml ownership release failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if !result.Removed || result.MetadataReleased {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := os.Stat(added.Path); !os.IsNotExist(err) {
+		t.Fatalf("worktree remains: %v", err)
+	}
+	if err := os.Remove(tomlPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tomlBackup, tomlPath); err != nil {
+		t.Fatal(err)
+	}
+	result, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/retry", Machine: "linux"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Removed || !result.MetadataReleased {
+		t.Fatalf("retry result = %#v", result)
+	}
+	workspace, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := workspace.Projects["app"]
+	if project.LookupBranch("feat/retry") != nil {
+		t.Fatal("stale ownership remains")
+	}
+}
+
+func TestWorktreeForBranchReportsEnumerationFailure(t *testing.T) {
+	if _, err := worktreeForBranch(t.TempDir(), "feat/test"); err == nil {
+		t.Fatal("expected worktree enumeration error")
 	}
 }

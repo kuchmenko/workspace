@@ -1,6 +1,8 @@
 package add
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -44,6 +46,7 @@ func keyEsc() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyEsc} }
 func keyDown() tui.KeyMsg      { return tui.KeyMsg{Type: tui.KeyDown} }
 func keyTab() tui.KeyMsg       { return tui.KeyMsg{Type: tui.KeyTab} }
 func keyBackspace() tui.KeyMsg { return tui.KeyMsg{Type: tui.KeyBackspace} }
+func keyCtrlC() tui.KeyMsg     { return tui.KeyMsg{Type: tui.KeyCtrlC} }
 
 func newTestModel(t *testing.T, sources []Source) AddModel {
 	t.Helper()
@@ -445,6 +448,66 @@ func TestAddModel_Cloning_CloneDoneError(t *testing.T) {
 	m = mm.(AddModel)
 	if len(m.errors) != 1 {
 		t.Errorf("errors: %d", len(m.errors))
+	}
+}
+
+func TestAddModel_Cloning_CtrlCWaitsForCurrentClone(t *testing.T) {
+	m := newTestModel(t, nil)
+	m.queue = []editFields{{Name: "a"}, {Name: "b"}}
+	m.state = addStateCloning
+	m.standalone = true
+
+	mm, cmd := m.Update(keyCtrlC())
+	m = mm.(AddModel)
+	if m.state != addStateAborting {
+		t.Fatalf("state after ctrl+c = %d, want addStateAborting", m.state)
+	}
+	if cmd != nil {
+		t.Fatal("ctrl+c quit before the clone returned")
+	}
+	if !errors.Is(m.ctx.Err(), context.Canceled) {
+		t.Fatalf("operation context error = %v, want context canceled", m.ctx.Err())
+	}
+
+	mm, cmd = m.Update(cloneDoneMsg{idx: 0, err: context.Canceled})
+	m = mm.(AddModel)
+	if m.state != addStateDone {
+		t.Fatalf("state after clone completion = %d, want addStateDone", m.state)
+	}
+	if m.currentIdx != 1 {
+		t.Fatalf("currentIdx = %d, want 1", m.currentIdx)
+	}
+	if cmd == nil {
+		t.Fatal("expected done result and quit after clone completion")
+	}
+}
+
+func TestAddModel_Cloning_ExternalCancellationWaitsForCurrentClone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m := newTestModel(t, nil)
+	m.externalContext = ctx
+	m.queue = []editFields{{Name: "a"}, {Name: "b"}}
+	m.state = addStateCloning
+	m.standalone = true
+	cancel()
+
+	msg := m.waitForCancellation()()
+	mm, cmd := m.Update(msg)
+	m = mm.(AddModel)
+	if m.state != addStateAborting {
+		t.Fatalf("state after external cancellation = %d, want addStateAborting", m.state)
+	}
+	if cmd != nil {
+		t.Fatal("external cancellation quit before the clone returned")
+	}
+
+	mm, cmd = m.Update(cloneDoneMsg{idx: 0, err: context.Canceled})
+	m = mm.(AddModel)
+	if m.state != addStateDone {
+		t.Fatalf("state after clone completion = %d, want addStateDone", m.state)
+	}
+	if m.currentIdx != 1 || cmd == nil {
+		t.Fatalf("clone completion scheduled unexpected work: currentIdx=%d cmdNil=%v", m.currentIdx, cmd == nil)
 	}
 }
 

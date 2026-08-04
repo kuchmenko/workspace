@@ -6,6 +6,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/kuchmenko/workspace/internal/alias"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -14,11 +15,8 @@ func newAliasCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "alias",
 		Short: "Manage shell aliases for projects and groups",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Manage shell aliases (cd shortcuts) for projects and groups via TUI or subcommands",
-		},
-		RunE: runAliasTUI,
+		Args:  cobra.NoArgs,
+		RunE:  runAliasTUI,
 	}
 	cmd.AddCommand(
 		newAliasListCmd(),
@@ -47,18 +45,17 @@ func runAliasTUI(cmd *cobra.Command, args []string) error {
 	if err := saveWorkspace(); err != nil {
 		return err
 	}
+	metrics.RecordAliasManaged()
 	fmt.Printf("Saved %d aliases.\n", len(ws.Aliases))
 	return nil
 }
 
 func newAliasListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List configured aliases",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "List all configured shell aliases with their targets and resolved paths",
-		},
+		Use:         "list",
+		Short:       "List configured aliases",
+		Annotations: agentAnnotations("alias-list", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "table", "0,1"),
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Aliases) == 0 {
 				fmt.Println("No aliases defined. Run `ws alias` to create some.")
@@ -84,15 +81,15 @@ func newAliasListCmd() *cobra.Command {
 func newAliasAddCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
-		Use:   "add <alias> <target>",
-		Short: "Add an alias for a project or group",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Create a shell alias that cd's into a project or group directory",
-		},
-		Args: cobra.ExactArgs(2),
+		Use:         "add <alias> <target>",
+		Short:       "Add an alias for a project or group",
+		Annotations: agentAnnotations("alias-add", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, target := args[0], args[1]
+			if err := alias.ValidateName(name); err != nil {
+				return err
+			}
 			if target != alias.RootTarget {
 				if _, ok := ws.Projects[target]; !ok {
 					if _, ok := ws.Groups[target]; !ok {
@@ -103,16 +100,29 @@ func newAliasAddCmd() *cobra.Command {
 			if existing, ok := ws.Aliases[name]; ok && !force {
 				return fmt.Errorf("alias %q already exists (→ %s); use --force to overwrite", name, existing)
 			}
+			for existingName, existingTarget := range ws.Aliases {
+				if existingName != name && existingTarget == target && !force {
+					return fmt.Errorf("target %q already has alias %q; use --force to replace it", target, existingName)
+				}
+			}
 			if path, conflict := alias.ShellConflict(name); conflict && !force {
 				return fmt.Errorf("alias %q would shadow existing command at %s; use --force to override", name, path)
 			}
 			if ws.Aliases == nil {
 				ws.Aliases = make(map[string]string)
 			}
+			if force {
+				for existingName, existingTarget := range ws.Aliases {
+					if existingName != name && existingTarget == target {
+						delete(ws.Aliases, existingName)
+					}
+				}
+			}
 			ws.Aliases[name] = target
 			if err := saveWorkspace(); err != nil {
 				return err
 			}
+			metrics.RecordAliasManaged()
 			fmt.Printf("Added alias %s → %s\n", name, target)
 			return nil
 		},
@@ -123,13 +133,10 @@ func newAliasAddCmd() *cobra.Command {
 
 func newAliasRmCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "rm <alias>",
-		Short: "Remove an alias",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Remove a previously defined shell alias",
-		},
-		Args: cobra.ExactArgs(1),
+		Use:         "rm <alias>",
+		Short:       "Remove an alias",
+		Annotations: agentAnnotations("alias-remove", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if _, ok := ws.Aliases[name]; !ok {
@@ -139,6 +146,7 @@ func newAliasRmCmd() *cobra.Command {
 			if err := saveWorkspace(); err != nil {
 				return err
 			}
+			metrics.RecordAliasManaged()
 			fmt.Printf("Removed alias %s\n", name)
 			return nil
 		},
@@ -149,11 +157,7 @@ func newAliasInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init [shell]",
 		Short: "Print shell snippet to eval (default: zsh)",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Output shell init snippet for sourcing aliases (eval in .zshrc)",
-		},
-		Args: cobra.MaximumNArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shell := "zsh"
 			if len(args) == 1 {
@@ -164,6 +168,7 @@ func newAliasInitCmd() *cobra.Command {
 			}
 			resolved := alias.ResolveAll(ws, wsRoot)
 			fmt.Print(alias.RenderZsh(resolved))
+			metrics.RecordAliasStateGenerated()
 			return nil
 		},
 	}
@@ -171,16 +176,15 @@ func newAliasInitCmd() *cobra.Command {
 
 func newAliasInstallCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "install",
-		Short: "Add a sourcing line to ~/.zshrc (idempotent)",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Install alias auto-loading into ~/.zshrc (idempotent, safe to re-run)",
-		},
+		Use:         "install",
+		Short:       "Add a sourcing line to ~/.zshrc (idempotent)",
+		Annotations: agentAnnotations("alias-install", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := alias.WriteStateFile(ws, wsRoot); err != nil {
 				return err
 			}
+			metrics.RecordAliasStateGenerated()
 			added, rc, err := alias.InstallZshrc()
 			if err != nil {
 				return err

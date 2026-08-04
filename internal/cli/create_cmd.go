@@ -53,11 +53,7 @@ required flags on a non-TTY):
   ws create --owner my-org --name bar --public --description "..."
 
 Requires gh authentication: run 'gh auth login' first.`,
-		Annotations: map[string]string{
-			"capability":   "project",
-			"agent:when":   "Create a new GitHub repository, register it in workspace.toml, and clone it locally as bare+worktree",
-			"agent:safety": "Performs a write operation against GitHub (creates a repository) and writes to workspace.toml. Requires gh auth login. Holds a `create` sidecar while running.",
-		},
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if tui && noTUI {
 				return errors.New("--tui and --no-tui are mutually exclusive")

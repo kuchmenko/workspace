@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 func ShellConflict(name string) (string, bool) {
@@ -21,6 +22,29 @@ func ShellConflict(name string) (string, bool) {
 		return "", false
 	}
 	return path, true
+}
+
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("alias name must not be empty")
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if i == 0 {
+			if !isASCIILetter(c) && c != '_' {
+				return fmt.Errorf("alias name %q must start with an ASCII letter or underscore", name)
+			}
+			continue
+		}
+		if !isASCIILetter(c) && (c < '0' || c > '9') && c != '_' && c != '-' {
+			return fmt.Errorf("alias name %q may contain only ASCII letters, digits, underscores, and hyphens", name)
+		}
+	}
+	return nil
+}
+
+func isASCIILetter(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 func Generate(name string, taken map[string]struct{}) string {
@@ -231,29 +255,39 @@ func resolveTarget(ws *config.Workspace, root, name, target string) (Resolved, e
 		}, nil
 	}
 	if proj, ok := ws.Projects[target]; ok {
+		path, err := layout.ProjectPath(root, proj.Path)
+		if err != nil {
+			return Resolved{}, err
+		}
 		return Resolved{
 			Name:   name,
 			Target: target,
 			Kind:   TargetProject,
-			Path:   filepath.Join(root, proj.Path),
+			Path:   path,
 		}, nil
 	}
 	if _, ok := ws.Groups[target]; ok {
+		path, err := layout.ProjectPath(root, target)
+		if err != nil {
+			return Resolved{}, err
+		}
 		return Resolved{
 			Name:   name,
 			Target: target,
 			Kind:   TargetGroup,
-			Path:   filepath.Join(root, target),
+			Path:   path,
 		}, nil
 	}
 	return Resolved{}, fmt.Errorf("alias %q points to unknown target %q", name, target)
 }
 
 func RenderZsh(resolved []Resolved) string {
+	resolved = append([]Resolved(nil), resolved...)
+	sort.Slice(resolved, func(i, j int) bool { return resolved[i].Name < resolved[j].Name })
 	var b strings.Builder
 	b.WriteString("# ws aliases — generated, do not edit\n")
 	for _, r := range resolved {
-		if r.Kind == TargetUnknown || r.Path == "" {
+		if ValidateName(r.Name) != nil || r.Kind == TargetUnknown || r.Path == "" {
 			continue
 		}
 		fmt.Fprintf(&b, "alias %s=%s\n", r.Name, zshQuote("cd "+r.Path))

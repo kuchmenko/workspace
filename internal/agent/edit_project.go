@@ -155,7 +155,7 @@ func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 		proj.Name, displayGroup(newGroup), newCat)
 	m.rebuildItems()
 
-	m.jumpToProject(proj.ID)
+	m.jumpToProject(m.workspaceRootFor(proj), proj.ID)
 	m.ensureVisible()
 	return m, nil
 }

@@ -28,8 +28,7 @@ func checkStaleSidecars(wsRoot string) Finding {
 	return Finding{
 		Scope: "system", Check: "sidecar", Severity: Warn,
 		Message: fmt.Sprintf("stale sidecar(s): %v", sidecarKindNames(stale)),
-		FixHint: "remove stale sidecar file(s)",
-		Fix:     func() error { return deleteSidecars(wsRoot, stale) },
+		FixHint: "confirm no matching command is running, then remove the stale sidecar manually",
 	}
 }
 
@@ -45,21 +44,12 @@ func findStaleSidecars(wsRoot string) []sidecar.Kind {
 	return stale
 }
 
-func sidecarKindNames(kinds []sidecar.Kind) []string {
-	out := make([]string, 0, len(kinds))
-	for _, kind := range kinds {
-		out = append(out, string(kind))
+func sidecarKindNames(sidecars []sidecar.Kind) []string {
+	out := make([]string, 0, len(sidecars))
+	for _, sc := range sidecars {
+		out = append(out, string(sc))
 	}
 	return out
-}
-
-func deleteSidecars(wsRoot string, kinds []sidecar.Kind) error {
-	for _, kind := range kinds {
-		if err := sidecar.Delete(wsRoot, kind); err != nil {
-			return fmt.Errorf("delete %s sidecar: %w", kind, err)
-		}
-	}
-	return nil
 }
 
 func checkConflicts(wsRoot string) Finding {

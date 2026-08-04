@@ -9,6 +9,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -56,28 +57,40 @@ func NewWorktreeCache() *WorktreeCache {
 	return &WorktreeCache{data: make(map[string][]Worktree)}
 }
 
-func (c *WorktreeCache) Get(mainPath string) []Worktree {
+func (c *WorktreeCache) Get(mainPath string) ([]Worktree, error) {
 	if wts, ok := c.data[mainPath]; ok {
-		return wts
+		return wts, nil
 	}
-	wts := LoadWorktrees(mainPath)
+	wts, err := LoadWorktrees(mainPath)
+	if err != nil {
+		return nil, err
+	}
 	c.data[mainPath] = wts
-	return wts
+	return wts, nil
 }
 
 func (c *WorktreeCache) Invalidate(mainPath string) {
 	delete(c.data, mainPath)
 }
 
-func LoadWorktrees(mainPath string) []Worktree {
+func LoadWorktrees(mainPath string) ([]Worktree, error) {
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if _, err := os.Stat(mainPath); err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}, nil
 	}
 
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
+		return nil, err
 	}
 
 	var result []Worktree
@@ -95,7 +108,7 @@ func LoadWorktrees(mainPath string) []Worktree {
 		w.Ahead = ahead
 		result = append(result, w)
 	}
-	return result
+	return result, nil
 }
 
 func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
@@ -161,6 +174,7 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	m.rebuildItems()
 	m.ensureVisible()
 	m.statusMsg = "worktree created"
+	metrics.RecordExplorerWorktreeCreated()
 	return m, nil
 }
 

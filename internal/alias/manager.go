@@ -51,6 +51,7 @@ type ManagerModel struct {
 	editing       bool
 	editInput     tui.TextInput
 	editTarget    int
+	editError     string
 	result        ManagerResult
 	stepChangedAt time.Time
 }
@@ -76,8 +77,16 @@ func NewManagerModel(ws *config.Workspace, root string) ManagerModel {
 
 func buildItems(ws *config.Workspace) []item {
 	aliasFor := make(map[string]string, len(ws.Aliases))
-	for n, t := range ws.Aliases {
-		aliasFor[t] = n
+	names := make([]string, 0, len(ws.Aliases))
+	for name := range ws.Aliases {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		target := ws.Aliases[name]
+		if _, exists := aliasFor[target]; !exists {
+			aliasFor[target] = name
+		}
 	}
 
 	var items []item
@@ -498,19 +507,28 @@ func (m ManagerModel) updateEditing(msg tui.Msg) (tui.Model, tui.Cmd) {
 		switch key.String() {
 		case "enter":
 			name := strings.TrimSpace(m.editInput.Value())
-			if name != "" {
-				m.items[m.editTarget].alias = name
-				m.items[m.editTarget].checked = true
+			if err := ValidateName(name); err != nil {
+				m.editError = err.Error()
+				return m, nil
 			}
+			if _, exists := m.takenNames(m.editTarget)[name]; exists {
+				m.editError = fmt.Sprintf("alias %q is already assigned", name)
+				return m, nil
+			}
+			m.items[m.editTarget].alias = name
+			m.items[m.editTarget].checked = true
+			m.editError = ""
 			m.editing = false
 			return m, nil
 		case "esc":
+			m.editError = ""
 			m.editing = false
 			return m, nil
 		}
 	}
 	var cmd tui.Cmd
 	m.editInput, cmd = m.editInput.Update(msg)
+	m.editError = ""
 	return m, cmd
 }
 
@@ -607,6 +625,9 @@ func (m ManagerModel) viewManage() string {
 		if below > 0 {
 			b.WriteString(dimStyle.Render(fmt.Sprintf("  ↓ %d more\n", below)))
 		}
+	}
+	if m.editError != "" {
+		b.WriteString("\n  " + errStyle.Render(m.editError))
 	}
 
 	b.WriteString("\n")

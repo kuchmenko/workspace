@@ -49,6 +49,10 @@ default. Rules:
 
 Press `e` on a row to override with your own name.
 
+Alias names must start with an ASCII letter or underscore. The remaining
+characters may be ASCII letters, digits, underscores, or hyphens. Each target
+can have one alias; `ws alias add --force` replaces its existing alias.
+
 ## Headless API
 
 ```sh

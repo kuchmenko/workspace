@@ -33,7 +33,7 @@ func TestCheckStaleSidecars_None(t *testing.T) {
 	}
 }
 
-func TestCheckStaleSidecars_DeadPidFixed(t *testing.T) {
+func TestCheckStaleSidecars_DeadPidRequiresManualRemoval(t *testing.T) {
 	isolateState(t)
 	wsRoot := t.TempDir()
 
@@ -52,17 +52,15 @@ func TestCheckStaleSidecars_DeadPidFixed(t *testing.T) {
 	if f.Severity != Warn {
 		t.Fatalf("Severity=%s want Warn for stale sidecar", f.Severity)
 	}
-	if f.Fix == nil {
-		t.Fatal("stale sidecar finding should carry an auto-fix")
+	if f.Fix != nil {
+		t.Fatal("stale sidecar finding must not carry a racy auto-fix")
 	}
-	if err := f.Fix(); err != nil {
-		t.Fatalf("Fix: %v", err)
+	if f.FixHint == "" {
+		t.Fatal("stale sidecar finding should explain manual recovery")
 	}
-
-	// Re-run: file should be gone, check should be OK.
 	again := checkStaleSidecars(wsRoot)
-	if again.Severity != OK {
-		t.Fatalf("after fix: Severity=%s want OK", again.Severity)
+	if again.Severity != Warn {
+		t.Fatalf("without manual removal: Severity=%s want Warn", again.Severity)
 	}
 }
 

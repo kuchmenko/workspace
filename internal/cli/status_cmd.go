@@ -18,10 +18,7 @@ func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show all projects with their current state",
-		Annotations: map[string]string{
-			"capability": "observability",
-			"agent:when": "Get an overview of all projects: branch, last commit, layout (plain/worktree/missing)",
-		},
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(ws.Projects) == 0 {
 				fmt.Println("No projects registered. Use 'ws add <url>' to add one.")
@@ -39,13 +36,15 @@ func newStatusCmd() *cobra.Command {
 
 			for _, name := range names {
 				proj := ws.Projects[name]
-				absPath := filepath.Join(wsRoot, proj.Path)
+				absPath, pathErr := layout.ProjectPath(wsRoot, proj.Path)
 
 				branch := "-"
 				lastCommit := "-"
 				layoutInfo := "missing"
 
-				if info, err := os.Stat(absPath); err == nil && info.IsDir() {
+				if pathErr != nil {
+					layoutInfo = "invalid-path"
+				} else if info, err := os.Stat(absPath); err == nil && info.IsDir() {
 					layoutInfo = "plain"
 					if git.IsRepo(absPath) {
 						if b, err := git.CurrentBranch(absPath); err == nil {

@@ -45,6 +45,7 @@ type tomlRepairState struct {
 	seen     map[string]int
 	out      []string
 	changed  bool
+	unsafe   bool
 }
 
 func repairDuplicatedBranchKeys(input string) (string, bool) {
@@ -52,6 +53,9 @@ func repairDuplicatedBranchKeys(input string) (string, bool) {
 	state := tomlRepairState{seen: map[string]int{}, out: make([]string, 0, len(lines)+4)}
 	for _, line := range lines {
 		state.consume(line)
+	}
+	if state.unsafe {
+		return input, false
 	}
 	return strings.Join(state.out, ""), state.changed
 }
@@ -101,9 +105,13 @@ func (s *tomlRepairState) consumeBranchKey(line string) bool {
 		s.out = append(s.out, "\n", "    [[projects."+s.project+".branches]]\n")
 		s.seen = map[string]int{}
 		s.changed = true
-	} else if duplicate {
+	} else if duplicate && key == "machines" {
 		s.out[idx] = repairDuplicateBranchLine(s.out[idx], line)
 		s.changed = true
+		return true
+	} else if duplicate {
+		s.unsafe = true
+		s.out = append(s.out, line)
 		return true
 	}
 	s.seen[key] = len(s.out)

@@ -147,3 +147,14 @@ func TestAgentAliasIsRemoved(t *testing.T) {
 		t.Fatal("ws agent should not resolve to a command")
 	}
 }
+
+func TestExplorerShellLaunchAliasIsRemoved(t *testing.T) {
+	root := NewRootCmd()
+	cmd, args, err := root.Find([]string{"explorer", "launch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ValidateArgs(args); err == nil {
+		t.Fatal("ws explorer launch should fail")
+	}
+}

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -118,7 +120,7 @@ func TestBuildGroupSheetRows_SortsProjectsByActivityDescThenName(t *testing.T) {
 		}},
 	}
 
-	rows := buildGroupSheetRows(m, "org", "/ws/org")
+	rows := buildGroupSheetRows(m, "/ws", "org", "/ws/org")
 
 	var projectNames []string
 	for _, r := range rows {
@@ -148,7 +150,7 @@ func TestBuildGroupSheetRows_SortsProjectsByActivityDescThenName(t *testing.T) {
 func TestSheet_EscPopsToParent(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
 	m := newTestModel(p, nil)
-	parent := newGroupSheet(m, "org")
+	parent := newGroupSheet(m, "/ws", "org")
 	child := newProjectSheet(m, p, parent)
 	m.sheet = child
 
@@ -164,7 +166,12 @@ func TestSheet_EscPopsToParent(t *testing.T) {
 }
 
 func TestSheet_EnterShellMainLaunches(t *testing.T) {
-	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	root := t.TempDir()
+	path := filepath.Join(root, "alpha")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Project{ID: "alpha", Name: "alpha", WorkspaceRoot: root, Path: path}
 	m := newTestModel(p, nil)
 	s := newProjectSheet(m, p, nil)
 	m.sheet = s
@@ -172,8 +179,8 @@ func TestSheet_EnterShellMainLaunches(t *testing.T) {
 	// Cursor starts at row 0 = shell in main.
 	s.update(m, enter())
 
-	if m.Launch == nil || m.Launch.Cwd != "/ws/alpha" {
-		t.Errorf("Launch = %+v, want shell in /ws/alpha", m.Launch)
+	if m.Launch == nil || m.Launch.Cwd != path {
+		t.Errorf("Launch = %+v, want shell in %s", m.Launch, path)
 	}
 }
 

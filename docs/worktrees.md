@@ -46,7 +46,8 @@ ws worktree add myapp feat/fix-login
 #   registers [[branches]] entry: machines=[linux], created_by=linux
 ```
 
-`--from <ref>` overrides the base ref (default: `proj.default_branch`).
+`--from <ref>` overrides the base ref. Without it, creating a branch requires
+`proj.default_branch`; the command errors when that field is missing.
 Ignored with a warning when the branch already exists locally or on
 origin — those cases attach to the existing branch.
 
