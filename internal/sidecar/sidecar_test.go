@@ -1,7 +1,9 @@
 package sidecar_test
 
 import (
+	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -205,5 +207,75 @@ func TestAnyActiveIgnoresStale(t *testing.T) {
 	}
 	if got := sidecar.AnyActive(wsRoot); got != nil {
 		t.Errorf("AnyActive returned stale sidecar: %+v", got)
+	}
+}
+
+func TestAcquireLockAllowsOnlyOneConcurrentOwner(t *testing.T) {
+	withStateDir(t)
+	wsRoot := "/tmp/concurrent-lock-test"
+	start := make(chan struct{})
+	release := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			lock, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
+			results <- err
+			if err == nil {
+				<-release
+				_ = lock.Release()
+			}
+		}()
+	}
+	close(start)
+	first := <-results
+	second := <-results
+	close(release)
+	wg.Wait()
+
+	succeeded := 0
+	locked := 0
+	for _, err := range []error{first, second} {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, sidecar.ErrLocked):
+			locked++
+		default:
+			t.Fatalf("AcquireLock returned unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 || locked != 1 {
+		t.Fatalf("acquisitions: succeeded=%d locked=%d", succeeded, locked)
+	}
+}
+
+func TestReleasedOwnerCannotReleaseReplacementOwner(t *testing.T) {
+	withStateDir(t)
+	wsRoot := "/tmp/replacement-lock-test"
+	old, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Release(); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Release()
+	if err := old.Release(); err != nil {
+		t.Fatal(err)
+	}
+	third, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
+	if third != nil {
+		_ = third.Release()
+	}
+	if !errors.Is(err, sidecar.ErrLocked) {
+		t.Fatalf("AcquireLock after old owner release = %v, want ErrLocked", err)
 	}
 }

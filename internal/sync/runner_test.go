@@ -28,9 +28,7 @@ func TestRunContextLeavesExcludedExistingAndMissingProjectsUntouched(t *testing.
 	if err := os.MkdirAll(filepath.Dir(existingBare), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := git.CloneBare(remote, existingBare); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CloneBare(t, remote, existingBare)
 
 	plan := BuildPlan(root, workspace)
 	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
@@ -64,9 +62,7 @@ func TestRunContextLeavesExcludedMirrorUntouched(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := git.CloneBare(origin, barePath); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CloneBare(t, origin, barePath)
 
 	plan := BuildPlan(root, workspace)
 	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
@@ -129,9 +125,7 @@ func TestRunContextSkipsProjectWhenBareOriginChangedAfterPreflight(t *testing.T)
 	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := git.CloneBare(origin, barePath); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CloneBare(t, origin, barePath)
 	plan := BuildPlan(root, workspace)
 	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
 	changedOrigin := filepath.Join(t.TempDir(), "missing.git")
@@ -158,9 +152,7 @@ func TestRunContextFetchesOnlyDeclaredProjectOrigin(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := git.CloneBare(origin, barePath); err != nil {
-		t.Fatal(err)
-	}
+	testutil.CloneBare(t, origin, barePath)
 	testutil.RunGit(t, barePath, "remote", "add", "unplanned", filepath.Join(t.TempDir(), "missing.git"))
 	plan := BuildPlan(root, workspace)
 	selection := NewSelection(plan, Probe(context.Background(), plan, nil))

@@ -114,6 +114,25 @@ func TestCloneIntoLayout_PathBlocked(t *testing.T) {
 	}
 }
 
+func TestCloneIntoLayoutRejectsEscapingSymlinkBeforeMutation(t *testing.T) {
+	wsRoot := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(wsRoot, "personal")); err != nil {
+		t.Fatal(err)
+	}
+	proj := &config.Project{Remote: "invalid", Path: "personal/app"}
+	if _, err := git.CloneIntoLayout(wsRoot, "app", proj, git.CloneOptions{}); err == nil {
+		t.Fatal("CloneIntoLayout succeeded through escaping symlink")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("outside directory was mutated: %v", entries)
+	}
+}
+
 func TestCloneIntoLayout_DefaultBranchPreSet(t *testing.T) {
 	wsRoot := t.TempDir()
 	remote := testutil.InitFakeRemote(t, "myapp", "main")

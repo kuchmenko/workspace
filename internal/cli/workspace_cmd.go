@@ -23,14 +23,10 @@ func newWorkspaceCmd() *cobra.Command {
 
 func newWorkspaceAddCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "add [path]",
-		Short: "Register a workspace root on this machine",
-		Annotations: map[string]string{
-			"capability":   "organization",
-			"agent:when":   "Register a workspace root in this machine's local workspace list",
-			"agent:safety": "Writes the machine-local ws config.",
-		},
-		Args: cobra.MaximumNArgs(1),
+		Use:         "add [path]",
+		Short:       "Register a workspace root on this machine",
+		Annotations: agentAnnotations("workspace-register", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "path", "0,1"),
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := workspacePathArg(args)
 			if err != nil {
@@ -48,15 +44,11 @@ func newWorkspaceAddCmd() *cobra.Command {
 
 func newWorkspaceRemoveCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "rm [path]",
-		Aliases: []string{"remove"},
-		Short:   "Remove a workspace root from this machine",
-		Annotations: map[string]string{
-			"capability":   "organization",
-			"agent:when":   "Remove a workspace root from this machine's local workspace list",
-			"agent:safety": "Writes the machine-local ws config without deleting the workspace.",
-		},
-		Args: cobra.MaximumNArgs(1),
+		Use:         "rm [path]",
+		Aliases:     []string{"remove"},
+		Short:       "Remove a workspace root from this machine",
+		Annotations: agentAnnotations("workspace-unregister", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "path", "0,1"),
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := workspacePathArg(args)
 			if err != nil {
@@ -74,13 +66,10 @@ func newWorkspaceRemoveCmd() *cobra.Command {
 
 func newWorkspaceListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List workspace roots registered on this machine",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "List workspace roots registered in this machine's local ws config",
-		},
-		Args: cobra.NoArgs,
+		Use:         "list",
+		Short:       "List workspace roots registered on this machine",
+		Annotations: agentAnnotations("workspace-list", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "lines", "0,1"),
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			roots, err := config.ListWorkspaceRoots()
 			if err != nil {

@@ -20,26 +20,24 @@ const (
 	KindWorkspace NodeKind = iota
 	KindGroup
 	KindProject
-	KindWorktree
-	KindPortal
 )
 
 type Project struct {
 	ID                string
 	Name              string
+	WorkspaceRoot     string
 	Group             string
 	Category          string
 	Path              string
 	DefaultBranch     string
 	WorktreeCount     int
-	SessionCount      int
 	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
 }
 
-func GroupPath(wsRoot, group string) string {
-	return filepath.Join(wsRoot, group)
+func groupKey(wsRoot, group string) string {
+	return wsRoot + "\x00" + group
 }
 
 type WorkspaceData struct {
@@ -67,18 +65,44 @@ func (m *Model) rebuildItems() {
 	m.headerChips = buildHeaderChips(m.workspaces)
 
 	for _, ws := range m.workspaces {
+		projects := make([]*Project, 0, len(ws.Projects))
+		groupActivity := make(map[string]time.Time, len(ws.Groups))
 		for i := range ws.Projects {
 			p := &ws.Projects[i]
+			if p.WorkspaceRoot == "" {
+				p.WorkspaceRoot = ws.Root
+			}
+			projects = append(projects, p)
+			if p.LastActiveAt.After(groupActivity[p.Group]) {
+				groupActivity[p.Group] = p.LastActiveAt
+			}
+		}
+		sort.SliceStable(projects, func(i, j int) bool {
+			if !projects[i].LastActiveAt.Equal(projects[j].LastActiveAt) {
+				return projects[i].LastActiveAt.After(projects[j].LastActiveAt)
+			}
+			return projects[i].Name < projects[j].Name
+		})
+
+		for _, p := range projects {
 			if p.Group == "" {
 				m.addProjectItem(p, 0)
 			}
 		}
 
-		for _, g := range ws.Groups {
-			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
-			if m.expanded[g] {
-				for i := range ws.Projects {
-					p := &ws.Projects[i]
+		groups := append([]string(nil), ws.Groups...)
+		sort.SliceStable(groups, func(i, j int) bool {
+			if !groupActivity[groups[i]].Equal(groupActivity[groups[j]]) {
+				return groupActivity[groups[i]].After(groupActivity[groups[j]])
+			}
+			return groups[i] < groups[j]
+		})
+		for _, g := range groups {
+			key := groupKey(ws.Root, g)
+			groupPath := filepath.Join(ws.Root, g)
+			m.items = append(m.items, listItem{kind: KindGroup, workspaceRoot: ws.Root, group: g, indent: 0, path: groupPath})
+			if m.expanded[key] {
+				for _, p := range projects {
 					if p.Group == g {
 						m.addProjectItem(p, 1)
 					}
@@ -103,7 +127,7 @@ func (m *Model) clampCursor() {
 }
 
 func (m *Model) addProjectItem(p *Project, indent int) {
-	m.items = append(m.items, listItem{kind: KindProject, project: p, indent: indent, path: p.Path})
+	m.items = append(m.items, listItem{kind: KindProject, workspaceRoot: p.WorkspaceRoot, project: p, indent: indent, path: p.Path})
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -152,7 +176,11 @@ func loadMachineName() string {
 func findProjectByPath(ws *config.Workspace, wsRoot, abs string) (string, *config.Project) {
 	abs = filepath.Clean(abs)
 	for id, p := range ws.Projects {
-		projPath := filepath.Clean(filepath.Join(wsRoot, p.Path))
+		projPath, err := layout.ProjectPath(wsRoot, p.Path)
+		if err != nil {
+			continue
+		}
+		projPath = filepath.Clean(projPath)
 		if abs == projPath || strings.HasPrefix(abs, projPath+string(filepath.Separator)) {
 			cp := p
 			return id, &cp
@@ -282,27 +310,26 @@ func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
 	return nil
 }
 
-func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, *SessionCache, []string) {
+func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
 	if len(roots) == 0 {
 		diagnostics = append(diagnostics, "no workspace found; run from inside a workspace")
-		return nil, nil, diagnostics
+		return nil, diagnostics
 	}
 
-	cache := NewSessionCache()
 	var result []WorkspaceData
 	for _, root := range roots {
-		ws, diags := loadOneWorkspace(root, cache)
+		ws, diags := loadOneWorkspace(root)
 		diagnostics = append(diagnostics, diags...)
 		if ws != nil {
 			result = append(result, *ws)
 		}
 	}
-	return result, cache, diagnostics
+	return result, diagnostics
 }
 
-func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []string) {
+func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 	var diagnostics []string
 	w, err := config.Load(root)
 	if err != nil {
@@ -323,10 +350,18 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 		}
 		names = append(names, n)
 		if p.Group != "" {
-			groupSet[p.Group] = true
+			if _, err := layout.ProjectPath(root, p.Group); err != nil {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s: skip group %q: %s", filepath.Base(root), presentLabel(p.Group), presentLabel(err.Error())))
+			} else {
+				groupSet[p.Group] = true
+			}
 		}
 	}
 	for g := range w.Groups {
+		if _, err := layout.ProjectPath(root, g); err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip group %q: %s", filepath.Base(root), presentLabel(g), presentLabel(err.Error())))
+			continue
+		}
 		groupSet[g] = true
 	}
 	sort.Strings(names)
@@ -340,11 +375,20 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 
 	for _, name := range names {
 		p := w.Projects[name]
-		mainPath := filepath.Join(root, p.Path)
+		mainPath, err := layout.ProjectPath(root, p.Path)
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip project %q: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
+			continue
+		}
+		if p.Group != "" && !groupSet[p.Group] {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s: skip project %q: unsafe group", filepath.Base(root), presentLabel(name)))
+			continue
+		}
 		lastAt, lastMachine := projectActivity(p.Branches)
 		proj := Project{
 			ID:                name,
 			Name:              name,
+			WorkspaceRoot:     root,
 			Group:             p.Group,
 			Category:          string(p.Category),
 			Path:              mainPath,
@@ -364,10 +408,12 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 					}
 				}
 				proj.WorktreeCount = count
+			} else {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 			}
+		} else if !os.IsNotExist(err) {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect layout: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 		}
-
-		proj.SessionCount = sessCache.Count(mainPath)
 
 		ws.Projects = append(ws.Projects, proj)
 	}

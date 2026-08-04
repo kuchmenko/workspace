@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/add"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
@@ -41,12 +41,9 @@ Headless invocations (any with positional URLs, or stdin '-', or a non-TTY
 context) call clone.CloneIntoLayout — the same path 'ws bootstrap' uses —
 so new projects land directly in <path>.bare + <path> form. No follow-up
 'ws migrate' is required.`,
-		Annotations: map[string]string{
-			"capability":   "project",
-			"agent:when":   "Register a new git repository in workspace.toml and clone it locally as bare+worktree",
-			"agent:safety": "Creates new directories (.bare + worktree) and updates workspace.toml. Use --no-clone to register without cloning. Holds an `add` sidecar while running.",
-		},
+		Annotations: agentAnnotations("project-add", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectRead, "text", "0,1"),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			metrics.RecordAddInvoked()
 			if tui && noTUI {
 				return errors.New("--tui and --no-tui are mutually exclusive")
 			}
@@ -93,6 +90,7 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 			if err != nil {
 				return err
 			}
+			metrics.RecordAddProjectsRegistered(len(res.Added))
 
 			printResult(res)
 
@@ -109,8 +107,6 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 	cmd.Flags().BoolVar(&noClone, "no-clone", false, "register without cloning")
 	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI (default when no URLs given on a TTY)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force headless mode; error if no URLs are provided")
-
-	cmd.SetContext(context.Background())
 
 	return cmd
 }

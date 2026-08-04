@@ -132,11 +132,29 @@ func TestExplorerDoesNotRequireCurrentWorkspace(t *testing.T) {
 		ws = nil
 	})
 	root := NewRootCmd()
-	explorer, _, err := root.Find([]string{"agent"})
+	explorer, _, err := root.Find([]string{"explorer"})
 	if err != nil {
-		t.Fatalf("find agent command: %v", err)
+		t.Fatalf("find explorer command: %v", err)
 	}
 	if err := root.PersistentPreRunE(explorer, nil); err != nil {
-		t.Fatalf("agent pre-run outside a workspace: %v", err)
+		t.Fatalf("explorer pre-run outside a workspace: %v", err)
+	}
+}
+
+func TestAgentAliasIsRemoved(t *testing.T) {
+	root := NewRootCmd()
+	if _, _, err := root.Find([]string{"agent"}); err == nil {
+		t.Fatal("ws agent should not resolve to a command")
+	}
+}
+
+func TestExplorerShellLaunchAliasIsRemoved(t *testing.T) {
+	root := NewRootCmd()
+	cmd, args, err := root.Find([]string{"explorer", "launch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.ValidateArgs(args); err == nil {
+		t.Fatal("ws explorer launch should fail")
 	}
 }

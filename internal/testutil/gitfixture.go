@@ -56,6 +56,11 @@ func RunGitTry(t *testing.T, dir string, args ...string) error {
 	return nil
 }
 
+func CloneBare(t *testing.T, remote, destination string) {
+	t.Helper()
+	RunGit(t, filepath.Dir(destination), "clone", "--bare", remote, destination)
+}
+
 type gitError struct {
 	args   []string
 	dir    string

@@ -15,9 +15,7 @@ func mirrorFixture(t *testing.T) (barePath, mirrorURL string) {
 	t.Helper()
 	origin := testutil.InitFakeRemote(t, "proj", "main")
 	barePath = filepath.Join(t.TempDir(), "proj.bare")
-	if err := git.CloneBare(origin, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, origin, barePath)
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("SetFetchRefspec: %v", err)
 	}

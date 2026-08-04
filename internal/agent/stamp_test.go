@@ -13,8 +13,8 @@ import (
 // launch into the main worktree, where the default branch has never
 // been registered in [[branches]], creates a minimal branch entry and
 // stamps last_active_at. This is the common case: the user opens a
-// claude session on `main` and expects the project to show up in
-// Recent on the next ws agent invocation.
+// Explorer shell on `main` and expects the project to show up in
+// Recent on the next ws explorer invocation.
 func TestStampLaunchFromPath_BumpsActivityOnMainBranch(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -69,7 +69,7 @@ func TestStampLaunchFromPath_BumpsActivityOnMainBranch(t *testing.T) {
 
 // TestStampLaunchFromPath_OutsideWorkspace_NoOp confirms the stamper
 // is silent when the path does not belong to any workspace project.
-// This is a hot path — every `ws agent shell <random-path>` invocation
+// This is a hot path — every `ws explorer shell <random-path>` invocation
 // must not error out.
 func TestStampLaunchFromPath_OutsideWorkspace_NoOp(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())

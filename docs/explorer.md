@@ -3,12 +3,11 @@
 `ws` (run with no arguments in a TTY) — or `ws explorer` explicitly —
 opens a Bubble Tea TUI explorer across every workspace registered on
 this machine. It is the fastest path from "I want to work on something"
-to a shell or a Claude Code session in the right directory.
+to a shell in the right directory.
 
 ```sh
 ws                          # bare invocation; same as `ws explorer`
 ws explorer                 # explicit
-ws agent                    # legacy alias, still works
 ```
 
 When stdout is not a TTY, `ws` falls through to `cmd.Help()` so
@@ -17,7 +16,7 @@ piping / scripts get help instead of a TUI prompt.
 ## What you see
 
 The explorer reads `workspace_roots` from `~/.config/ws/config.toml`,
-walks each root for projects / groups / worktrees / Claude sessions,
+walks each root for projects, groups, and worktrees,
 and renders a pinned quick-nav header above a scrollable tree. Manage
 the roots with `ws workspace add/rm/list`. The current workspace is a
 fallback when no roots are registered.
@@ -42,7 +41,7 @@ fallback when no roots are registered.
 Up to nine numbered chips, sorted favorites-first then
 recently-touched. The leading `*` marks favorited projects. Each chip
 shows `N.name age` — press the digit `1`-`9` to launch the matching
-project immediately (claude in its directory). The chip row stays
+project immediately (a shell in its directory). The chip row stays
 pinned above the tree while you scroll, so the shortcuts never
 disappear off the top.
 
@@ -52,33 +51,31 @@ Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
 
 ### Tree
 
-Group / project rows expand and collapse with `tab`. Worktrees show
-the same ownership tags as `ws worktree list` (`main`, `mine`,
-`shared with <machines>`, `legacy-wt`).
+Group rows expand and collapse with `tab`. Press `enter` on a group or
+project row to open its sheet. Project sheets contain the project's
+worktrees and show their dirty and ahead state.
 
 ## Keys
 
 Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
-- `tab` — toggle expand/collapse for groups and projects
-- `h` / `←` — collapse one level. Smart: from a worktree row it
-  closes the parent project; from a project row under a group it
-  closes the group.
-- `1`-`9` — launch the matching chip (claude in its directory)
+- `tab` — toggle expand/collapse for groups
+- `h` / `←` — collapse the selected group, or close the parent group
+  from one of its project rows.
+- `1`-`9` — open a shell for the matching chip
 - `q` — quit
 
 Per-row actions:
 
-- `enter` — open Claude Code session in the row's directory
-  (project / worktree) or `cd` into a group / workspace root.
-- `p` — same as `enter` but prompts you for an initial Claude prompt.
-- `l` / `→` — open a shell in the row's directory.
+- `enter` — open the selected group or project sheet. In a project
+  sheet, a worktree row opens a shell in that worktree.
+- `l` / `→` — open a shell directly in the selected row's directory.
 - `ctrl+s` — open a shell anywhere from anywhere.
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
 - `e` — on a project row, edit the project's group / category.
-- `d` — on a non-main worktree row, prompt for delete (with
+- `d` — in a project sheet, on a non-main worktree row, prompt for delete (with
   registry release; releases this machine from
   `[[branches]].machines`).
 - `f` — on a project row, toggle favorite. Equivalent to
@@ -117,13 +114,6 @@ Press `e` on a project row → group / category form. Edits update
 change. Useful when reorganizing the layout without leaving the
 explorer.
 
-## Sessions
-
-Claude Code sessions are listed under their owning project. Hitting
-`enter` on a session row opens it with `claude --resume <id>` rooted
-at the session's recorded `cwd`. The session cache is shared with
-`SessionCache` so repeated `ws` invocations stay fast.
-
 ## Why a TUI
 
 Three reasons it earns its keep:
@@ -132,6 +122,4 @@ Three reasons it earns its keep:
   remembering aliases for branches that come and go.
 - **Cross-workspace.** Roots registered with `ws workspace add` all show
   up in one list without scheduling background work.
-- **Claude integration.** The explorer is the primary way to drop
-  into a Claude session that already has the right `cwd` and an
-  optional resume target.
+- **Directory-aware shells.** Every launch opens the user's shell with the selected project, group, or worktree as its `cwd`.

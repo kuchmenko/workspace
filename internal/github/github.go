@@ -15,16 +15,6 @@ import (
 	"time"
 )
 
-type GhAppProvider struct{}
-
-func NewGhAppProviderStub() *GhAppProvider { return &GhAppProvider{} }
-
-func (*GhAppProvider) Name() string { return "gh-app" }
-
-func (*GhAppProvider) SuggestRepos(_ context.Context, _ int) ([]Repo, error) {
-	return nil, ErrNotImplemented
-}
-
 type cacheFile struct {
 	Version  int       `json:"version"`
 	StoredAt time.Time `json:"stored_at"`
@@ -36,8 +26,6 @@ const (
 
 	cacheTTL = time.Hour
 )
-
-func CacheTTL() time.Duration { return cacheTTL }
 
 func cachePath() (string, error) {
 	state := os.Getenv("XDG_STATE_HOME")
@@ -117,25 +105,6 @@ func SaveCache(repos []Repo) error {
 		return err
 	}
 	return os.Rename(tmp, p)
-}
-
-func PurgeCache() error {
-	p, err := cachePath()
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
-func CacheFresh() (bool, time.Duration) {
-	_, age, err := LoadCache()
-	if err != nil {
-		return false, 0
-	}
-	return age > 0 && age < cacheTTL, age
 }
 
 type Client interface {
@@ -474,8 +443,6 @@ type Provider interface {
 }
 
 var ErrNotAuthed = errors.New("no GitHub authentication configured")
-
-var ErrNotImplemented = errors.New("not implemented (GitHub App)")
 
 func ResolveProvider() Provider {
 	if token, err := loadOAuthToken(); err == nil && token != "" {

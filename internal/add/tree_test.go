@@ -173,30 +173,6 @@ func TestBuildBrowseRows_EmptyInput(t *testing.T) {
 	}
 }
 
-func TestWindowAround(t *testing.T) {
-	cases := []struct {
-		name         string
-		cursor       int
-		total        int
-		size         int
-		wantS, wantE int
-	}{
-		{"total fits in window", 5, 10, 16, 0, 10},
-		{"cursor near start", 2, 100, 16, 0, 16},
-		{"cursor in middle", 50, 100, 16, 42, 58},
-		{"cursor near end", 98, 100, 16, 84, 100},
-		{"negative cursor (no items selected)", -1, 100, 16, 0, 16},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			s, e := windowAround(c.cursor, c.total, c.size)
-			if s != c.wantS || e != c.wantE {
-				t.Errorf("got (%d, %d), want (%d, %d)", s, e, c.wantS, c.wantE)
-			}
-		})
-	}
-}
-
 func TestOwnerRepoFromRemote(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"git@github.com:foo/bar.git", "foo/bar"},

@@ -171,16 +171,19 @@ func TestRun_Sidecar_AcquiredAndReleased(t *testing.T) {
 func TestRun_Sidecar_BlocksConcurrentRun(t *testing.T) {
 	wsRoot, _, _ := setupWorkspace(t)
 
-	// Simulate a running `ws add` by saving a sidecar with the current
-	// process pid (IsAlive will report true).
+	lock, err := sidecar.AcquireLock(wsRoot, sidecar.KindAdd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
 	sc := sidecar.New(wsRoot, sidecar.KindAdd)
-	_ = sc.Set(sidecarPayloadKey, sidecarPayload{Mode: ModeHeadless, URLs: []string{"g@h:a/b.git"}})
+	_ = sc.Set(sidecarPayloadKey, sidecarPayload{Mode: ModeHeadless, URLCount: 1})
 	if err := sidecar.Save(sc); err != nil {
 		t.Fatal(err)
 	}
 
 	// Second Run must refuse with a descriptive error.
-	_, err := Run(context.Background(), Options{
+	_, err = Run(context.Background(), Options{
 		URLs:      []string{"git@example.com:x/y.git"},
 		WsRoot:    wsRoot,
 		Workspace: &config.Workspace{Projects: map[string]config.Project{}},
@@ -194,7 +197,6 @@ func TestRun_Sidecar_BlocksConcurrentRun(t *testing.T) {
 		t.Errorf("want 'is running' in error, got %v", err)
 	}
 
-	// Leave no leftover for other tests.
 	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
 }
 
@@ -278,5 +280,106 @@ func TestRun_CancelledCtxBeforeStart(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("want context.Canceled, got %v", err)
+	}
+}
+
+func TestRegisterSaveFailureRestoresWorkspaceAndRetryConverges(t *testing.T) {
+	wsRoot, ws, _ := setupWorkspace(t)
+	url := fakeRemote(t, "recoverable")
+	saveErr := errors.New("disk full")
+
+	_, err := RegisterContext(context.Background(), Options{
+		WsRoot: wsRoot, Workspace: ws, Save: func(*config.Workspace) error { return saveErr },
+	}, url)
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("RegisterContext error = %v, want %v", err, saveErr)
+	}
+	if _, exists := ws.Projects["recoverable"]; exists {
+		t.Fatal("failed registration remained in Workspace.Projects")
+	}
+	if !strings.Contains(err.Error(), "completed layout remains on disk") {
+		t.Fatalf("error does not report retained layout: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(wsRoot, "personal", "recoverable.bare"),
+		filepath.Join(wsRoot, "personal", "recoverable"),
+	} {
+		if _, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("retained layout %s: %v", path, statErr)
+		}
+	}
+
+	fresh := &config.Workspace{Projects: map[string]config.Project{}}
+	result, err := RegisterContext(context.Background(), Options{
+		WsRoot: wsRoot, Workspace: fresh, Save: func(*config.Workspace) error { return nil },
+	}, url)
+	if err != nil {
+		t.Fatalf("retry RegisterContext: %v", err)
+	}
+	if !result.Cloned || result.Project.DefaultBranch != "main" {
+		t.Fatalf("retry result = %+v", result)
+	}
+	if _, exists := fresh.Projects["recoverable"]; !exists {
+		t.Fatal("retry did not register retained layout")
+	}
+}
+
+func TestAddSidecarDoesNotPersistOrReportURLCredentials(t *testing.T) {
+	wsRoot, _, _ := setupWorkspace(t)
+	credential := "user:secret-token"
+	url := "https://" + credential + "@example.com/owner/repo.git"
+	lock, err := acquireSidecar(wsRoot, ModeHeadless, []string{url})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := sidecar.Path(wsRoot, sidecar.KindAdd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), credential) || strings.Contains(string(content), url) {
+		t.Fatalf("sidecar contains credentials: %s", content)
+	}
+
+	_, err = acquireSidecar(wsRoot, ModeHeadless, []string{url})
+	if err == nil {
+		t.Fatal("expected concurrent operation error")
+	}
+	if strings.Contains(err.Error(), credential) || strings.Contains(err.Error(), url) {
+		t.Fatalf("concurrent operation error contains credentials: %v", err)
+	}
+	releaseSidecar(wsRoot, lock)
+}
+
+func TestRunHeadlessDoesNotReturnURLCredentials(t *testing.T) {
+	wsRoot, ws, save := setupWorkspace(t)
+	credential := "user:secret-token"
+	url := "https://" + credential + "@example.com/owner/repo.git"
+	ws.Projects["repo"] = config.Project{Path: "personal/repo"}
+
+	skipped, err := Run(context.Background(), Options{
+		URLs: []string{url}, WsRoot: wsRoot, Workspace: ws, Save: save, Mode: ModeHeadless, NoClone: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(skipped.Skipped) != 1 {
+		t.Fatalf("skipped = %+v", skipped.Skipped)
+	}
+	if strings.Contains(skipped.Skipped[0].URL+skipped.Skipped[0].Reason, credential) {
+		t.Fatalf("skipped result contains credentials: %+v", skipped.Skipped[0])
+	}
+
+	failed, err := Run(context.Background(), Options{
+		URLs: []string{url}, WsRoot: wsRoot, Workspace: &config.Workspace{}, Save: save, Mode: ModeHeadless, NoClone: true, Category: "invalid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed.Errors) != 1 || strings.Contains(failed.Errors[0].Error(), credential) {
+		t.Fatalf("failed result = %+v", failed.Errors)
 	}
 }

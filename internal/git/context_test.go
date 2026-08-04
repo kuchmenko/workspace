@@ -13,20 +13,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
-func TestCloneBareContextCleansFailedDestination(t *testing.T) {
-	remote := testutil.InitFakeRemote(t, "broken", "main")
-	removeHeadObject(t, remote)
-
-	destination := filepath.Join(t.TempDir(), "clone.git")
-	err := git.CloneBareContext(context.Background(), "file://"+remote, destination)
-	if err == nil {
-		t.Fatal("CloneBareContext succeeded for corrupt repository")
-	}
-	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
-		t.Fatalf("destination remains after failed clone: %v", statErr)
-	}
-}
-
 func TestCloneBareLocalContextCleansFailedDestination(t *testing.T) {
 	remote := testutil.InitFakeRemote(t, "broken-local", "main")
 	removeHeadObject(t, remote)
@@ -46,55 +32,6 @@ func removeHeadObject(t *testing.T, repository string) {
 	object := filepath.Join(repository, "objects", head[:2], head[2:])
 	if err := os.Remove(object); err != nil {
 		t.Fatalf("remove source object: %v", err)
-	}
-}
-
-func TestCloneBareContextPreservesExistingDestination(t *testing.T) {
-	destination := t.TempDir()
-	marker := filepath.Join(destination, "marker")
-	if err := os.WriteFile(marker, []byte("keep"), 0o644); err != nil {
-		t.Fatalf("write marker: %v", err)
-	}
-
-	err := git.CloneBareContext(context.Background(), "/missing/repository", destination)
-	if err == nil {
-		t.Fatal("CloneBareContext succeeded with existing destination")
-	}
-	if _, statErr := os.Stat(marker); statErr != nil {
-		t.Fatalf("existing destination was modified: %v", statErr)
-	}
-}
-
-func TestCloneBareContextConcurrentDestinationOwnerPreservesWinner(t *testing.T) {
-	remote := testutil.InitFakeRemote(t, "concurrent-bare", "main")
-	for attempt := 0; attempt < 20; attempt++ {
-		destination := filepath.Join(t.TempDir(), "clone.git")
-		start := make(chan struct{})
-		errors := make(chan error, 2)
-		var workers sync.WaitGroup
-		for range 2 {
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				<-start
-				errors <- git.CloneBareContext(context.Background(), remote, destination)
-			}()
-		}
-		close(start)
-		workers.Wait()
-		close(errors)
-		successes := 0
-		for err := range errors {
-			if err == nil {
-				successes++
-			}
-		}
-		if successes != 1 {
-			t.Fatalf("attempt %d successes = %d, want 1", attempt, successes)
-		}
-		if !git.IsBare(destination) {
-			t.Fatalf("attempt %d winner destination was removed", attempt)
-		}
 	}
 }
 
@@ -188,8 +125,6 @@ func TestContextOperationsReturnCancellation(t *testing.T) {
 		run  func(context.Context) error
 	}{
 		{"fetch", func(ctx context.Context) error { return git.FetchContext(ctx, repo) }},
-		{"pull", func(ctx context.Context) error { return git.PullContext(ctx, repo) }},
-		{"push", func(ctx context.Context) error { return git.PushContext(ctx, repo) }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

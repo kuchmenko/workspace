@@ -1,9 +1,15 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -27,9 +33,7 @@ func makeProjectBare(t *testing.T, wsRoot, name, defaultBranch string) (config.P
 		t.Fatalf("mkdir parent: %v", err)
 	}
 
-	if err := git.CloneBare(remote, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, remote, barePath)
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("SetFetchRefspec: %v", err)
 	}
@@ -77,7 +81,7 @@ func TestProjectChecks_HappyPath(t *testing.T) {
 	proj, _ := makeProjectBare(t, wsRoot, "demo", "main")
 	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
 
-	rep := r.Run()
+	rep := r.Run(context.Background())
 	for _, f := range rep.Findings {
 		if f.Severity >= Warn {
 			t.Errorf("unexpected %s: %s/%s: %s", f.Severity, f.Scope, f.Check, f.Message)
@@ -140,6 +144,124 @@ func TestCheckRemoteURL_Mismatch(t *testing.T) {
 	if after != proj.Remote {
 		t.Fatalf("after fix: origin=%q want %q", after, proj.Remote)
 	}
+}
+
+func TestDoctorFindingsRedactRemoteCredentials(t *testing.T) {
+	wsRoot := t.TempDir()
+	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
+	actual := "https://actual-user:actual-secret@example.com/demo.git"
+	declared := "https://declared-user:declared-secret@example.com/demo.git"
+	mirror := "https://mirror-user:mirror-secret@example.com/demo.git"
+	testutil.RunGit(t, barePath, "remote", "set-url", "origin", actual)
+	proj.Remote = declared
+	proj.Mirrors = map[string]string{"backup": mirror}
+	r := newRunnerFor(t, wsRoot, map[string]config.Project{"demo": proj})
+	findings := []Finding{r.checkRemoteURL("demo", proj, barePath)}
+	findings = append(findings, r.checkMirrorRemotes("demo", proj, barePath)...)
+	report := &Report{Findings: findings}
+
+	var text strings.Builder
+	WriteText(&text, report)
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{text.String(), string(encoded)} {
+		for _, secret := range []string{"actual-user", "actual-secret", "declared-user", "declared-secret", "mirror-user", "mirror-secret"} {
+			if strings.Contains(output, secret) {
+				t.Fatalf("doctor output leaked %q: %s", secret, output)
+			}
+		}
+	}
+}
+
+func TestCheckRemoteReachRedactsDiagnostic(t *testing.T) {
+	barePath := t.TempDir()
+	realGit := gitExecutable(t)
+	credentialURL := "https://diagnostic-user:diagnostic-secret@example.com/demo.git"
+	testutil.RunGit(t, barePath, "init", "--bare")
+	testutil.RunGit(t, barePath, "remote", "add", "origin", credentialURL)
+	installGitWrapper(t, realGit, fmt.Sprintf("echo 'fatal: unable to access %s' >&2\nexit 1", credentialURL))
+
+	finding := (&Runner{}).checkRemoteReach(context.Background(), "demo", barePath)
+	if strings.Contains(finding.Message, "diagnostic-user") || strings.Contains(finding.Message, "diagnostic-secret") {
+		t.Fatalf("diagnostic leaked credentials: %s", finding.Message)
+	}
+	encoded, err := json.Marshal(&Report{Findings: []Finding{finding}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "diagnostic-secret") {
+		t.Fatalf("JSON leaked credentials: %s", encoded)
+	}
+}
+
+func TestRunnerCancellationStopsRemoteAndSkipsRemainingProjects(t *testing.T) {
+	wsRoot := t.TempDir()
+	alpha, _ := makeProjectBare(t, wsRoot, "alpha", "main")
+	beta, _ := makeProjectBare(t, wsRoot, "beta", "main")
+	realGit := gitExecutable(t)
+	marker := filepath.Join(t.TempDir(), "ls-remote")
+	installGitWrapper(t, realGit, fmt.Sprintf("echo x >> %q\nexec sleep 30", marker))
+	r := &Runner{WsRoot: wsRoot, WS: &config.Workspace{Projects: map[string]config.Project{"alpha": alpha, "beta": beta}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan *Report, 1)
+	go func() { done <- r.Run(ctx) }()
+	waitForFile(t, marker)
+	cancel()
+
+	select {
+	case report := <-done:
+		for _, finding := range report.Findings {
+			if finding.Scope == "beta" {
+				t.Fatal("beta checks started after cancellation")
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("active ls-remote did not stop after cancellation")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(data), "x"); got != 1 {
+		t.Fatalf("ls-remote calls=%d want 1", got)
+	}
+}
+
+func gitExecutable(t *testing.T) string {
+	t.Helper()
+	gitPath, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("find git: %v", err)
+	}
+	realGit, err := filepath.EvalSymlinks(gitPath)
+	if err != nil {
+		t.Fatalf("resolve git: %v", err)
+	}
+	return realGit
+}
+
+func installGitWrapper(t *testing.T, realGit, lsRemoteBody string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\ncase \"$*\" in\n  *ls-remote*)\n" + lsRemoteBody + "\n    ;;\n  *) exec " + realGit + " \"$@\" ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for ls-remote")
 }
 
 func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {

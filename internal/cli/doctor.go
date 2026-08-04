@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -116,7 +117,7 @@ type Runner struct {
 	OnScope func(scope string, findings []Finding)
 }
 
-func (r *Runner) Run() *Report {
+func (r *Runner) Run(ctx context.Context) *Report {
 	rep := &Report{}
 	emit := func(scope string, findings []Finding) {
 		rep.Findings = append(rep.Findings, findings...)
@@ -127,8 +128,11 @@ func (r *Runner) Run() *Report {
 
 	emit("system", r.systemChecks())
 	for _, name := range r.projectNames() {
+		if ctx.Err() != nil {
+			break
+		}
 		proj := r.WS.Projects[name]
-		emit(name, r.projectChecks(name, proj))
+		emit(name, r.projectChecks(ctx, name, proj))
 	}
 	return rep
 }

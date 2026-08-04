@@ -317,14 +317,82 @@ func LoadOrCreate(root string) (*Workspace, error) {
 
 func Save(root string, ws *Workspace) error {
 	path := filepath.Join(root, "workspace.toml")
-	cleaned := cleanForSave(ws)
-	f, err := os.Create(path)
+	target, mode, err := workspaceSaveTarget(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	enc := toml.NewEncoder(f)
-	return enc.Encode(cleaned)
+	tmp, err := encodeWorkspaceTemp(target, mode, ws)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	dir, err := os.Open(filepath.Dir(target))
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = dir.Close()
+		return err
+	}
+	_ = dir.Sync()
+	_ = dir.Close()
+	return nil
+}
+
+func workspaceSaveTarget(path string) (string, os.FileMode, error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		if info, lstatErr := os.Lstat(path); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return "", 0, fmt.Errorf("resolve workspace.toml symlink: %w", err)
+		}
+		if !os.IsNotExist(err) {
+			return "", 0, err
+		}
+		target = path
+	}
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(target); statErr == nil {
+		mode = info.Mode()
+	} else if !os.IsNotExist(statErr) {
+		return "", 0, statErr
+	}
+	return target, mode, nil
+}
+
+func encodeWorkspaceTemp(target string, mode os.FileMode, ws *Workspace) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(target), ".workspace.toml-*")
+	if err != nil {
+		return "", err
+	}
+	tmp := f.Name()
+	failed := true
+	defer func() {
+		if failed {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if err := f.Chmod(mode); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	cleaned := cleanForSave(ws)
+	if err := toml.NewEncoder(f).Encode(cleaned); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	var verified Workspace
+	if _, err := toml.DecodeFile(tmp, &verified); err != nil {
+		return "", fmt.Errorf("verify encoded workspace.toml: %w", err)
+	}
+	failed = false
+	return tmp, nil
 }
 
 func cleanForSave(ws *Workspace) *Workspace {

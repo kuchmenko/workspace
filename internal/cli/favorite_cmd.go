@@ -13,16 +13,12 @@ import (
 func newFavoriteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "favorite",
-		Short: "Pin projects to the Favorites section of `ws agent`",
-		Long: `Manage the project favorites shown at the top of ` + "`" + `ws agent` + "`" + `.
+		Short: "Pin projects to the Favorites section of `ws explorer`",
+		Long: `Manage the project favorites shown at the top of ` + "`" + `ws explorer` + "`" + `.
 
 Favorites are stored in workspace.toml and sync across machines via
 'ws sync'. The same toggle is available in the TUI as the f hotkey on
 any project row.`,
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Pin / unpin projects shown in the Favorites section of `ws agent`",
-		},
 	}
 	cmd.AddCommand(
 		newFavoriteAddCmd(),
@@ -37,10 +33,6 @@ func newFavoriteAddCmd() *cobra.Command {
 		Use:   "add <project | @group>",
 		Short: "Mark a project or group as favorite",
 		Args:  cobra.ExactArgs(1),
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Pin a project or group to the quick-nav chips of `ws explorer`",
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return setFavorite(args[0], true)
 		},
@@ -52,10 +44,6 @@ func newFavoriteRmCmd() *cobra.Command {
 		Use:   "rm <project | @group>",
 		Short: "Unmark a favorite project or group",
 		Args:  cobra.ExactArgs(1),
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Unpin a project or group from the quick-nav chips of `ws explorer`",
-		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return setFavorite(args[0], false)
 		},
@@ -99,10 +87,7 @@ func newFavoriteListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List favorite projects",
-		Annotations: map[string]string{
-			"capability": "organization",
-			"agent:when": "Print favorited projects with their category and group",
-		},
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var projNames, groupNames []string
 			for n, p := range ws.Projects {

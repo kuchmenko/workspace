@@ -382,7 +382,7 @@ These commands do not synchronize anything.
 
 | Command | Purpose |
 |---|---|
-| `ws` / `ws explorer` / `ws agent` | Open the multi-workspace explorer in a TTY. |
+| `ws` / `ws explorer` | Open the shell-oriented multi-workspace explorer in a TTY. |
 | `ws alias` | Interactive alias management. |
 | `ws alias add/rm/list` | Headless alias management. |
 | `ws alias init [zsh]` | Generate shell initialization code. |
@@ -408,6 +408,8 @@ These commands do not synchronize anything.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,
   `create`, `bootstrap`, and `migrate`.
 - `~/.local/state/ws/aliases.zsh`: generated shell aliases.
+- `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
+  counters; never contains identifiers, arguments, diagnostics, or history.
 
 There are no service, socket, pid, log, watcher, or IPC runtime files.
 

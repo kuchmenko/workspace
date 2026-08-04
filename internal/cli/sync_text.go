@@ -76,7 +76,9 @@ func runSyncHeadless(ctx context.Context, root string, plan workspacesync.Plan, 
 
 	selection := workspacesync.NewSelection(plan, probes)
 	runner := workspacesync.NewRunner(root, log.New(io.Discard, "", 0))
+	notifier := newSyncConflictNotifier(root)
 	report := runner.RunContext(ctx, selection, func(event workspacesync.Event) {
+		notifier.notifyNew()
 		writeSyncEvent(stdout, event)
 	})
 	writeSyncSummary(stdout, report)

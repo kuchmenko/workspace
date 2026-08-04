@@ -10,13 +10,11 @@ type ProgramOption func(*programConfig)
 
 type programConfig struct {
 	altScreen      bool
-	mouse          bool
 	withoutSignals bool
 	ctx            interface{}
 }
 
-func WithAltScreen() ProgramOption       { return func(c *programConfig) { c.altScreen = true } }
-func WithMouseCellMotion() ProgramOption { return func(c *programConfig) { c.mouse = true } }
+func WithAltScreen() ProgramOption { return func(c *programConfig) { c.altScreen = true } }
 func WithoutSignalHandler() ProgramOption {
 	return func(c *programConfig) { c.withoutSignals = true }
 }
@@ -36,9 +34,6 @@ func NewProgram(m Model, opts ...ProgramOption) *Program {
 	teaOpts := []tea.ProgramOption{}
 	if cfg.altScreen {
 		teaOpts = append(teaOpts, tea.WithAltScreen())
-	}
-	if cfg.mouse {
-		teaOpts = append(teaOpts, tea.WithMouseCellMotion())
 	}
 	if cfg.withoutSignals {
 		teaOpts = append(teaOpts, tea.WithoutSignalHandler())
@@ -63,7 +58,6 @@ func (p *Program) Run() (Model, error) {
 }
 
 func (p *Program) Send(msg Msg) { p.p.Send(msg) }
-func (p *Program) Quit()        { p.p.Quit() }
 
 type teaWrapper struct {
 	m Model

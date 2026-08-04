@@ -38,7 +38,7 @@ func (m AddModel) updateManual(msg tui.Msg) (tui.Model, tui.Cmd) {
 			m.editFocus = 0
 			m.editErr = ""
 			m.transitionTo(addStateEdit)
-			return m, nil
+			return m, m.seedEditInputs()
 		case "esc":
 			m.transitionTo(addStateBrowse)
 			m.manualInput.Blur()
@@ -321,15 +321,16 @@ func (m AddModel) startCloneJob(idx int) tui.Cmd {
 			NoClone:   job.FromDisk != "",
 		}
 
-		regRes, err := Register(opts, job.URL)
+		regRes, err := RegisterContext(m.ctx, opts, job.URL)
 		out := cloneDoneMsg{idx: idx}
 		if err != nil {
+			redactedError := git.RedactDiagnostic(err.Error(), job.URL)
 			if errors.Is(err, ErrAlreadyRegistered) {
-				out.skipped = &SkipReason{URL: job.URL, Reason: err.Error()}
+				out.skipped = &SkipReason{URL: git.RedactRemote(job.URL), Reason: redactedError}
 			} else if errors.Is(err, git.ErrNeedsBootstrap) {
 				out.err = fmt.Errorf("%s: default branch ambiguous (run `ws bootstrap %s` after add)", job.Name, job.Name)
 			} else {
-				out.err = err
+				out.err = errors.New(redactedError)
 			}
 		} else if regRes != nil {
 			out.project = regRes.Project
@@ -354,6 +355,13 @@ func (m AddModel) updateCloning(msg tui.Msg) (tui.Model, tui.Cmd) {
 			m.added = append(m.added, msg.project)
 		}
 		m.currentIdx = msg.idx + 1
+		if m.state == addStateAborting {
+			m.transitionTo(addStateDone)
+			if m.standalone {
+				return m, tui.Sequence(emit(m.doneMsg()), tui.Quit)
+			}
+			return m, emit(m.doneMsg())
+		}
 		if m.currentIdx >= len(m.queue) {
 			m.transitionTo(addStateDone)
 			if m.standalone {

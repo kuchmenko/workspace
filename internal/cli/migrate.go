@@ -25,13 +25,9 @@ func newMigrateCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "migrate [project]",
-		Short: "Convert plain checkouts into the bare+worktree layout",
-		Annotations: map[string]string{
-			"capability":   "project",
-			"agent:when":   "Convert a plain git clone into the bare+worktree layout required for cross-machine sync",
-			"agent:safety": "Irreversible layout conversion. Use --check to preview state first. Refuses if dirty unless --wip is set.",
-		},
+		Use:         "migrate [project]",
+		Short:       "Convert plain checkouts into the bare+worktree layout",
+		Annotations: agentAnnotations("project-migrate", AgentInteractionConditional, AgentApprovalConditional, AgentEffectConditional, AgentEffectNone, "text", "0,1"),
 		Long: `Convert one or all active projects from a plain 'git clone' checkout
 into the worktree layout (bare repo as a sibling, main worktree in place).
 

@@ -23,6 +23,7 @@
 package sidecar
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -55,6 +56,19 @@ type Meta struct {
 type Sidecar struct {
 	Meta Meta                       `toml:"meta"`
 	Done map[string]json.RawMessage `toml:"done"`
+}
+
+var ErrLocked = errors.New("sidecar operation is locked")
+
+type Lock struct {
+	file  *os.File
+	owner string
+}
+
+type lockOwner struct {
+	ID      string    `json:"id"`
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
 }
 
 func New(wsRoot string, kind Kind) *Sidecar {
@@ -124,6 +138,77 @@ func Path(wsRoot string, kind Kind) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, hashWorkspace(wsRoot)+".toml"), nil
+}
+
+func lockPath(wsRoot string, kind Kind) (string, error) {
+	p, err := Path(wsRoot, kind)
+	if err != nil {
+		return "", err
+	}
+	return p + ".lock", nil
+}
+
+func AcquireLock(wsRoot string, kind Kind) (*Lock, error) {
+	p, err := lockPath(wsRoot, kind)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return nil, fmt.Errorf("create state dir: %w", err)
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open sidecar lock %s: %w", p, err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrLocked
+		}
+		return nil, fmt.Errorf("acquire sidecar lock %s: %w", p, err)
+	}
+
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		closeLockFile(f)
+		return nil, fmt.Errorf("create sidecar lock owner: %w", err)
+	}
+	owner := hex.EncodeToString(idBytes)
+	data, err := json.Marshal(lockOwner{ID: owner, PID: os.Getpid(), Started: time.Now().UTC()})
+	if err != nil {
+		closeLockFile(f)
+		return nil, fmt.Errorf("encode sidecar lock owner: %w", err)
+	}
+	if err := f.Truncate(0); err != nil {
+		closeLockFile(f)
+		return nil, fmt.Errorf("write sidecar lock owner: %w", err)
+	}
+	if _, err := f.WriteAt(data, 0); err != nil {
+		closeLockFile(f)
+		return nil, fmt.Errorf("write sidecar lock owner: %w", err)
+	}
+	return &Lock{file: f, owner: owner}, nil
+}
+
+func closeLockFile(file *os.File) {
+	_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	_ = file.Close()
+}
+
+func (l *Lock) Release() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	f := l.file
+	l.file = nil
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		f.Close()
+		return fmt.Errorf("release sidecar lock owned by %s: %w", l.owner, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close sidecar lock owned by %s: %w", l.owner, err)
+	}
+	return nil
 }
 
 func Load(wsRoot string, kind Kind) (*Sidecar, error) {

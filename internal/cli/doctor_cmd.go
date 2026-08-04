@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/spf13/cobra"
 )
 
@@ -38,13 +39,10 @@ With --fix, every finding that advertises an auto-fix is applied in
 batch (no prompts). Fixes that require judgement — resolving conflicts,
 clearing index.lock — are never auto-applied; the report prints a hint
 and leaves the action to the user.`,
-		Annotations: map[string]string{
-			"capability":   "observability",
-			"agent:when":   "Diagnose workspace health; surface missing refspecs, stale sidecars, conflicts, config issues.",
-			"agent:safety": "Read-only unless --fix is set. --fix only applies safe, idempotent mutations (refspec, remote URL, branch upstream, default_branch, stale sidecars).",
-		},
-		Args: cobra.MaximumNArgs(1),
+		Annotations: agentAnnotations("diagnose", AgentInteractionNone, AgentApprovalConditional, AgentEffectConditional, AgentEffectRead, "text-or-json", "0,1,2"),
+		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			metrics.RecordDoctorInvoked()
 			only := ""
 			if len(args) == 1 {
 				only = args[0]
@@ -71,11 +69,13 @@ and leaves the action to the user.`,
 					first = false
 				}
 			}
-			report := r.Run()
+			report := r.Run(cmd.Context())
+			metrics.RecordDoctorActionableFound(FixableCount(report))
 
 			var fixesApplied int
 			if fix {
 				fixesApplied = ApplyFixes(report)
+				metrics.RecordDoctorFixApplied(fixesApplied)
 			}
 
 			switch {
@@ -89,7 +89,10 @@ and leaves the action to the user.`,
 				WriteText(os.Stdout, report)
 			}
 
-			os.Exit(exitCodeFor(report, fix, fixesApplied))
+			code := exitCodeFor(report, fix, fixesApplied)
+			if code != exitDoctorOK {
+				return ExitError{Code: code}
+			}
 			return nil
 		},
 	}

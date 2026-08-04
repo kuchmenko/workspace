@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/spf13/cobra"
 )
 
@@ -40,10 +40,7 @@ Exit codes:
   1   outside any workspace OR project registered but not cloned
   2   project name not present in workspace.toml
   64  usage error (more than one argument)`,
-		Annotations: map[string]string{
-			"capability": "observability",
-			"agent:when": "Resolve a project name to its absolute filesystem path. With no argument, prints the workspace root. Designed for shell substitution: cd \"$(ws path foo)\".",
-		},
+		Annotations: agentAnnotations("path", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "path", "0,1,2,64"),
 
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) > 1 {
@@ -87,7 +84,11 @@ func runPath(stdout, stderr io.Writer, wsRoot string, ws *config.Workspace, args
 		writeUnknownProject(stderr, name, ws.Projects)
 		return pathExitUnknownProj
 	}
-	abs := filepath.Join(wsRoot, proj.Path)
+	abs, err := layout.ProjectPath(wsRoot, proj.Path)
+	if err != nil {
+		fmt.Fprintf(stderr, "ws path: invalid path for %q: %v\n", name, err)
+		return pathExitMissingDir
+	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
 		fmt.Fprintf(stderr, "ws path: not cloned: %q (path: %s)\nhint: ws bootstrap %s\n", name, proj.Path, name)

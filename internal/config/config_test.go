@@ -30,6 +30,86 @@ func readWS(t *testing.T, dir string) string {
 	return string(b)
 }
 
+func TestSavePreservesWorkspaceSymlinkAndTargetMode(t *testing.T) {
+	root := t.TempDir()
+	targetDir := t.TempDir()
+	target := filepath.Join(targetDir, "registry.toml")
+	if err := os.WriteFile(target, []byte("[meta]\nversion = 1\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "workspace.toml")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{Meta: Meta{Version: 1}, Projects: map[string]Project{}}
+	if err := Save(root, ws); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("workspace.toml symlink was replaced")
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := targetInfo.Mode().Perm(); got != 0o640 {
+		t.Fatalf("target mode = %o, want 640", got)
+	}
+	if _, err := Load(root); err != nil {
+		t.Fatalf("saved workspace is invalid: %v", err)
+	}
+}
+
+func TestSaveFailedReplacementLeavesOriginalContent(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "workspace.toml")
+	original := []byte("original\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+	err := Save(root, &Workspace{Meta: Meta{Version: 1}})
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to a read-only directory")
+	}
+	if err == nil {
+		t.Fatal("Save succeeded in read-only directory")
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("original changed to %q", got)
+	}
+}
+
+func TestSaveRejectsDanglingWorkspaceSymlink(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "workspace.toml")
+	missing := filepath.Join(t.TempDir(), "missing.toml")
+	if err := os.Symlink(missing, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(root, &Workspace{Meta: Meta{Version: 1}}); err == nil {
+		t.Fatal("Save replaced dangling workspace.toml symlink")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("workspace.toml symlink was replaced")
+	}
+}
+
 func TestLoad_MigratesLegacyOwned(t *testing.T) {
 	const legacy = `
 [meta]

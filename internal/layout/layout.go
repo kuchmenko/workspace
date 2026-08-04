@@ -16,11 +16,74 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+func ProjectPath(workspaceRoot, projectPath string) (string, error) {
+	clean, err := validateProjectPath(projectPath)
+	if err != nil {
+		return "", err
+	}
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	target := filepath.Join(root, clean)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	ancestor, err := existingAncestor(target)
+	if err != nil {
+		return "", fmt.Errorf("inspect project path %q: %w", projectPath, err)
+	}
+	resolvedAncestor, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", fmt.Errorf("resolve project path %q: %w", projectPath, err)
+	}
+	if !isWithin(resolvedRoot, resolvedAncestor) {
+		return "", fmt.Errorf("project path %q escapes the workspace through a symlink", projectPath)
+	}
+	return target, nil
+}
+
+func validateProjectPath(projectPath string) (string, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return "", errors.New("project path must not be empty")
+	}
+	if filepath.IsAbs(projectPath) {
+		return "", fmt.Errorf("project path %q must be relative", projectPath)
+	}
+	clean := filepath.Clean(projectPath)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("project path %q must stay inside the workspace", projectPath)
+	}
+	return clean, nil
+}
+
+func existingAncestor(path string) (string, error) {
+	for {
+		if _, err := os.Lstat(path); err == nil {
+			return path, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", errors.New("no existing workspace ancestor")
+		}
+		path = parent
+	}
+}
+
+func isWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
 
 func BarePath(mainWorktree string) string {
 	return mainWorktree + ".bare"

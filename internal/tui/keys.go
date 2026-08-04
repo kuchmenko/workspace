@@ -25,8 +25,6 @@ const (
 	KeyCtrlD
 )
 
-const KeyEscape = KeyEsc
-
 type KeyMsg struct {
 	Type  KeyType
 	Runes []rune

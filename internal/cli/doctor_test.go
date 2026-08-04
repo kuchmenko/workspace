@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -113,7 +114,7 @@ func TestRunner_OnScopeOrder(t *testing.T) {
 			}
 		},
 	}
-	rep := r.Run()
+	rep := r.Run(context.Background())
 
 	want := []string{"system", "alpha", "beta"}
 	if len(gotScopes) != len(want) {

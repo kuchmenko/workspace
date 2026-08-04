@@ -126,3 +126,46 @@ func TestBarePath(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestProjectPath(t *testing.T) {
+	realRoot := t.TempDir()
+	rootParent := t.TempDir()
+	rootLink := filepath.Join(rootParent, "workspace")
+	if err := os.Symlink(realRoot, rootLink); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(realRoot, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		root string
+		path string
+		ok   bool
+	}{
+		{name: "absolute", root: realRoot, path: filepath.Join(outside, "app")},
+		{name: "traversal", root: realRoot, path: "../app"},
+		{name: "safe nested", root: realRoot, path: "personal/app", ok: true},
+		{name: "workspace root symlink", root: rootLink, path: "personal/app", ok: true},
+		{name: "child symlink escape", root: realRoot, path: "escape/app"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := ProjectPath(test.root, test.path)
+			if test.ok {
+				if err != nil {
+					t.Fatalf("ProjectPath: %v", err)
+				}
+				want, _ := filepath.Abs(filepath.Join(test.root, filepath.Clean(test.path)))
+				if got != want {
+					t.Fatalf("ProjectPath = %q, want %q", got, want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("ProjectPath = %q, want error", got)
+			}
+		})
+	}
+}

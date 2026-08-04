@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -26,9 +28,7 @@ func setupMirrorProject(t *testing.T) (r *Runner, proj config.Project, barePath,
 	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := git.CloneBare(originURL, barePath); err != nil {
-		t.Fatalf("CloneBare: %v", err)
-	}
+	testutil.CloneBare(t, originURL, barePath)
 	if err := git.SetFetchRefspec(barePath); err != nil {
 		t.Fatalf("SetFetchRefspec: %v", err)
 	}
@@ -66,6 +66,33 @@ func mirrorConflicts(t *testing.T, r *Runner) []conflict.Conflict {
 		}
 	}
 	return out
+}
+
+func (r *Runner) syncProject(name string, project *config.Project, machine string, touched *bool) error {
+	mainPath := filepath.Join(r.root, project.Path)
+	barePath := layout.BarePath(mainPath)
+	state, diagnostic := classifyProject(mainPath, barePath)
+	planned := ProjectPlan{
+		Name:       name,
+		State:      state,
+		MainPath:   mainPath,
+		BarePath:   barePath,
+		Diagnostic: diagnostic,
+		Snapshot:   snapshotProject(*project),
+		MirrorURLs: make(map[string]string),
+	}
+	base := projectNetworkBase(r.root, planned)
+	planned.OriginURL, _ = git.ResolveRemoteURL(project.Remote, base)
+	selectedMirrors := make(map[string]bool, len(project.Mirrors))
+	for mirror, url := range project.Mirrors {
+		selectedMirrors[mirror] = true
+		planned.MirrorURLs[mirror], _ = git.ResolveRemoteURL(url, base)
+	}
+	result := r.syncPlannedProject(context.Background(), planned, project, machine, touched, selectedMirrors, nil, nil)
+	if result.Status == ResultFailed {
+		return errors.New(result.Diagnostic)
+	}
+	return nil
 }
 
 func TestSyncProjectMirrorReceivesAndCatchesUp(t *testing.T) {

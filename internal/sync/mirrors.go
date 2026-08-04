@@ -84,12 +84,8 @@ func (r *Runner) recordMirrorConflict(project, mirror, url string, cause error) 
 	}
 	details, _ := json.Marshal(map[string]string{"message": git.RedactDiagnostic(cause.Error(), url), "mirror": mirror, "url": git.RedactRemote(url)})
 	stored := conflict.Conflict{Workspace: r.root, Project: project, Branch: mirror, Kind: conflict.KindMirrorPushFailed, Details: details}
-	created, err := r.store.Record(stored)
+	_, err := r.store.Record(stored)
 	if err != nil {
 		r.logger.Printf("sync: record %s: %v", conflict.KindMirrorPushFailed, err)
-		return
-	}
-	if created {
-		notifyConflict(stored)
 	}
 }

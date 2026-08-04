@@ -31,10 +31,33 @@ func (t *TextInput) SetCharLimit(n int)      { t.ti.CharLimit = n }
 func (t *TextInput) SetWidth(w int)          { t.ti.Width = w }
 func (t *TextInput) CursorEnd()              { t.ti.CursorEnd() }
 
+func WindowAround(cursor, total, size int) (int, int) {
+	if total <= 0 || size <= 0 {
+		return 0, 0
+	}
+	if total <= size {
+		return 0, total
+	}
+	if cursor < 0 {
+		cursor = 0
+	} else if cursor >= total {
+		cursor = total - 1
+	}
+	start := cursor - size/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + size
+	if end > total {
+		end = total
+		start = end - size
+	}
+	return start, end
+}
+
 type SpinnerStyle struct{ s spinner.Spinner }
 
 var DotSpinner = SpinnerStyle{s: spinner.Dot}
-var LineSpinner = SpinnerStyle{s: spinner.Line}
 
 type Spinner struct{ sp spinner.Model }
 

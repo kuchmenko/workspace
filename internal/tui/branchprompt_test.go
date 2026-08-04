@@ -16,7 +16,7 @@ func keyMsg(s string) KeyMsg {
 	case "enter":
 		return KeyMsg{Type: KeyEnter}
 	case "esc":
-		return KeyMsg{Type: KeyEscape}
+		return KeyMsg{Type: KeyEsc}
 	default:
 		return KeyMsg{Type: KeyRunes, Runes: []rune(s)}
 	}

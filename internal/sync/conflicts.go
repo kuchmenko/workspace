@@ -27,7 +27,6 @@ func (r *Runner) recordProjectConflict(project, branch string, kind conflict.Kin
 	}
 	if created {
 		r.logger.Printf("sync: new conflict %s for %s/%s: %s", kind, project, branch, msg)
-		notifyConflict(c)
 	}
 }
 
@@ -56,7 +55,6 @@ func (r *Runner) recordTOMLConflict(workspace string, kind conflict.Kind, cause 
 	}
 	if created {
 		r.logger.Printf("sync: new conflict %s in %s: %s", kind, workspace, diagnostic)
-		notifyConflict(c)
 	}
 }
 

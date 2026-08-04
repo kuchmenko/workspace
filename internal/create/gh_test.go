@@ -58,7 +58,7 @@ func TestCurrentUser_AuthErr(t *testing.T) {
 		},
 	}
 	_, err := CurrentUser(r)
-	if !IsAuthErr(err) {
+	if !errors.Is(err, errGHAuth) {
 		t.Errorf("want auth err, got %v", err)
 	}
 }
@@ -173,7 +173,7 @@ func TestCreateRepo_AlreadyExists(t *testing.T) {
 	_, err := CreateRepo(r, CreateRepoOptions{
 		Owner: "me", Name: "dup", Visibility: VisibilityPrivate,
 	})
-	if !IsRepoExistsErr(err) {
+	if !errors.Is(err, errRepoExists) {
 		t.Errorf("want repo-exists err, got %v", err)
 	}
 }

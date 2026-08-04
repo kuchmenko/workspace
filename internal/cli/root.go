@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +21,7 @@ var (
 )
 
 var workspaceIndependentCommands = map[string]bool{
-	"help": true, "completion": true, "docs": true, "agent": true,
+	"help": true, "completion": true, "docs": true,
 	"explorer": true, "ws": true, "workspace": true,
 }
 
@@ -130,7 +133,15 @@ func findWorkspaceRoot() error {
 }
 
 func Execute() {
-	if err := NewRootCmd().Execute(); err != nil {
+	root := NewRootCmd()
+	started := time.Now()
+	cmd, err := root.ExecuteC()
+	path := "ws"
+	if cmd != nil {
+		path = cmd.CommandPath()
+	}
+	metrics.RecordCommand(path, commandTerminal(), commandOutcome(err), time.Since(started))
+	if err != nil {
 		var exitErr ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code)
@@ -140,6 +151,23 @@ func Execute() {
 	}
 }
 
+func commandTerminal() bool {
+	stdinTTY := isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
+	stdoutTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	return stdinTTY && stdoutTTY
+}
+
+func commandOutcome(err error) metrics.Outcome {
+	if err == nil {
+		return metrics.Success
+	}
+	var exitErr ExitError
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &exitErr) && exitErr.Code == 130 {
+		return metrics.Canceled
+	}
+	return metrics.Failure
+}
+
 func saveWorkspace() error {
 	if err := config.Save(wsRoot, ws); err != nil {
 		return fmt.Errorf("saving workspace.toml: %w", err)
@@ -147,6 +175,8 @@ func saveWorkspace() error {
 
 	if err := alias.WriteStateFile(ws, wsRoot); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not update alias state file: %v\n", err)
+	} else {
+		metrics.RecordAliasStateGenerated()
 	}
 
 	return nil

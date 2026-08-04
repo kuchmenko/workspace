@@ -1,249 +1,110 @@
-package cli_test
+package cli
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
-
-	"github.com/kuchmenko/workspace/internal/cli"
-	"github.com/spf13/cobra"
 )
 
-func newTestTree() *cobra.Command {
-	root := &cobra.Command{
-		Use:   "ws",
-		Short: "Test workspace manager",
+func TestAgentContractProductionInventory(t *testing.T) {
+	contract := GenerateAgentContract(NewRootCmd())
+	want := []string{
+		"ws add",
+		"ws alias add",
+		"ws alias install",
+		"ws alias list",
+		"ws alias rm",
+		"ws auth logout",
+		"ws doctor",
+		"ws migrate",
+		"ws path",
+		"ws sync",
+		"ws workspace add",
+		"ws workspace list",
+		"ws workspace rm",
+		"ws worktree add",
+		"ws worktree list",
+		"ws worktree push",
+		"ws worktree rm",
 	}
-
-	add := &cobra.Command{
-		Use:   "add <remote-url>",
-		Short: "Register and clone a new project",
-		Annotations: map[string]string{
-			cli.KeyCapability:  "project",
-			cli.KeyAgentWhen:   "Register a new repo",
-			cli.KeyAgentSafety: "Creates a directory",
-		},
-	}
-	add.Flags().String("category", "personal", "project category")
-	add.Flags().Bool("no-clone", false, "register without cloning")
-
-	status := &cobra.Command{
-		Use:   "status",
-		Short: "Show projects",
-		Annotations: map[string]string{
-			cli.KeyCapability: "project",
-			cli.KeyAgentWhen:  "Get an overview of projects",
-		},
-	}
-
-	help := &cobra.Command{
-		Use:   "help",
-		Short: "Help about any command",
-	}
-
-	hidden := &cobra.Command{
-		Use:    "internal",
-		Short:  "Internal command",
-		Hidden: true,
-		Annotations: map[string]string{
-			cli.KeyCapability: "project",
-			cli.KeyAgentWhen:  "Should not appear",
-		},
-	}
-
-	sync := &cobra.Command{
-		Use:   "sync",
-		Short: "Run sync",
-		Annotations: map[string]string{
-			cli.KeyCapability: "sync",
-			cli.KeyAgentWhen:  "Trigger explicit foreground sync",
-		},
-	}
-
-	wt := &cobra.Command{
-		Use:   "worktree",
-		Short: "Manage worktrees",
-	}
-	wtAdd := &cobra.Command{
-		Use:   "add <project> <branch>",
-		Short: "Create a worktree",
-		Annotations: map[string]string{
-			cli.KeyCapability: "worktree",
-			cli.KeyAgentWhen:  "Start a new feature branch",
-		},
-	}
-	wtAdd.Flags().String("from", "", "base ref")
-	wt.AddCommand(wtAdd)
-
-	root.AddCommand(add, status, help, hidden, sync, wt)
-	return root
-}
-
-func TestGenerateAgentCapabilityMap(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	if m.Tool != "ws" {
-		t.Errorf("Tool = %q, want %q", m.Tool, "ws")
-	}
-	if m.Description != "Test workspace manager" {
-		t.Errorf("Description = %q, want %q", m.Description, "Test workspace manager")
-	}
-
-	if len(m.Capabilities) != 3 {
-		t.Fatalf("got %d capability groups, want 3: %v",
-			len(m.Capabilities), capNames(m.Capabilities))
-	}
-
-	proj, ok := m.Capabilities["project"]
-	if !ok {
-		t.Fatal("missing 'project' capability group")
-	}
-	if len(proj.Commands) != 2 {
-		t.Errorf("project group has %d commands, want 2", len(proj.Commands))
-	}
-
-	syncGrp, ok := m.Capabilities["sync"]
-	if !ok {
-		t.Fatal("missing 'sync' capability group")
-	}
-	if len(syncGrp.Commands) != 1 {
-		t.Errorf("sync group has %d commands, want 1", len(syncGrp.Commands))
-	}
-
-	wtGrp, ok := m.Capabilities["worktree"]
-	if !ok {
-		t.Fatal("missing 'worktree' capability group")
-	}
-	if len(wtGrp.Commands) != 1 {
-		t.Errorf("worktree group has %d commands, want 1", len(wtGrp.Commands))
-	}
-
-	if len(m.Constraints) == 0 {
-		t.Error("Constraints is empty")
-	}
-}
-
-func TestCommandUseIncludesParents(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	wtGrp := m.Capabilities["worktree"]
-	if len(wtGrp.Commands) == 0 {
-		t.Fatal("no worktree commands")
-	}
-	cmd := wtGrp.Commands[0]
-	want := "ws worktree add <project> <branch>"
-	if cmd.Command != want {
-		t.Errorf("Command = %q, want %q", cmd.Command, want)
-	}
-}
-
-func TestFlagsAreCollected(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	proj := m.Capabilities["project"]
-	var addCmd *cli.AgentCommand
-	for i := range proj.Commands {
-		if proj.Commands[i].Command == "ws add <remote-url>" {
-			addCmd = &proj.Commands[i]
-			break
+	got := make([]string, len(contract.Commands))
+	for index, command := range contract.Commands {
+		got[index] = command.Canonical
+		if command.Capability == "" || command.Interaction == "" || command.Approval == "" || command.Mutation == "" || command.Network == "" || command.Stdout == "" || len(command.ExitCodes) == 0 {
+			t.Errorf("%s has incomplete agent metadata: %+v", command.Canonical, command)
+		}
+		if !reflect.DeepEqual(command.InheritedFlags, []string{"--root"}) {
+			t.Errorf("%s inherited flags = %v, want [--root]", command.Canonical, command.InheritedFlags)
 		}
 	}
-	if addCmd == nil {
-		t.Fatal("add command not found in project group")
-		return
-	}
-	if len(addCmd.Flags) != 2 {
-		t.Errorf("add has %d flags, want 2: %v", len(addCmd.Flags), addCmd.Flags)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("agent inventory = %v, want %v", got, want)
 	}
 }
 
-func TestSafetyFieldOptional(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	proj := m.Capabilities["project"]
-	for _, cmd := range proj.Commands {
-		switch cmd.Command {
-		case "ws add <remote-url>":
-			if cmd.Safety == "" {
-				t.Error("add should have a safety annotation")
-			}
-		case "ws status":
-			if cmd.Safety != "" {
-				t.Errorf("status should have no safety, got %q", cmd.Safety)
-			}
-		}
+func TestAgentContractAliasesAndSafetyDistinctions(t *testing.T) {
+	contract := GenerateAgentContract(NewRootCmd())
+	commands := map[string]AgentCommand{}
+	for _, command := range contract.Commands {
+		commands[command.Canonical] = command
+	}
+	if !reflect.DeepEqual(commands["ws workspace rm"].Aliases, []string{"ws workspace remove"}) {
+		t.Errorf("workspace rm aliases = %v", commands["ws workspace rm"].Aliases)
+	}
+	if !reflect.DeepEqual(commands["ws worktree add"].Aliases, []string{"ws wt add"}) {
+		t.Errorf("worktree add aliases = %v", commands["ws worktree add"].Aliases)
+	}
+	if commands["ws migrate"].Mutation != AgentEffectConditional {
+		t.Errorf("migrate mutation = %q, want conditional for --check", commands["ws migrate"].Mutation)
+	}
+	if commands["ws add"].Interaction != AgentInteractionConditional {
+		t.Errorf("add interaction = %q, want conditional", commands["ws add"].Interaction)
+	}
+	if commands["ws add"].Network != AgentEffectRead || commands["ws doctor"].Network != AgentEffectRead || commands["ws worktree add"].Network != AgentEffectRead {
+		t.Errorf("read-only network metadata: add=%q doctor=%q worktree-add=%q", commands["ws add"].Network, commands["ws doctor"].Network, commands["ws worktree add"].Network)
 	}
 }
 
-func TestHiddenCommandsExcluded(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	for _, grp := range m.Capabilities {
-		for _, cmd := range grp.Commands {
-			if cmd.When == "Should not appear" {
-				t.Error("hidden command should be excluded from output")
-			}
-		}
-	}
-}
-
-func TestUnannotatedCommandsExcluded(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	for _, grp := range m.Capabilities {
-		for _, cmd := range grp.Commands {
-			if cmd.Command == "ws help" {
-				t.Error("unannotated command should be excluded")
-			}
-		}
-	}
-}
-
-func TestJSONRoundTrip(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	data, err := json.MarshalIndent(m, "", "  ")
+func TestAgentContractJSONDeterministic(t *testing.T) {
+	root := NewRootCmd()
+	first, err := json.MarshalIndent(GenerateAgentContract(root), "", "  ")
 	if err != nil {
-		t.Fatalf("marshal: %v", err)
+		t.Fatal(err)
 	}
-
-	var decoded cli.AgentCapabilityMap
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	second, err := json.MarshalIndent(GenerateAgentContract(root), "", "  ")
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	if decoded.Tool != m.Tool {
-		t.Errorf("round-trip Tool mismatch: %q vs %q", decoded.Tool, m.Tool)
+	if !reflect.DeepEqual(first, second) {
+		t.Fatal("agent contract JSON is not deterministic")
 	}
-	if len(decoded.Capabilities) != len(m.Capabilities) {
-		t.Errorf("round-trip Capabilities count: %d vs %d",
-			len(decoded.Capabilities), len(m.Capabilities))
+	var decoded AgentContract
+	if err := json.Unmarshal(first, &decoded); err != nil {
+		t.Fatalf("decode contract: %v", err)
 	}
-}
-
-func TestSortedCapabilityKeys(t *testing.T) {
-	root := newTestTree()
-	m := cli.GenerateAgentCapabilityMap(root)
-
-	keys := cli.SortedCapabilityKeys(m.Capabilities)
-	if len(keys) != 3 {
-		t.Fatalf("got %d keys, want 3", len(keys))
-	}
-	if keys[0] != "project" || keys[1] != "sync" || keys[2] != "worktree" {
-		t.Errorf("key order = %v, want [project sync worktree]", keys)
+	if !reflect.DeepEqual(decoded, *GenerateAgentContract(root)) {
+		t.Fatal("agent contract JSON round trip changed the schema")
 	}
 }
 
-func capNames(m map[string]cli.CapabilityGroup) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
+func TestZeroArgumentLeavesRejectStrayArguments(t *testing.T) {
+	paths := [][]string{
+		{"sync"}, {"sync", "resolve"}, {"setup"}, {"status"}, {"scan"},
+		{"favorite", "list"}, {"auth", "login"}, {"auth", "logout"}, {"auth", "status"},
+		{"alias", "list"}, {"alias", "install"}, {"docs"}, {"create"},
 	}
-	return out
+	root := NewRootCmd()
+	for _, path := range paths {
+		command, _, err := root.Find(path)
+		if err != nil {
+			t.Fatalf("find %v: %v", path, err)
+		}
+		if command.Args == nil {
+			t.Errorf("%s has no argument validator", command.CommandPath())
+			continue
+		}
+		if err := command.Args(command, []string{"stray"}); err == nil {
+			t.Errorf("%s accepted a stray argument", command.CommandPath())
+		}
+	}
 }

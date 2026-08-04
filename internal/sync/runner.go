@@ -28,31 +28,6 @@ func NewRunner(root string, logger *log.Logger) *Runner {
 	return &Runner{root: root, logger: logger, store: store}
 }
 
-func (r *Runner) Run() Report {
-	ws, err := config.Load(r.root)
-	if err != nil {
-		report := Report{}
-		r.addWorkspaceFailure(&report, "load", err, nil)
-		return report
-	}
-	plan := BuildPlan(r.root, ws)
-	probes := Probe(context.Background(), plan, nil)
-	selection := NewSelection(plan, probes)
-	for _, target := range plan.Targets {
-		selection.targets[target.ID] = target.Executable
-	}
-	for _, project := range plan.Projects {
-		selection.projects[project.Name] = true
-	}
-	report := r.RunContext(context.Background(), selection, nil)
-	for _, result := range append(append([]OperationResult{}, report.Workspace...), report.Projects...) {
-		if result.Status == ResultFailed {
-			r.logger.Printf("sync: %s failed: %s", result.Operation, result.Diagnostic)
-		}
-	}
-	return report
-}
-
 func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent func(Event)) Report {
 	report := Report{}
 	if sc := sidecar.AnyActive(r.root); sc != nil {

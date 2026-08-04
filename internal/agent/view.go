@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -50,10 +51,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindProject:
 			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
-		case KindWorktree:
-			line = m.renderWorktree(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
-		case KindPortal:
-			line = m.renderSession(item, selected, listW, dimAll, inFlash, isMatch, flashLabel)
 		}
 
 		rows = append(rows, line)
@@ -64,29 +61,24 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 func (m *Model) itemGroupKey(item listItem) string {
 	switch item.kind {
 	case KindGroup:
-		return "g:" + item.group
+		return "g:" + groupKey(item.workspaceRoot, item.group)
 	case KindProject:
 		if item.project.Group != "" {
-			return "g:" + item.project.Group
+			return "g:" + groupKey(item.workspaceRoot, item.project.Group)
 		}
-		return "ungrouped"
-	case KindWorktree, KindPortal:
-		if item.parentProj != nil && item.parentProj.Group != "" {
-			return "g:" + item.parentProj.Group
-		}
-		return "ungrouped"
+		return "ungrouped:" + item.workspaceRoot
 	}
 	return ""
 }
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
-	if m.expanded[item.group] {
+	if m.expanded[groupKey(item.workspaceRoot, item.group)] {
 		arrow = "▾"
 	}
-	name := item.group
+	name := presentLabel(item.group)
 	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 	label := fmt.Sprintf("   %s %s", arrow, name)
 
@@ -103,9 +95,9 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	p := item.project
 	indent := strings.Repeat("    ", item.indent)
 
-	name := p.Name
+	name := presentLabel(p.Name)
 	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 
 	icon := DetectIcon(p.Path)
@@ -114,9 +106,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	var badgeParts []string
 	if p.WorktreeCount > 1 {
 		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
-	}
-	if p.SessionCount > 0 {
-		badgeParts = append(badgeParts, fmt.Sprintf("%ds", p.SessionCount))
 	}
 	badges := strings.Join(badgeParts, " · ")
 
@@ -139,100 +128,6 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 	return itemStyle.Width(w).Render(line)
 }
-
-func (m *Model) renderWorktree(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("    ", item.indent)
-	name := item.group
-	if name == "" {
-		name = "worktree"
-	}
-	if inFlash && isMatch {
-		name = flashInlineLabel(name, m.flashQuery, flashLabel)
-	}
-
-	var status string
-	if item.worktree != nil {
-		if item.worktree.Dirty {
-			status += "*"
-		}
-		if item.worktree.Ahead > 0 {
-			status += fmt.Sprintf(" ↑%d", item.worktree.Ahead)
-		}
-		status = strings.TrimSpace(status)
-	}
-
-	prefix := fmt.Sprintf(" %s%s ", indent, iconWorktree)
-
-	maxName := w - tui.Width(prefix) - tui.Width(status) - 2
-	if maxName > 0 && !inFlash {
-		name = truncateStr(name, maxName)
-	}
-
-	left := prefix + name
-	if status != "" {
-		line := m.padRight(left, status+" ", w)
-		if dimAll || (inFlash && !isMatch) {
-			return dimStyle.Width(w).Render(line)
-		}
-		if selected {
-			return m.renderSelected(line, wtStyle, w)
-		}
-		leftRendered := wtStyle.Render(left)
-		padding := w - tui.Width(left) - tui.Width(status) - 1
-		if padding < 1 {
-			padding = 1
-		}
-		return leftRendered + strings.Repeat(" ", padding) + wtStatusStyle.Render(status)
-	}
-
-	label := left
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, wtStyle, w)
-	}
-	return wtStyle.Width(w).Render(label)
-}
-
-func (m *Model) renderSession(item listItem, selected bool, w int, dimAll bool, inFlash bool, isMatch bool, flashLabel rune) string {
-	indent := strings.Repeat("    ", item.indent)
-	title := "(session)"
-	if item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated), item.session.Title)
-	}
-	if inFlash && isMatch && item.session != nil {
-		title = fmt.Sprintf("%s  %s", TimeAgo(item.session.Updated),
-			flashInlineLabel(item.session.Title, m.flashQuery, flashLabel))
-	}
-
-	prefix := fmt.Sprintf(" %s%s ", indent, iconSession)
-	maxTitle := w - len([]rune(prefix)) - 1
-	if maxTitle > 0 {
-		title = truncateStr(title, maxTitle)
-	}
-	label := prefix + title
-
-	if dimAll || (inFlash && !isMatch) {
-		return dimStyle.Width(w).Render(label)
-	}
-	if selected {
-		return m.renderSelected(label, sessionStyle, w)
-	}
-	return sessionStyle.Width(w).Render(label)
-}
-
-func truncateStr(s string, maxLen int) string {
-	runes := []rune(s)
-	if len(runes) <= maxLen {
-		return s
-	}
-	if maxLen <= 1 {
-		return "…"
-	}
-	return string(runes[:maxLen-1]) + "…"
-}
-
 func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
 
@@ -273,7 +168,7 @@ func (m *Model) viewList() string {
 		if m.flashGlobal {
 			prefix = iconSearch + " all"
 		}
-		searchLine := fmt.Sprintf(" %s %s█", prefix, m.flashQuery)
+		searchLine := fmt.Sprintf(" %s %s", prefix, m.flashQuery.View())
 		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
 	} else {
 		bc := m.breadcrumb()
@@ -285,7 +180,7 @@ func (m *Model) viewList() string {
 	rows = append(rows, m.renderListRows(listW, false)...)
 
 	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+m.statusMsg))
+		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+presentLabel(m.statusMsg)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump · esc cancel"
@@ -336,7 +231,7 @@ func buildHeaderChips(workspaces []WorkspaceData) []Chip {
 			favs = append(favs, Chip{
 				Kind:          KindGroup,
 				Name:          g,
-				Path:          GroupPath(ws.Root, g),
+				Path:          filepath.Join(ws.Root, g),
 				Favorite:      true,
 				WorkspaceRoot: ws.Root,
 			})
@@ -406,9 +301,9 @@ func formatChip(num int, c Chip) string {
 	if c.Favorite {
 		star = "*"
 	}
-	body := c.Name
+	body := presentLabel(c.Name)
 	if c.Kind == KindGroup {
-		body = "@" + c.Name
+		body = "@" + body
 	}
 	age := humanizeAge(c.LastActiveAt)
 	if age == "" {
@@ -511,10 +406,7 @@ var (
 	itemStyle      = tui.Amber.Item
 	dimStyle       = tui.Amber.Dim
 
-	wtStyle       = tui.NewStyle().Foreground("108")
-	sessionStyle  = tui.NewStyle().Foreground("110")
-	badgeStyle    = tui.NewStyle().Foreground("240")
-	wtStatusStyle = tui.NewStyle().Foreground("173")
+	badgeStyle = tui.NewStyle().Foreground("240")
 
 	statusMsgStyle    = tui.NewStyle().Foreground("215").Bold(true)
 	favoriteStarStyle = tui.NewStyle().Foreground("215")
@@ -549,8 +441,8 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "esc":
 		m.exitFlash(false)
 	case "backspace":
-		if len(m.flashQuery) > 0 {
-			m.flashQuery = m.flashQuery[:len(m.flashQuery)-1]
+		if m.flashQuery.Value() != "" {
+			m.flashQuery, _ = m.flashQuery.Update(msg)
 			m.recomputeFlash()
 		} else {
 			m.exitFlash(false)
@@ -563,10 +455,11 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		m.exitFlash(true)
 	default:
-		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
-			ch := rune(key[0])
+		if msg.Type == tui.KeyRunes {
+			runes := msg.Runes
 
-			if m.flashQuery != "" {
+			if m.flashQuery.Value() != "" && len(runes) == 1 {
+				ch := runes[0]
 				for i, label := range m.flashLabels {
 					if label != 0 && ch == label && i < len(m.flashMatches) {
 						m.cursor = m.flashMatches[i]
@@ -577,7 +470,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 				}
 			}
 
-			m.flashQuery += key
+			m.flashQuery, _ = m.flashQuery.Update(msg)
 			m.recomputeFlash()
 		}
 	}
@@ -585,6 +478,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) exitFlash(jumped bool) {
+	m.flashQuery.Blur()
 	m.mode = viewList
 	if m.flashGlobal && !jumped && m.savedExpanded != nil {
 		m.expanded = m.savedExpanded
@@ -596,7 +490,7 @@ func (m *Model) exitFlash(jumped bool) {
 }
 
 func (m *Model) recomputeFlash() {
-	query := strings.ToLower(m.flashQuery)
+	query := strings.ToLower(m.flashQuery.Value())
 	m.flashMatches = nil
 	m.flashLabels = nil
 
@@ -618,7 +512,7 @@ func (m *Model) recomputeFlash() {
 }
 
 func (m *Model) availableJumpLabels() []rune {
-	query := strings.ToLower(m.flashQuery)
+	query := strings.ToLower(m.flashQuery.Value())
 	if query == "" {
 		return nil
 	}
@@ -646,12 +540,6 @@ func (m *Model) itemSearchName(item listItem) string {
 		return item.group
 	case KindProject:
 		return item.project.Name
-	case KindWorktree:
-		return item.group
-	case KindPortal:
-		if item.session != nil {
-			return item.session.Title
-		}
 	}
 	return ""
 }
@@ -660,14 +548,20 @@ func flashInlineLabel(name, query string, label rune) string {
 	if query == "" {
 		return name
 	}
-	lower := strings.ToLower(name)
-	q := strings.ToLower(query)
-	idx := strings.Index(lower, q)
+	runes := []rune(name)
+	lower := []rune(strings.ToLower(name))
+	q := []rune(strings.ToLower(query))
+	idx := -1
+	for i := 0; i+len(q) <= len(lower); i++ {
+		if string(lower[i:i+len(q)]) == string(q) {
+			idx = i
+			break
+		}
+	}
 	if idx < 0 {
 		return name
 	}
 	matchEnd := idx + len(q)
-	runes := []rune(name)
 
 	var b strings.Builder
 	if idx > 0 {
@@ -685,15 +579,4 @@ func flashInlineLabel(name, query string, label rune) string {
 		}
 	}
 	return b.String()
-}
-
-func (m *Model) openSheetForChip(c Chip) {
-	switch c.Kind {
-	case KindProject:
-		if c.Project != nil {
-			m.sheet = newProjectSheet(m, c.Project, nil)
-		}
-	case KindGroup:
-		m.sheet = newGroupSheet(m, c.Name)
-	}
 }

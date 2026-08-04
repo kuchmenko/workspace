@@ -166,9 +166,7 @@ func TestRunContextCanceledConversionsRestoreOriginsBeforeSave(t *testing.T) {
 	}}
 	for _, project := range workspace.Projects {
 		barePath := layout.BarePath(filepath.Join(root, project.Path))
-		if err := git.CloneBare(sshRemote, barePath); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CloneBare(t, sshRemote, barePath)
 		if err := git.SetRemoteURL(barePath, testHTTPSRemote); err != nil {
 			t.Fatal(err)
 		}
@@ -248,11 +246,10 @@ func TestRunContextRestoresOriginWhenConversionSaveFails(t *testing.T) {
 	if err := selection.SelectConversion(plan.Projects[0].OriginID); err != nil {
 		t.Fatal(err)
 	}
-	tomlPath := filepath.Join(root, "workspace.toml")
-	if err := os.Chmod(tomlPath, 0o444); err != nil {
+	if err := os.Chmod(root, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(tomlPath, 0o644)
+	defer os.Chmod(root, 0o755)
 
 	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
 	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultFailed {
@@ -305,9 +302,7 @@ func setupConvertibleProject(t *testing.T, blocked bool) (string, *config.Worksp
 		if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := git.CloneBare(remote, barePath); err != nil {
-			t.Fatal(err)
-		}
+		testutil.CloneBare(t, remote, barePath)
 		if err := git.SetRemoteURL(barePath, testHTTPSRemote); err != nil {
 			t.Fatal(err)
 		}

@@ -19,7 +19,7 @@ func TestSyncTOMLPushesEveryCommit(t *testing.T) {
 	r := NewRunner(wsRoot, log.New(io.Discard, "", 0))
 
 	appendFile(t, filepath.Join(wsRoot, "workspace.toml"), "# edit A\n")
-	if _, err := r.syncTOML(); err != nil {
+	if _, err := syncTOMLForTest(r); err != nil {
 		t.Fatalf("syncTOML A: %v", err)
 	}
 	headA := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD")
@@ -28,7 +28,7 @@ func TestSyncTOMLPushesEveryCommit(t *testing.T) {
 	}
 
 	appendFile(t, filepath.Join(wsRoot, "workspace.toml"), "# edit B\n")
-	if _, err := r.syncTOML(); err != nil {
+	if _, err := syncTOMLForTest(r); err != nil {
 		t.Fatalf("syncTOML B: %v", err)
 	}
 	headB := testutil.RunGit(t, wsRoot, "rev-parse", "HEAD")
@@ -53,12 +53,28 @@ func TestSyncTOMLRefusesToPushInvalidWorkspaceTOML(t *testing.T) {
   machines = ["archlinux"]
 `)
 
-	if _, err := r.syncTOML(); err == nil {
+	if _, err := syncTOMLForTest(r); err == nil {
 		t.Fatal("syncTOML should reject invalid workspace.toml")
 	}
 	if got := testutil.RunGit(t, bareDir, "rev-parse", "refs/heads/main"); got != remoteHead {
 		t.Fatalf("invalid workspace.toml was pushed; remote moved from %s to %s", remoteHead, got)
 	}
+}
+
+func syncTOMLForTest(r *Runner) (bool, error) {
+	origin, err := git.ConfiguredRemoteURL(r.root, "origin")
+	if err != nil {
+		return false, err
+	}
+	remoteURL, err := git.ResolveRemoteURL(origin, r.root)
+	if err != nil {
+		return false, err
+	}
+	branch, err := workspaceBranch(r.root)
+	if err != nil {
+		return false, err
+	}
+	return r.syncTOMLContext(context.Background(), r.root, origin, remoteURL, branch)
 }
 
 func TestRunContextPushesProjectConversionWithWorkspaceRegistry(t *testing.T) {
