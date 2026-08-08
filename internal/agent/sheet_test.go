@@ -23,27 +23,6 @@ func newTestModel(p *Project, wts []Worktree) *Model {
 	return m
 }
 
-func TestBuildProjectSheetRows_ActionsAlwaysPresent(t *testing.T) {
-	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
-	m := newTestModel(p, nil)
-
-	rows := buildProjectSheetRows(m, p)
-
-	wantActions := []sheetAction{actShellMain, actNewWorktree, actSearch}
-	got := actionSeq(rows)[:len(wantActions)]
-	for i, want := range wantActions {
-		if got[i] != want {
-			t.Errorf("action[%d] = %v, want %v", i, got[i], want)
-		}
-	}
-
-	// edit + favorite always at the tail under "manage".
-	tail := actionSeq(rows)
-	if len(tail) < 2 || tail[len(tail)-2] != actEdit || tail[len(tail)-1] != actFavorite {
-		t.Errorf("manage actions missing or out of order: %v", tail)
-	}
-}
-
 func TestBuildProjectSheetRows_WorktreesSection(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
 	wts := []Worktree{
@@ -110,13 +89,8 @@ func TestSheetFilter_KeepsSectionHeadersOnlyWhenSectionMatches(t *testing.T) {
 
 	for _, idx := range s.visible {
 		r := s.rows[idx]
-		switch r.kind {
-		case rowHeader:
-			if !strings.Contains(r.label, "worktrees") {
-				t.Errorf("unexpected surviving header: %q", r.label)
-			}
-		case rowAction:
-			t.Errorf("action row %q should be filtered out by 'perf'", r.label)
+		if r.kind == rowHeader && !strings.Contains(r.label, "worktrees") {
+			t.Errorf("unexpected surviving header: %q", r.label)
 		}
 	}
 }
@@ -169,13 +143,6 @@ func TestBuildGroupSheetRows_SortsProjectsByActivityDescThenName(t *testing.T) {
 		}
 	}
 
-	actions := actionSeq(rows)
-	wantHead := []sheetAction{actShellMain, actSearch}
-	for i, want := range wantHead {
-		if actions[i] != want {
-			t.Errorf("action[%d] = %v, want %v", i, actions[i], want)
-		}
-	}
 }
 
 func TestSheet_EscPopsToParent(t *testing.T) {
@@ -207,7 +174,7 @@ func TestSheetVimMotionsAndRightOpen(t *testing.T) {
 
 	m.height = 40
 	s.update(m, tui.KeyMsg{Type: tui.KeyCtrlF, Ctrl: true})
-	if s.cursor < sheetPageRows(m.height) || s.focused() == nil {
+	if s.cursor == 0 || s.focused() == nil {
 		t.Fatalf("full page cursor = %d row=%#v", s.cursor, s.focused())
 	}
 	s.update(m, tui.KeyMsg{Type: tui.KeyEnd})
@@ -244,9 +211,9 @@ func TestNarrowSheetKeepsChromeAndSelectionVisible(t *testing.T) {
 	s.statusMsg = strings.Repeat("status must stay one line ", 5)
 	s.moveCursor(12)
 	selected := s.focused().label
-	view := s.view(m.width, m.height)
-	if tui.Height(view) > m.height {
-		t.Fatalf("height = %d, want <= %d", tui.Height(view), m.height)
+	view := s.view(m)
+	if tui.Height(view) != m.height {
+		t.Fatalf("height = %d, want %d", tui.Height(view), m.height)
 	}
 	if !strings.Contains(view, "@long-group") || !strings.Contains(view, "⏎/l:open") || !strings.Contains(view, selected[:3]) {
 		t.Fatalf("title, footer, or selected item missing: %q", view)
@@ -255,14 +222,39 @@ func TestNarrowSheetKeepsChromeAndSelectionVisible(t *testing.T) {
 
 func TestSheetFilterModeKeepsTextInputControlKeys(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
-	m := newTestModel(p, nil)
+	m := newTestModel(p, []Worktree{{Path: "/ws/alpha", IsMain: true}, {Branch: "one"}, {Branch: "two"}})
 	s := newProjectSheet(m, p, nil)
 	s.filterMode = true
 	s.filter.Focus()
-	s.cursor = 2
+	s.cursor = 3
 	s.update(m, tui.KeyMsg{Type: tui.KeyCtrlU, Ctrl: true})
-	if s.cursor != 2 {
+	if s.cursor != 3 {
 		t.Fatalf("filter control key moved list cursor to %d", s.cursor)
+	}
+}
+
+func TestProjectSheetFooterAlwaysShowsLifecycleAndProjectActions(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	m := newTestModel(p, []Worktree{{Path: "/ws/alpha", IsMain: true}, {Path: "/ws/alpha-wt", Branch: "feat/x"}})
+	s := newProjectSheet(m, p, nil)
+	for i, idx := range s.visible {
+		if row := s.rows[idx]; row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			s.cursor = i
+			break
+		}
+	}
+	actions, nav := s.footerHints()
+	for _, hint := range []string{"a:archive", "d:delete", "A:maint", "w:new", "e:edit", "f:fav", "/:filter"} {
+		if !strings.Contains(actions, hint) {
+			t.Errorf("actions missing %q: %q", hint, actions)
+		}
+	}
+	if !strings.Contains(nav, "h:back") || !strings.Contains(nav, "g/G:first/last") {
+		t.Fatalf("navigation hints = %q", nav)
+	}
+	selected := s.renderRow(s.cursor, 80)
+	if !strings.Contains(selected, "clean") || tui.Width(selected) != 80 {
+		t.Fatalf("selected row lost its right-hand status: width=%d row=%q", tui.Width(selected), selected)
 	}
 }
 
@@ -284,7 +276,7 @@ func TestSheetUppercaseAOpensScopedMaintenance(t *testing.T) {
 	}
 }
 
-func TestSheet_EnterShellMainLaunches(t *testing.T) {
+func TestSheet_SLaunchesMain(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "alpha")
 	if err := os.Mkdir(path, 0o755); err != nil {
@@ -295,8 +287,7 @@ func TestSheet_EnterShellMainLaunches(t *testing.T) {
 	s := newProjectSheet(m, p, nil)
 	m.sheet = s
 
-	// Cursor starts at row 0 = shell in main.
-	s.update(m, enter())
+	s.update(m, rune1('s'))
 
 	if m.Launch == nil || m.Launch.Cwd != path {
 		t.Errorf("Launch = %+v, want shell in %s", m.Launch, path)
@@ -335,18 +326,6 @@ func TestSheet_WtDeleteRequiresConfirm(t *testing.T) {
 	if s.pendingDel != nil {
 		t.Errorf("non-y should cancel pending delete")
 	}
-}
-
-// ---------- helpers ----------
-
-func actionSeq(rows []sheetRow) []sheetAction {
-	var out []sheetAction
-	for _, r := range rows {
-		if r.kind == rowAction {
-			out = append(out, r.action)
-		}
-	}
-	return out
 }
 
 func filterByKind(rows []sheetRow, k sheetRowKind) []sheetRow {

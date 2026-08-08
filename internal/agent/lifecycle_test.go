@@ -10,6 +10,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/testutil"
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func TestParseArchiveThresholdUnitsAndOverflow(t *testing.T) {
@@ -161,6 +162,23 @@ func TestRemoveArchivedProjectsDoesNotRetargetProjectSheet(t *testing.T) {
 	m.removeArchivedProjects([]ProjectIdentity{{WorkspaceRoot: "/ws", ProjectID: "first"}})
 	if s.target.ID != "first" || &m.workspaces[0].Projects[0] == s.target || m.workspaces[0].Projects[0].ID != "second" {
 		t.Fatalf("sheet target=%s retained=%s", s.target.ID, m.workspaces[0].Projects[0].ID)
+	}
+}
+
+func TestLifecycleUsesFullScreenFrameAndPersistentHints(t *testing.T) {
+	m := &Model{
+		width:     90,
+		height:    18,
+		lifecycle: &lifecycleModel{scope: lifecycleScope{kind: lifecycleGlobal}, phase: lifecycleSelect},
+	}
+	view := m.viewLifecycle()
+	if tui.Height(view) != m.height {
+		t.Fatalf("height = %d, want %d", tui.Height(view), m.height)
+	}
+	for _, text := range []string{"Lifecycle › all workspaces", "1 / a  Archive projects", "2 / w  Archive old worktrees", "1/a:archive projects", "esc:back"} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("lifecycle frame missing %q: %q", text, view)
+		}
 	}
 }
 

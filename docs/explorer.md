@@ -73,8 +73,8 @@ Navigation:
 
 Per-row actions:
 
-- `enter` / `l` / `→` — open the selected group or project sheet. In a project
-  sheet, a worktree row opens a shell in that worktree.
+- `enter` / `l` / `→` — open the selected group or project panel. In a project
+  panel, a worktree row opens a shell in that worktree.
 - `ctrl+s` — open a shell anywhere from anywhere.
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
@@ -99,7 +99,15 @@ Search:
 
 Help:
 
-- `?` or `space` — which-key panel of available actions in context.
+- `?` or `space` — which-key panel of available actions from home.
+
+Group and project panels use the same full-screen frame as home: pinned chips,
+breadcrumb header, an available-height list, optional status, and a persistent
+two-row keybar. The first keybar row always exposes the actions available in
+the current scope. On a non-main worktree this includes `a:archive` and
+`d:delete`; `A:maintenance` remains visible for project/group bulk operations.
+The second row contains the shared Vim navigation keys. Project management and
+search are keyboard actions rather than synthetic rows in the list.
 
 ## Worktree creation from the TUI
 

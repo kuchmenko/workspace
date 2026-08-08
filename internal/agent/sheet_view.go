@@ -2,133 +2,132 @@ package agent
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func sheetPageRows(height int) int {
-	return min(18, max(1, height-12))
-}
-
-func (s *sheet) pageRows(height int) int {
-	chrome := 8
-	if s.subtitle() != "" {
+func (s *sheet) pageRows(m *Model) int {
+	panelW := explorerPanelWidth(m.width)
+	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
+	chrome := len(styleHeaderLines(chipLines)) + 4
+	if len(chipLines) > 0 {
 		chrome++
 	}
 	if s.filterMode || s.filter.Value() != "" {
 		chrome++
 	}
 	if s.statusMsg != "" {
-		chrome += 2
+		chrome++
 	}
-	return min(18, max(1, height-chrome-2))
+	return max(1, m.height-chrome)
 }
 
-func (s *sheet) view(width, height int) string {
-	popupW := 60
-	if width < 66 {
-		popupW = width - 6
-	}
-	if popupW < 30 {
-		popupW = 30
-	}
-	innerW := popupW - 6
+func (s *sheet) view(m *Model) string {
+	panelW := explorerPanelWidth(m.width)
+	var top []string
 
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(tui.Truncate(s.title(), innerW)))
-	if sub := s.subtitle(); sub != "" {
-		lines = append(lines, popupDimStyle.Width(innerW).Render(tui.Truncate(sub, innerW)))
+	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
+	top = append(top, styleHeaderLines(chipLines)...)
+	if len(chipLines) > 0 {
+		top = append(top, strings.Repeat(" ", panelW))
 	}
 
+	position := fmt.Sprintf("%d/%d", min(s.cursor+1, len(s.visible)), len(s.visible))
+	header := padPanelRight(" "+s.breadcrumb(), position+" ", panelW)
+	top = append(top, headerStyle.Width(panelW).Render(header))
+	top = append(top, dimStyle.Width(panelW).Render(tui.Truncate(" "+s.subtitle(), panelW)))
 	if s.filterMode || s.filter.Value() != "" {
 		prompt := "/" + s.filter.Value()
 		if s.filterMode {
 			prompt = "/" + s.filter.View()
 		}
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(tui.Truncate(" "+prompt, innerW)))
+		top = append(top, flashSearchStyle.Width(panelW).Render(tui.Truncate(" "+iconSearch+" "+prompt, panelW)))
 	}
-	lines = append(lines, "")
 
-	if len(s.visible) == 0 {
+	actions, nav := s.footerHints()
+	bottom := []string{
+		footerStyle.Width(panelW).Render(tui.Truncate(" "+actions, panelW)),
+		footerStyle.Width(panelW).Render(tui.Truncate(" "+nav, panelW)),
+	}
+	if s.statusMsg != "" {
+		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(" "+presentLabel(s.statusMsg), panelW))}, bottom...)
+	}
+
+	bodyRows := max(0, m.height-len(top)-len(bottom))
+	body := make([]string, 0, bodyRows)
+	if len(s.visible) == 0 && bodyRows > 0 {
 		empty := "(no matches)"
 		if s.filter.Value() == "" {
 			empty = "(empty)"
 		}
-		lines = append(lines, popupDimStyle.Width(innerW).Render(empty))
-	} else {
-		start, end := tui.WindowAround(s.cursor, len(s.visible), s.pageRows(height))
+		body = append(body, dimStyle.Width(panelW).Render(" "+empty))
+	} else if bodyRows > 0 {
+		start, end := tui.WindowAround(s.cursor, len(s.visible), bodyRows)
 		for i := start; i < end; i++ {
-			lines = append(lines, s.renderRow(i, innerW))
-		}
-		if start > 0 {
-			lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("  …%d above", start)))
-		}
-		if end < len(s.visible) {
-			lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("  …%d below", len(s.visible)-end)))
+			body = append(body, s.renderRow(i, panelW))
 		}
 	}
-
-	if s.statusMsg != "" {
-		lines = append(lines, "")
-		lines = append(lines, statusMsgStyle.Width(innerW).Render(tui.Truncate(" "+presentLabel(s.statusMsg), innerW)))
+	for len(body) < bodyRows {
+		body = append(body, strings.Repeat(" ", panelW))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render(tui.Truncate(s.footerHint(), innerW)))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-	return tui.Place(width, height, tui.Center, tui.Center, popup,
-		tui.WithWhitespaceBackground(tui.Color("234")))
+	rows := append(top, body...)
+	rows = append(rows, bottom...)
+	return tui.Place(m.width, m.height, tui.Center, tui.Center, tui.JoinVertical(tui.Left, rows...))
 }
 
-func (s *sheet) renderRow(visIdx, innerW int) string {
+func (s *sheet) renderRow(visIdx, width int) string {
 	r := &s.rows[s.visible[visIdx]]
-	selected := visIdx == s.cursor
-
 	if r.kind == rowHeader {
-		text := tui.Truncate(fmt.Sprintf("── %s ", presentLabel(r.label)), innerW)
-		if tui.Width(text) < innerW {
-			text += strings.Repeat("─", innerW-tui.Width(text))
+		text := tui.Truncate(fmt.Sprintf(" ── %s ", presentLabel(r.label)), width)
+		if tui.Width(text) < width {
+			text += strings.Repeat("─", width-tui.Width(text))
 		}
-		return popupDimStyle.Width(innerW).Render(text)
+		return dimStyle.Width(width).Render(text)
 	}
 
-	label := presentLabel(r.label)
-	hint := presentLabel(r.hint)
-	key := r.keyHint
-
-	left := "  " + label
+	selected := visIdx == s.cursor
+	contentWidth := width
+	if selected {
+		contentWidth--
+	}
+	left := "  " + presentLabel(r.label)
 	if r.indent > 0 {
-		left = strings.Repeat("    ", r.indent) + label
+		left = strings.Repeat("    ", r.indent) + presentLabel(r.label)
 	}
+	right := tui.Truncate(presentLabel(r.hint), max(0, contentWidth-1))
+	line := padPanelRight(left, right, contentWidth)
+	if selected {
+		bar := accentBarStyle.Render("▌")
+		return bar + selectedStyle.Width(contentWidth).Render(line)
+	}
+	return itemStyle.Width(width).Render(line)
+}
 
-	right := ""
-	if hint != "" {
-		right += hint
-	}
-	if key != "" {
-		if right != "" {
-			right += "  "
-		}
-		right += key
-	}
-	right = tui.Truncate(right, max(0, innerW-1))
-	left = tui.Truncate(left, max(0, innerW-tui.Width(right)-1))
-
-	leftW := tui.Width(left)
-	rightW := tui.Width(right)
-	gap := innerW - leftW - rightW
+func padPanelRight(left, right string, width int) string {
+	right = tui.Truncate(right, max(0, width-1))
+	left = tui.Truncate(left, max(0, width-tui.Width(right)-1))
+	gap := width - tui.Width(left) - tui.Width(right)
 	if gap < 1 {
 		gap = 1
 	}
-	line := left + strings.Repeat(" ", gap) + right
+	return left + strings.Repeat(" ", gap) + right
+}
 
-	if selected {
-		return popupSelectedStyle.Width(innerW).Render(line)
+func (s *sheet) breadcrumb() string {
+	if s.mode == sheetGroup {
+		return filepath.Base(s.workspaceRoot) + " › @" + presentLabel(s.group)
 	}
-	return popupItemStyle.Width(innerW).Render(line)
+	if s.target == nil {
+		return "ws"
+	}
+	parent := filepath.Base(s.target.WorkspaceRoot)
+	if s.target.Group != "" {
+		parent = presentLabel(s.target.Group)
+	}
+	return parent + " › " + presentLabel(s.target.Name)
 }
 
 func (s *sheet) title() string {
@@ -151,32 +150,24 @@ func (s *sheet) subtitle() string {
 	if s.target == nil {
 		return ""
 	}
-	cat := s.target.Category
-	if cat == "" {
-		cat = "personal"
+	category := s.target.Category
+	if category == "" {
+		category = "personal"
 	}
-	return fmt.Sprintf("%s · %s", cat, s.target.Path)
+	return fmt.Sprintf("%s · %s", category, s.target.Path)
 }
 
-func (s *sheet) footerHint() string {
+func (s *sheet) footerHints() (actions, nav string) {
 	if s.filterMode {
-		return "  type to filter · enter:apply · esc:clear"
+		return "type to filter  enter:apply  esc:clear", "text editing keys remain active"
 	}
 	if s.mode == sheetGroup {
-		return "  ⏎/l:open  h:back  j/k:move  ^f/^b:page"
-	}
-	r := s.focused()
-	if r == nil {
-		return "  /:filter  h:back  j/k:move  ^f/^b:page"
-	}
-	switch r.kind {
-	case rowWorktree:
-		if r.wt != nil && !r.wt.IsMain {
-			return "  ⏎/l:shell  h:back  d:delete"
+		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:maint  /:filter"
+	} else {
+		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:maint  /:filter"
+		if row := s.focused(); row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			actions = "⏎/l:open  a:archive  d:delete  " + actions[len("⏎/l:open  "):]
 		}
-		return "  ⏎/l:shell  h:back"
-	case rowAction:
-		return "  ⏎/l:run  /:filter  h:back"
 	}
-	return "  /:filter  h:back"
+	return actions, "j/k:move  g/G:first/last  ^d/^u:half  ^f/^b:page  h:back  S:global"
 }

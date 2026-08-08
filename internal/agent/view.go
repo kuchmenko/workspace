@@ -133,17 +133,11 @@ func (m *Model) padRight(left, right string, w int) string {
 }
 
 func (m *Model) viewList() string {
-	listW := 60
-	if m.width > 80 {
-		listW = 70
-	}
-	if m.width < 66 {
-		listW = m.width - 6
-	}
+	listW := explorerPanelWidth(m.width)
 
 	var rows []string
 
-	chipLines := renderHeaderChips(m.headerChips, listW-2, 2)
+	chipLines := renderHeaderChips(m.headerChips, max(1, listW-2), 2)
 	rows = append(rows, styleHeaderLines(chipLines)...)
 	if len(chipLines) > 0 {
 		rows = append(rows, strings.Repeat(" ", listW))
@@ -187,6 +181,13 @@ func (m *Model) viewList() string {
 		tui.Center, tui.Center,
 		panel,
 	)
+}
+
+func explorerPanelWidth(width int) int {
+	if width < 102 {
+		return max(1, width-6)
+	}
+	return 96
 }
 
 const HeaderCap = 9

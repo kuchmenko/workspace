@@ -21,28 +21,14 @@ type sheetRowKind int
 
 const (
 	rowHeader sheetRowKind = iota
-	rowAction
 	rowWorktree
 	rowProject
-)
-
-type sheetAction int
-
-const (
-	actNone sheetAction = iota
-	actShellMain
-	actNewWorktree
-	actSearch
-	actEdit
-	actFavorite
 )
 
 type sheetRow struct {
 	kind    sheetRowKind
 	label   string
 	hint    string
-	keyHint string
-	action  sheetAction
 	wt      *Worktree
 	proj    *Project
 	indent  int
@@ -234,6 +220,9 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	if handled, model, cmd := s.updateLifecycleKey(m, key); handled {
 		return model, cmd
 	}
+	if handled, model, cmd := s.updateContextKey(m, key); handled {
+		return model, cmd
+	}
 
 	switch key {
 	case "esc", "h", "left":
@@ -255,16 +244,16 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		s.clampCursor()
 		return m, nil
 	case "ctrl+d":
-		s.moveCursor(max(1, sheetPageRows(m.height)/2))
+		s.moveCursor(max(1, s.pageRows(m)/2))
 		return m, nil
 	case "ctrl+u":
-		s.moveCursor(-max(1, sheetPageRows(m.height)/2))
+		s.moveCursor(-max(1, s.pageRows(m)/2))
 		return m, nil
 	case "ctrl+f", "pgdn":
-		s.moveCursor(sheetPageRows(m.height))
+		s.moveCursor(s.pageRows(m))
 		return m, nil
 	case "ctrl+b", "pgup":
-		s.moveCursor(-sheetPageRows(m.height))
+		s.moveCursor(-s.pageRows(m))
 		return m, nil
 	case "/":
 		s.filterMode = true
@@ -280,8 +269,6 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	}
 
 	switch row.kind {
-	case rowAction:
-		return s.dispatchAction(m, row.action, key)
 	case rowWorktree:
 		return s.dispatchWorktree(m, row.wt, key)
 	case rowProject:
@@ -350,31 +337,26 @@ func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-// ---------- dispatch ----------
-
-func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model, tui.Cmd) {
-	path := s.primaryPath()
-	switch act {
-	case actShellMain:
-		if key == "enter" || key == "s" || key == "l" {
-			return m.launch(s.workspaceRootForTarget(), path)
-		}
-	case actNewWorktree:
-		if (key == "enter" || key == "w") && s.target != nil {
+func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
+	switch key {
+	case "s":
+		model, cmd := m.launch(s.workspaceRootForTarget(), s.primaryPath())
+		return true, model, cmd
+	case "S":
+		model, cmd := s.openGlobalSearch(m)
+		return true, model, cmd
+	case "w":
+		if s.target != nil {
 			m.popupProj = s.target
 			m.wtBranch.SetValue("")
 			m.wtBranch.Focus()
 			m.wtField = 0
 			m.sheet = nil
 			m.mode = viewNewWorktree
-			return m, nil
+			return true, m, nil
 		}
-	case actSearch:
-		if key == "enter" || key == "/" {
-			return s.openGlobalSearch(m)
-		}
-	case actEdit:
-		if (key == "enter" || key == "e") && s.target != nil {
+	case "e":
+		if s.target != nil {
 			p := s.target
 			m.popupProj = p
 			m.editGroup.SetValue(p.Group)
@@ -387,20 +369,18 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 			m.editErr = ""
 			m.sheet = nil
 			m.mode = viewEditProject
-			return m, nil
+			return true, m, nil
 		}
-	case actFavorite:
-		if key == "enter" || key == "f" {
-			if s.target != nil {
-				m.toggleFavoriteFor(s.target)
-			} else if s.group != "" {
-				m.toggleFavoriteGroup(s.workspaceRoot, s.group)
-			}
-			s.rebuild(m)
-			return m, nil
+	case "f":
+		if s.target != nil {
+			m.toggleFavoriteFor(s.target)
+		} else if s.group != "" {
+			m.toggleFavoriteGroup(s.workspaceRoot, s.group)
 		}
+		s.rebuild(m)
+		return true, m, nil
 	}
-	return m, nil
+	return false, m, nil
 }
 
 func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model, tui.Cmd) {

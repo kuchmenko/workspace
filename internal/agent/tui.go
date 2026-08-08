@@ -141,6 +141,9 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		}
 
 		if msg.String() == "ctrl+s" {
+			if m.sheet != nil {
+				return m.launch(m.sheet.workspaceRootForTarget(), m.sheet.primaryPath())
+			}
 			item := m.currentItem()
 			if item != nil && item.path != "" {
 				return m.launch(item.workspaceRoot, item.path)
@@ -183,7 +186,7 @@ func (m *Model) View() string {
 		return m.viewLifecycle()
 	}
 	if m.sheet != nil {
-		return m.sheet.view(m.width, m.height)
+		return m.sheet.view(m)
 	}
 	if m.mode == viewWhichKey {
 		return m.viewWhichKey()
@@ -259,7 +262,7 @@ func (m *Model) listHeight() int {
 }
 
 func (m *Model) footerHints() (actions, nav string) {
-	nav = "j/k:move  ^d/^u:half  ^f/^b:page  ?:more"
+	nav = "j/k:move  g/G:first/last  ^d/^u:half  ^f/^b:page  ?:more"
 	item := m.currentItem()
 	if item == nil {
 		return "⏎:open  s:find  S:all", nav
@@ -269,10 +272,10 @@ func (m *Model) footerHints() (actions, nav string) {
 		if item.projectionGroup {
 			actions = "⏎/l:open  h:back  tab:expand"
 		} else {
-			actions = "⏎/l:open  h:back  tab:expand"
+			actions = "⏎/l:open  h:back  f:favorite  tab:expand  A:maintenance  S:search"
 		}
 	case KindProject:
-		actions = "⏎/l:open  h:back  w:worktree  e:edit"
+		actions = "⏎/l:open  h:back  w:new  e:edit  f:favorite  A:maintenance  S:search"
 	default:
 		actions = "⏎:open"
 	}
