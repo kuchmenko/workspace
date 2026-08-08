@@ -37,6 +37,7 @@ type Project struct {
 	LastActiveMachine string
 	BranchActivity    map[string]time.Time
 	Language          string
+	WorktreeInventory []Worktree
 }
 
 type WorkspaceData struct {
@@ -239,6 +240,33 @@ func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
 	return nil
 }
 
+func (m *Model) reloadProjectMetadata(root, id string) error {
+	ws, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	metadata, ok := ws.Projects[id]
+	if !ok {
+		return fmt.Errorf("project %s is missing from registry", id)
+	}
+	for wi := range m.workspaces {
+		if m.workspaces[wi].Root != root {
+			continue
+		}
+		for pi := range m.workspaces[wi].Projects {
+			project := &m.workspaces[wi].Projects[pi]
+			if project.ID != id {
+				continue
+			}
+			project.DefaultBranch = metadata.DefaultBranch
+			project.BranchActivity = branchActivity(metadata.Branches)
+			project.LastActiveAt, project.LastActiveMachine = projectActivity(metadata.Branches)
+			return nil
+		}
+	}
+	return fmt.Errorf("project %s is missing from explorer", id)
+}
+
 func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
@@ -329,27 +357,27 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 			Language:          languageForIcon(DetectIcon(mainPath)),
 		}
 
-		barePath := layout.BarePath(mainPath)
-		if _, err := os.Stat(barePath); err == nil {
-			if wts, err := git.WorktreeList(barePath); err == nil {
-				count := 0
-				for _, wt := range wts {
-					if !wt.Bare {
-						count++
-					}
-				}
-				proj.WorktreeCount = count
-			} else {
-				diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
-			}
-		} else if !os.IsNotExist(err) {
-			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect layout: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
+		proj.WorktreeInventory, err = LoadWorktreeInventory(mainPath)
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 		}
+		proj.WorktreeCount = len(proj.WorktreeInventory)
+		proj.LastActiveAt = projectRecency(proj.LastActiveAt, proj.WorktreeInventory)
 
 		ws.Projects = append(ws.Projects, proj)
 	}
 
 	return ws, diagnostics
+}
+
+func projectRecency(registry time.Time, inventory []Worktree) time.Time {
+	latest := registry
+	for _, wt := range inventory {
+		if wt.LastActiveAt.After(latest) {
+			latest = wt.LastActiveAt
+		}
+	}
+	return latest
 }
 
 func branchActivity(branches []config.BranchMeta) map[string]time.Time {

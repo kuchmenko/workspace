@@ -1,6 +1,48 @@
 package agent
 
-import "github.com/kuchmenko/workspace/internal/config"
+import (
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/tui"
+)
+
+func (m *Model) moveHomeCursor(delta int) {
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if m.cursor >= len(m.items) {
+		m.cursor = len(m.items) - 1
+	}
+	if len(m.items) == 0 {
+		m.cursor = 0
+	}
+	m.ensureVisible()
+}
+
+func (m *Model) moveHomeTo(index int) {
+	m.cursor = index
+	m.moveHomeCursor(0)
+}
+
+func (m *Model) openCurrentItem() (tui.Model, tui.Cmd) {
+	item := m.currentItem()
+	if item == nil {
+		return m, nil
+	}
+	switch item.kind {
+	case KindGroup:
+		if item.projectionGroup {
+			m.toggleExpand(item.expandKey)
+		} else {
+			m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
+		}
+	case KindProject:
+		m.sheet = newProjectSheet(m, item.project, nil)
+	case KindWorktree:
+		return m.launch(item.workspaceRoot, item.path)
+	}
+	return m, nil
+}
 
 func (m *Model) toggleExpand(key string) {
 	m.expanded[key] = !m.expanded[key]

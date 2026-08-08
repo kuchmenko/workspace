@@ -156,27 +156,15 @@ func (m *Model) refreshProjectRecency(p *Project) {
 	if m.wtCache == nil {
 		return
 	}
-	wts, err := m.wtCache.Get(p.Path)
-	if err != nil {
-		return
-	}
+	wts := m.wtCache.Inventory(p.Path)
 	p.WorktreeCount = len(wts)
 	var latest time.Time
-	for i := range wts {
-		if active := p.BranchActivity[wts[i].Branch]; active.After(wts[i].LastActiveAt) {
-			wts[i].LastActiveAt = active
-		}
-		if wts[i].LastActiveAt.After(latest) {
-			latest = wts[i].LastActiveAt
-		}
-	}
 	for _, active := range p.BranchActivity {
 		if active.After(latest) {
 			latest = active
 		}
 	}
-	p.LastActiveAt = latest
-	m.wtCache.data[p.Path] = wts
+	p.LastActiveAt = projectRecency(latest, wts)
 }
 
 func (m *Model) clampCursor() {

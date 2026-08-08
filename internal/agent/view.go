@@ -20,16 +20,9 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 		end = len(m.items)
 	}
 
-	prevGroup := ""
 	for i := m.scroll; i < end; i++ {
 		item := m.items[i]
 		selected := i == m.cursor
-
-		curGroup := m.itemGroupKey(item)
-		if prevGroup != "" && curGroup != prevGroup {
-			rows = append(rows, strings.Repeat(" ", listW))
-		}
-		prevGroup = curGroup
 
 		isMatch := false
 		flashLabel := rune(0)
@@ -62,19 +55,6 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 	return rows
 }
 
-func (m *Model) itemGroupKey(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return "g:" + groupKey(item.workspaceRoot, item.group)
-	case KindProject:
-		if item.project.Group != "" {
-			return "g:" + groupKey(item.workspaceRoot, item.project.Group)
-		}
-		return "ungrouped:" + item.workspaceRoot
-	}
-	return ""
-}
-
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
 	if m.expanded[item.expandKey] {
@@ -85,6 +65,7 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 	label := fmt.Sprintf("   %s %s", arrow, name)
+	label = tui.Truncate(label, w)
 
 	if dimAll || (inFlash && !isMatch) {
 		return dimStyle.Width(w).Render(label)
@@ -112,7 +93,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
 	}
 	badges := strings.Join(badgeParts, " · ")
-
+	left = tui.Truncate(left, max(0, w-tui.Width(badges)-1))
 	line := m.padRight(left, badges, w)
 
 	if dimAll || (inFlash && !isMatch) {
@@ -123,7 +104,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 
 	if badges != "" {
-		leftPart := fmt.Sprintf(" %s%s %s", indent, icon, name)
+		leftPart := tui.Truncate(fmt.Sprintf(" %s%s %s", indent, icon, name), max(0, w-tui.Width(badges)-1))
 		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
@@ -135,11 +116,13 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
 
-	rest := selectedStyle.Width(w - 1).Render(content)
+	rest := selectedStyle.Width(w - 1).Render(tui.Truncate(content, w-1))
 	return bar + rest
 }
 
 func (m *Model) padRight(left, right string, w int) string {
+	right = tui.Truncate(right, max(0, w-1))
+	left = tui.Truncate(left, max(0, w-tui.Width(right)-1))
 	lw := tui.Width(left)
 	rw := tui.Width(right)
 	gap := w - lw - rw - 1
@@ -173,27 +156,28 @@ func (m *Model) viewList() string {
 			prefix = iconSearch + " all"
 		}
 		searchLine := fmt.Sprintf(" %s %s", prefix, m.flashQuery.View())
+		searchLine = tui.Truncate(searchLine, listW)
 		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
 	} else {
 		bc := m.breadcrumb()
 		pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-		hdr := m.padRight(" "+bc, pos+" ", listW)
+		hdr := m.padRight(tui.Truncate(" "+bc, max(0, listW-tui.Width(pos)-2)), pos+" ", listW)
 		rows = append(rows, headerStyle.Width(listW).Render(hdr))
 	}
 
 	rows = append(rows, m.renderListRows(listW, false)...)
 
 	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+presentLabel(m.statusMsg)))
+		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(m.statusMsg), listW)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump · esc cancel"
-		footer := m.padRight(matchInfo, hint+" ", listW)
+		footer := m.padRight(tui.Truncate(matchInfo, max(0, listW-tui.Width(hint)-2)), tui.Truncate(hint+" ", listW), listW)
 		rows = append(rows, footerStyle.Width(listW).Render(footer))
 	} else {
 		actions, nav := m.footerHints()
-		rows = append(rows, footerStyle.Width(listW).Render(" "+actions))
-		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
+		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+actions, listW)))
+		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+nav, listW)))
 	}
 
 	panel := tui.JoinVertical(tui.Left, rows...)
@@ -295,7 +279,7 @@ func renderHeaderChips(chips []Chip, w, maxLines int) []string {
 	}
 	tokens := make([]string, len(chips))
 	for i, c := range chips {
-		tokens[i] = formatChip(i+1, c)
+		tokens[i] = tui.Truncate(formatChip(i+1, c), w)
 	}
 	return packChips(tokens, w, maxLines)
 }

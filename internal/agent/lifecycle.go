@@ -215,6 +215,7 @@ type WorktreeArchiveExecution struct {
 	Archived, Skipped, Failed int
 	Details                   []string
 	RemovedProjectPaths       []string
+	AffectedProjects          []ProjectIdentity
 }
 
 func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan) WorktreeArchiveExecution {
@@ -229,6 +230,7 @@ func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan) WorktreeArchiveExecuti
 		a := ArchiveWorktree(c.Project, fresh, c.WorkspaceRoot)
 		if a.CheckoutRemoved {
 			r.RemovedProjectPaths = append(r.RemovedProjectPaths, a.ProjectPath)
+			r.AffectedProjects = append(r.AffectedProjects, ProjectIdentity{c.WorkspaceRoot, c.ProjectID})
 		}
 		if a.Err != nil {
 			r.Failed++
@@ -444,7 +446,8 @@ func (m *Model) executeLifecycle() {
 		lm.message = fmt.Sprintf("Archived %d project(s); %d failed.", len(r.Succeeded), len(r.Failures))
 		lm.errorText = strings.Join(r.Failures, "; ")
 	case lifecycleArchiveWorktree:
-		r := ArchiveWorktree(lm.scope.project, lm.scope.worktree, m.workspaceRootFor(lm.scope.project))
+		root := m.workspaceRootFor(lm.scope.project)
+		r := ArchiveWorktree(lm.scope.project, lm.scope.worktree, root)
 		if r.CheckoutRemoved {
 			m.wtCache.Invalidate(lm.scope.project.Path)
 		}
@@ -457,6 +460,9 @@ func (m *Model) executeLifecycle() {
 		} else {
 			lm.message = "Archived worktree; branch preserved."
 		}
+		if r.CheckoutRemoved {
+			m.appendMetadataRefreshError(lm, ProjectIdentity{root, lm.scope.project.ID})
+		}
 	case lifecycleArchiveOldWorktrees:
 		r := ExecuteWorktreeArchivePlan(lm.plan)
 		for _, path := range r.RemovedProjectPaths {
@@ -464,12 +470,32 @@ func (m *Model) executeLifecycle() {
 		}
 		lm.message = fmt.Sprintf("Archived %d, skipped %d, failed %d.", r.Archived, r.Skipped, r.Failed)
 		lm.errorText = strings.Join(r.Details, "; ")
+		seen := map[ProjectIdentity]bool{}
+		for _, id := range r.AffectedProjects {
+			if !seen[id] {
+				m.appendMetadataRefreshError(lm, id)
+				seen[id] = true
+			}
+		}
 	case lifecycleDeleteWorktree:
-		lm.message, lm.errorText = DeleteWorktreeDestructive(lm.scope.project, lm.scope.worktree, m.workspaceRootFor(lm.scope.project))
+		root := m.workspaceRootFor(lm.scope.project)
+		lm.message, lm.errorText = DeleteWorktreeDestructive(lm.scope.project, lm.scope.worktree, root)
 		m.wtCache.Invalidate(lm.scope.project.Path)
+		if strings.HasPrefix(lm.message, "Deleted checkout") {
+			m.appendMetadataRefreshError(lm, ProjectIdentity{root, lm.scope.project.ID})
+		}
 	}
 	lm.phase = lifecycleResult
 	m.rebuildItems()
+}
+
+func (m *Model) appendMetadataRefreshError(lm *lifecycleModel, id ProjectIdentity) {
+	if err := m.reloadProjectMetadata(id.WorkspaceRoot, id.ProjectID); err != nil {
+		if lm.errorText != "" {
+			lm.errorText += "; "
+		}
+		lm.errorText += "metadata refresh failed: " + err.Error()
+	}
 }
 func (m *Model) removeArchivedProjects(ids []ProjectIdentity) {
 	set := map[ProjectIdentity]bool{}

@@ -32,27 +32,34 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 	case KindGroup:
 		if item.projectionGroup {
 			return []whichKeyAction{
-				{"⏎", "expand"},
+				{"⏎/l", "open"},
 				{"tab", "expand"},
+				{"g/G", "first/last"},
+				{"^d/^u", "half-page"},
+				{"^f/^b", "page"},
 				{"", ""},
 				{"esc", "close"},
 			}
 		}
 		return []whichKeyAction{
-			{"⏎", "open sheet"},
+			{"⏎/l", "open sheet"},
 			{"f", m.favoriteToggleLabelGroup(item.workspaceRoot, item.group)},
-			{"l", "shell"},
 			{"tab", "expand"},
+			{"g/G", "first/last"},
+			{"^d/^u", "half-page"},
+			{"^f/^b", "page"},
 			{"", ""},
 			{"esc", "close"},
 		}
 	case KindProject:
 		return []whichKeyAction{
-			{"⏎", "open sheet"},
+			{"⏎/l", "open sheet"},
 			{"f", m.favoriteToggleLabel(item)},
 			{"w", "worktree ›"},
 			{"e", "edit"},
-			{"l", "shell"},
+			{"g/G", "first/last"},
+			{"^d/^u", "half-page"},
+			{"^f/^b", "page"},
 			{"", ""},
 			{"esc", "close"},
 		}
@@ -114,7 +121,10 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		m.mode = viewList
-	case "l":
+	case "l", "right":
+		m.mode = viewList
+		return m.updateList(msg)
+	case "g", "G", "home", "end", "ctrl+d", "ctrl+u", "ctrl+f", "ctrl+b", "pgdn", "pgup":
 		m.mode = viewList
 		return m.updateList(msg)
 	case "d":

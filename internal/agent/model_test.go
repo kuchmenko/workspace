@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,8 +10,100 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/testutil"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
+
+func TestNewModelUsesSeededInventoryWithoutInspectingRepositories(t *testing.T) {
+	registry := time.Unix(100, 0)
+	commit := time.Unix(200, 0)
+	missing := filepath.Join(t.TempDir(), "missing")
+	project := Project{
+		Name:              "alpha",
+		Path:              missing,
+		BranchActivity:    map[string]time.Time{"main": registry},
+		WorktreeInventory: []Worktree{{Path: missing, Branch: "main", IsMain: true, LastActiveAt: commit}, {Path: missing + "-wt", Branch: "feat/x"}},
+	}
+
+	m := NewModel([]WorkspaceData{{Projects: []Project{project}}})
+	got := &m.workspaces[0].Projects[0]
+	if got.WorktreeCount != 2 || !got.LastActiveAt.Equal(commit) {
+		t.Fatalf("project inventory projection = count %d, recency %s", got.WorktreeCount, got.LastActiveAt)
+	}
+	m.openGlobalSearch()
+	if len(m.items) != 3 {
+		t.Fatalf("global search items = %d, want project plus two worktrees", len(m.items))
+	}
+	if details, err := m.wtCache.Get(missing); err != nil || len(details) != 0 {
+		t.Fatalf("detail cache treated inventory as details: details=%v err=%v", details, err)
+	}
+}
+
+func TestProjectRecencyUsesNewestRegistryOrCommit(t *testing.T) {
+	older := time.Unix(100, 0)
+	newer := time.Unix(200, 0)
+	if got := projectRecency(older, []Worktree{{LastActiveAt: newer}}); !got.Equal(newer) {
+		t.Fatalf("commit recency = %s, want %s", got, newer)
+	}
+	if got := projectRecency(newer, []Worktree{{LastActiveAt: older}}); !got.Equal(newer) {
+		t.Fatalf("registry recency = %s, want %s", got, newer)
+	}
+}
+
+func TestLoadWorkspaceIncludesPlainCheckoutInventoryAndCommitRecency(t *testing.T) {
+	root := t.TempDir()
+	repo := testutil.InitFakePlainCheckout(t, root, "alpha", nil)
+	ws := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{
+		"alpha": {Path: "alpha", Status: config.StatusActive},
+	}, Groups: map[string]config.Group{}}
+	if err := config.Save(root, ws); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, diagnostics := loadOneWorkspace(root)
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %v", diagnostics)
+	}
+	if loaded == nil || len(loaded.Projects) != 1 {
+		t.Fatalf("loaded workspace = %#v", loaded)
+	}
+	p := loaded.Projects[0]
+	if p.WorktreeCount != 1 || len(p.WorktreeInventory) != 1 || p.WorktreeInventory[0].Path != repo || !p.WorktreeInventory[0].IsMain || p.LastActiveAt.IsZero() {
+		t.Fatalf("plain checkout project = %#v", p)
+	}
+}
+
+func TestReloadProjectMetadataMakesRebuildUseLiveRegistryRecency(t *testing.T) {
+	root := t.TempDir()
+	active := time.Now().UTC().Truncate(time.Second)
+	ws := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{
+		"alpha": {Path: "alpha", DefaultBranch: "trunk", Branches: []config.BranchMeta{{Name: "feat/live", Machines: []string{"arch"}, LastActiveAt: active.Format(time.RFC3339), LastActiveMachine: "arch"}}},
+	}, Groups: map[string]config.Group{}}
+	if err := config.Save(root, ws); err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{workspaces: []WorkspaceData{{Root: root, Projects: []Project{{ID: "alpha", Name: "alpha", WorkspaceRoot: root}}}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache()}
+	if err := m.reloadProjectMetadata(root, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	m.rebuildItems()
+	p := &m.workspaces[0].Projects[0]
+	if !p.LastActiveAt.Equal(active) || p.LastActiveMachine != "arch" || p.DefaultBranch != "trunk" || !p.BranchActivity["feat/live"].Equal(active) {
+		t.Fatalf("reloaded project = %+v", p)
+	}
+}
+
+func TestProjectSheetLoadsFullDetailsInsteadOfInventory(t *testing.T) {
+	repo := testutil.InitFakePlainCheckout(t, t.TempDir(), "repo", nil)
+	testutil.AddDirty(t, repo)
+	p := &Project{Name: "repo", Path: repo, WorktreeInventory: []Worktree{{Path: repo, IsMain: true}}}
+	m := NewModel([]WorkspaceData{{Projects: []Project{*p}}})
+	rows := buildProjectSheetRows(m, &m.workspaces[0].Projects[0])
+	worktrees := filterByKind(rows, rowWorktree)
+	if len(worktrees) != 1 || worktrees[0].hint != "dirty" {
+		t.Fatalf("worktree rows = %#v, want freshly inspected dirty detail", worktrees)
+	}
+}
 
 func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
 	now := time.Now()
@@ -73,6 +166,78 @@ func TestRecentViewSortsZeroActivityLastInBothOrders(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("order %s = %v, want %v", order, got, want)
 		}
+	}
+}
+
+func TestRecentViewFitsFixedHeightAcrossCanonicalGroups(t *testing.T) {
+	projects := make([]Project, 30)
+	groups := make([]string, len(projects))
+	for i := range projects {
+		groups[i] = fmt.Sprintf("group-%02d", i)
+		projects[i] = Project{
+			ID:            fmt.Sprintf("project-%02d", i),
+			Name:          fmt.Sprintf("project-%02d", i),
+			Group:         groups[i],
+			Path:          fmt.Sprintf("/ws/project-%02d", i),
+			LastActiveAt:  time.Unix(int64(1000-i), 0),
+			WorkspaceRoot: "/ws",
+			WorktreeCount: 1,
+		}
+	}
+	m := NewModel([]WorkspaceData{{Root: "/ws", Groups: groups, Projects: projects}})
+	m.homeView = config.ExplorerViewRecent
+	m.width, m.height = 90, 18
+	m.rebuildItems()
+
+	assertRecentViewFits(t, m, "project-00", true)
+	m.updateList(tui.KeyMsg{Type: tui.KeyCtrlF, Ctrl: true})
+	selected := m.currentItem()
+	if selected == nil || selected.project == nil || selected.project.Name == "project-00" {
+		t.Fatalf("page motion did not move selection: %#v", selected)
+	}
+	assertRecentViewFits(t, m, selected.project.Name, false)
+}
+
+func assertRecentViewFits(t *testing.T, m *Model, selectedName string, expectHeading bool) {
+	t.Helper()
+	view := m.View()
+	if got := tui.Height(view); got > m.height {
+		t.Fatalf("rendered height = %d, model height = %d", got, m.height)
+	}
+	expected := []string{"^d/^u:half", selectedName}
+	if expectHeading {
+		expected = append(expected, "Recent")
+	}
+	for _, text := range expected {
+		if !strings.Contains(view, text) {
+			t.Fatalf("rendered view missing %q: %q", text, view)
+		}
+	}
+}
+
+func TestHomeVimMotionsClampAndRightOpensSheet(t *testing.T) {
+	projects := make([]Project, 20)
+	for i := range projects {
+		projects[i] = Project{ID: fmt.Sprint(i), Name: fmt.Sprintf("p%02d", i), Path: fmt.Sprintf("/ws/p%02d", i)}
+	}
+	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Projects: projects}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache(), homeView: config.ExplorerViewRecent, height: 15}
+	m.rebuildItems()
+	m.updateList(tui.KeyMsg{Type: tui.KeyEnd})
+	if m.cursor != len(m.items)-1 || m.scroll == 0 {
+		t.Fatalf("end = cursor %d scroll %d", m.cursor, m.scroll)
+	}
+	m.updateList(tui.KeyMsg{Type: tui.KeyCtrlF, Ctrl: true})
+	if m.cursor != len(m.items)-1 {
+		t.Fatalf("full page did not clamp: %d", m.cursor)
+	}
+	m.updateList(tui.KeyMsg{Type: tui.KeyHome})
+	m.updateList(tui.KeyMsg{Type: tui.KeyCtrlD, Ctrl: true})
+	if m.cursor == 0 || m.cursor >= m.listHeight() {
+		t.Fatalf("half page cursor = %d", m.cursor)
+	}
+	m.updateList(tui.KeyMsg{Type: tui.KeyRight})
+	if m.sheet == nil || m.Launch != nil {
+		t.Fatalf("right should open selected project sheet: sheet=%v launch=%v", m.sheet, m.Launch)
 	}
 }
 
@@ -152,6 +317,37 @@ func TestGlobalSearchIncludesCollapsedWorktreeRendersAndRestoresHome(t *testing.
 	m.updateFlash(tui.KeyMsg{Type: tui.KeyEsc})
 	if m.cursor != 1 || m.scroll != 1 || !reflect.DeepEqual(m.items, wantItems) {
 		t.Fatalf("home state not restored: cursor=%d scroll=%d items=%#v", m.cursor, m.scroll, m.items)
+	}
+}
+
+func TestFlashForwardsTextInputControlKeysLocallyAndGlobally(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		m := &Model{workspaces: []WorkspaceData{{Projects: []Project{{Name: "alphabet"}}}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache()}
+		m.flashQuery = tui.NewTextInput()
+		m.rebuildItems()
+		if global {
+			m.openGlobalSearch()
+		} else {
+			m.mode = viewFlash
+			m.flashQuery.Focus()
+		}
+		m.flashQuery.SetValue("alphabet")
+		m.flashQuery.CursorEnd()
+		cursor := m.cursor
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlB, Ctrl: true})
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlF, Ctrl: true})
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlU, Ctrl: true})
+		if m.flashQuery.Value() != "" || m.cursor != cursor {
+			t.Fatalf("global=%v ctrl+u query=%q cursor=%d, want empty and %d", global, m.flashQuery.Value(), m.cursor, cursor)
+		}
+		m.flashQuery.SetValue("xy")
+		m.flashQuery.CursorEnd()
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlB, Ctrl: true})
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlB, Ctrl: true})
+		m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlD, Ctrl: true})
+		if m.flashQuery.Value() != "y" || m.cursor != cursor {
+			t.Fatalf("global=%v ctrl+d query=%q cursor=%d", global, m.flashQuery.Value(), m.cursor)
+		}
 	}
 }
 

@@ -109,6 +109,12 @@ func NewModel(workspaces []WorkspaceData) *Model {
 	if mc, err := config.LoadMachineConfig(); err == nil {
 		m.homeView, m.recentOrder = mc.ExplorerView, mc.RecentOrder
 	}
+	for wi := range m.workspaces {
+		for pi := range m.workspaces[wi].Projects {
+			p := &m.workspaces[wi].Projects[pi]
+			m.wtCache.SeedInventory(p.Path, p.WorktreeInventory)
+		}
+	}
 
 	for _, ws := range workspaces {
 		for _, g := range ws.Groups {
@@ -253,7 +259,7 @@ func (m *Model) listHeight() int {
 }
 
 func (m *Model) footerHints() (actions, nav string) {
-	nav = "j/k:↕  1-9:chip  s:find  S:all  ?:more"
+	nav = "j/k:move  ^d/^u:half  ^f/^b:page  ?:more"
 	item := m.currentItem()
 	if item == nil {
 		return "⏎:open  s:find  S:all", nav
@@ -261,12 +267,12 @@ func (m *Model) footerHints() (actions, nav string) {
 	switch item.kind {
 	case KindGroup:
 		if item.projectionGroup {
-			actions = "⏎/tab:expand"
+			actions = "⏎/l:open  h:back  tab:expand"
 		} else {
-			actions = "⏎:sheet  tab:expand  l:shell"
+			actions = "⏎/l:open  h:back  tab:expand"
 		}
 	case KindProject:
-		actions = "⏎:sheet  w:worktree  e:edit  l:shell"
+		actions = "⏎/l:open  h:back  w:worktree  e:edit"
 	default:
 		actions = "⏎:open"
 	}
@@ -331,34 +337,19 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
 		return m, nil
 	case "j", "down":
-		if m.cursor+1 < len(m.items) {
-			m.cursor++
-			m.ensureVisible()
-		}
+		m.moveHomeCursor(1)
 	case "k", "up":
-		if m.cursor > 0 {
-			m.cursor--
-			m.ensureVisible()
-		}
-
-	case "enter":
-		if item == nil {
-			break
-		}
-		switch item.kind {
-		case KindGroup:
-			if item.projectionGroup {
-				m.toggleExpand(item.expandKey)
-			} else {
-				m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
-			}
-			return m, nil
-		case KindProject:
-			m.sheet = newProjectSheet(m, item.project, nil)
-			return m, nil
-		case KindWorktree:
-			return m.launch(item.workspaceRoot, item.path)
-		}
+		m.moveHomeCursor(-1)
+	case "ctrl+d":
+		m.moveHomeCursor(max(1, m.listHeight()/2))
+	case "ctrl+u":
+		m.moveHomeCursor(-max(1, m.listHeight()/2))
+	case "ctrl+f", "pgdn":
+		m.moveHomeCursor(m.listHeight())
+	case "ctrl+b", "pgup":
+		m.moveHomeCursor(-m.listHeight())
+	case "enter", "l", "right":
+		return m.openCurrentItem()
 
 	case "w":
 
@@ -385,11 +376,6 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.editErr = ""
 			m.mode = viewEditProject
 			return m, nil
-		}
-
-	case "l", "right":
-		if item != nil && item.path != "" {
-			return m.launch(item.workspaceRoot, item.path)
 		}
 
 	case "f":
@@ -435,12 +421,10 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.whichKeyLevel = 0
 		m.mode = viewWhichKey
 
-	case "G":
-		m.cursor = len(m.items) - 1
-		m.ensureVisible()
-	case "g":
-		m.cursor = 0
-		m.scroll = 0
+	case "G", "end":
+		m.moveHomeTo(len(m.items) - 1)
+	case "g", "home":
+		m.moveHomeTo(0)
 	}
 	return m, nil
 }

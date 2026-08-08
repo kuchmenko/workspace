@@ -138,13 +138,19 @@ func TestBulkArchiveReportsRemovedProjectPath(t *testing.T) {
 	if result.Archived != 1 || len(result.RemovedProjectPaths) != 1 || result.RemovedProjectPaths[0] != project.Path {
 		t.Fatalf("result = %+v", result)
 	}
+	if len(result.AffectedProjects) != 1 || result.AffectedProjects[0] != (ProjectIdentity{root, project.ID}) {
+		t.Fatalf("affected projects = %+v", result.AffectedProjects)
+	}
 	cache := NewWorktreeCache()
-	cache.data[project.Path] = []Worktree{*worktree}
+	cache.details[project.Path] = []Worktree{*worktree}
+	cache.inventory[project.Path] = []Worktree{*worktree}
 	for _, path := range result.RemovedProjectPaths {
 		cache.Invalidate(path)
 	}
-	if _, ok := cache.data[project.Path]; ok {
-		t.Fatal("removed project path remained cached")
+	_, detailsOK := cache.details[project.Path]
+	_, inventoryOK := cache.inventory[project.Path]
+	if detailsOK || inventoryOK {
+		t.Fatal("removed project path remained in worktree caches")
 	}
 }
 

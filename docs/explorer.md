@@ -61,18 +61,20 @@ modify canonical workspace groups. These preferences are machine-local.
 Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
+- `g` / `Home`, `G` / `End` — jump to the first or last row
+- `ctrl+d` / `ctrl+u` — move half a page
+- `ctrl+f` / `ctrl+b`, `PageDown` / `PageUp` — move a full page
 - `tab` — toggle expand/collapse for groups
 - `v` — cycle home views; `o` — reverse Recent order
-- `h` / `←` — collapse the selected group, or close the parent group
-  from one of its project rows.
+- `h` / `←` — collapse to the parent heading on home, or close a sheet
+- `l` / `→` — open the selected projection, group, project, or worktree
 - `1`-`9` — open a shell for the matching chip
 - `q` — quit
 
 Per-row actions:
 
-- `enter` — open the selected group or project sheet. In a project
+- `enter` / `l` / `→` — open the selected group or project sheet. In a project
   sheet, a worktree row opens a shell in that worktree.
-- `l` / `→` — open a shell directly in the selected row's directory.
 - `ctrl+s` — open a shell anywhere from anywhere.
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).

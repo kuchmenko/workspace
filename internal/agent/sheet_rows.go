@@ -19,6 +19,11 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	if err != nil {
 		m.statusMsg = "inspect worktrees: " + err.Error()
 	}
+	for i := range wts {
+		if active := p.BranchActivity[wts[i].Branch]; active.After(wts[i].LastActiveAt) {
+			wts[i].LastActiveAt = active
+		}
+	}
 
 	rows = append(rows, sheetRow{
 		kind:    rowHeader,

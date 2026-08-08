@@ -64,8 +64,13 @@ func TestExplorerLaunchContracts(t *testing.T) {
 	m.Launch = nil
 	m.cursor = 1
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'l'}})
+	if m.sheet == nil || m.Launch != nil {
+		t.Fatalf("project open = sheet %v launch %+v", m.sheet, m.Launch)
+	}
+	m.sheet = nil
+	m.Update(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'s'}, Ctrl: true})
 	if m.Launch == nil || m.Launch.Cwd != projectPath {
-		t.Fatalf("direct launch = %+v", m.Launch)
+		t.Fatalf("explicit shell launch = %+v", m.Launch)
 	}
 
 	outside := t.TempDir()

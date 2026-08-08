@@ -52,27 +52,86 @@ func worktreeDisplayName(wt Worktree) string {
 }
 
 type WorktreeCache struct {
-	data map[string][]Worktree
+	details   map[string][]Worktree
+	inventory map[string][]Worktree
 }
 
 func NewWorktreeCache() *WorktreeCache {
-	return &WorktreeCache{data: make(map[string][]Worktree)}
+	return &WorktreeCache{details: make(map[string][]Worktree), inventory: make(map[string][]Worktree)}
 }
 
 func (c *WorktreeCache) Get(mainPath string) ([]Worktree, error) {
-	if wts, ok := c.data[mainPath]; ok {
+	if wts, ok := c.details[mainPath]; ok {
 		return wts, nil
 	}
 	wts, err := LoadWorktrees(mainPath)
 	if err != nil {
 		return nil, err
 	}
-	c.data[mainPath] = wts
+	c.details[mainPath] = wts
+	c.inventory[mainPath] = wts
 	return wts, nil
 }
 
+func (c *WorktreeCache) SeedInventory(mainPath string, wts []Worktree) {
+	c.inventory[mainPath] = wts
+}
+
+func (c *WorktreeCache) Inventory(mainPath string) []Worktree {
+	if wts, ok := c.inventory[mainPath]; ok {
+		return wts
+	}
+	wts, err := LoadWorktreeInventory(mainPath)
+	if err != nil {
+		return nil
+	}
+	c.inventory[mainPath] = wts
+	return wts
+}
+
 func (c *WorktreeCache) Invalidate(mainPath string) {
-	delete(c.data, mainPath)
+	delete(c.details, mainPath)
+	delete(c.inventory, mainPath)
+}
+
+func LoadWorktreeInventory(mainPath string) ([]Worktree, error) {
+	barePath := layout.BarePath(mainPath)
+	if _, err := os.Stat(barePath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if _, err := os.Stat(mainPath); err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		lastActiveAt, _ := git.LastCommitTime(mainPath)
+		return []Worktree{{Path: mainPath, IsMain: true, LastActiveAt: lastActiveAt}}, nil
+	}
+	wts, err := git.WorktreeList(barePath)
+	if err != nil {
+		return nil, err
+	}
+	return buildWorktreeInventory(mainPath, barePath, wts)
+}
+
+func buildWorktreeInventory(mainPath, repoPath string, listed []git.Worktree) ([]Worktree, error) {
+	commits := make([]string, 0, len(listed))
+	for _, wt := range listed {
+		if !wt.Bare && wt.HEAD != "" {
+			commits = append(commits, wt.HEAD)
+		}
+	}
+	times, err := git.CommitTimes(repoPath, commits)
+	result := make([]Worktree, 0, len(listed))
+	for _, wt := range listed {
+		if wt.Bare {
+			continue
+		}
+		result = append(result, Worktree{Path: wt.Path, Branch: wt.Branch, IsMain: wt.Path == mainPath, LastActiveAt: times[wt.HEAD]})
+	}
+	return result, err
 }
 
 func LoadWorktrees(mainPath string) ([]Worktree, error) {
@@ -163,8 +222,18 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 
 	wsRoot := m.workspaceRootFor(m.popupProj)
 	machine, err := explorerMachineName()
+	var result *repo.WorktreeAddResult
 	if err == nil {
-		_, err = repo.AddWorktree(repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: m.popupProj.ID, Branch: branch, Machine: machine})
+		result, err = repo.AddWorktree(repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: m.popupProj.ID, Branch: branch, Machine: machine})
+	}
+	if result != nil {
+		m.wtCache.Invalidate(m.popupProj.Path)
+		refreshErr := m.reloadProjectMetadata(wsRoot, m.popupProj.ID)
+		m.rebuildItems()
+		m.ensureVisible()
+		if refreshErr != nil && err == nil {
+			err = fmt.Errorf("metadata refresh failed: %w", refreshErr)
+		}
 	}
 	if err != nil {
 		m.statusMsg = err.Error()
@@ -172,12 +241,9 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 		m.mode = viewList
 		return m, nil
 	}
-	m.wtCache.Invalidate(m.popupProj.Path)
 
 	m.wtBranch.Blur()
 	m.mode = viewList
-	m.rebuildItems()
-	m.ensureVisible()
 	m.statusMsg = "worktree created"
 	metrics.RecordExplorerWorktreeCreated()
 	return m, nil

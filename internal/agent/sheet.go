@@ -236,7 +236,7 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	}
 
 	switch key {
-	case "esc":
+	case "esc", "h", "left":
 		return s.close(m)
 	case "ctrl+c", "ctrl+q":
 		return m, tui.Quit
@@ -254,11 +254,26 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		s.cursor = len(s.visible) - 1
 		s.clampCursor()
 		return m, nil
+	case "ctrl+d":
+		s.moveCursor(max(1, sheetPageRows(m.height)/2))
+		return m, nil
+	case "ctrl+u":
+		s.moveCursor(-max(1, sheetPageRows(m.height)/2))
+		return m, nil
+	case "ctrl+f", "pgdn":
+		s.moveCursor(sheetPageRows(m.height))
+		return m, nil
+	case "ctrl+b", "pgup":
+		s.moveCursor(-sheetPageRows(m.height))
+		return m, nil
 	case "/":
 		s.filterMode = true
 		return m, s.filter.Focus()
 	}
 
+	if key == "l" || key == "right" {
+		key = "enter"
+	}
 	row := s.focused()
 	if row == nil {
 		return m, nil
@@ -434,14 +449,26 @@ func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
 	if err == nil {
 		result, err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
 	}
-	if result.Removed {
+	metadataRefreshError := ""
+	if result.Removed || result.MetadataReleased {
 		m.wtCache.Invalidate(p.Path)
+		if refreshErr := m.reloadProjectMetadata(wsRoot, projID); refreshErr != nil {
+			metadataRefreshError = refreshErr.Error()
+		}
 		s.rebuild(m)
+		m.rebuildItems()
 	}
 	if err != nil {
 		s.statusMsg = err.Error()
 		return m, nil
 	}
-	s.statusMsg = "worktree deleted"
+	if result.Removed {
+		s.statusMsg = "worktree deleted"
+	} else if result.MetadataReleased {
+		s.statusMsg = "worktree ownership released"
+	}
+	if metadataRefreshError != "" {
+		s.statusMsg += "; metadata refresh failed: " + metadataRefreshError
+	}
 	return m, nil
 }

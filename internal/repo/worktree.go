@@ -75,7 +75,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 		setAddMetadata(&project, branch, options.Machine, remoteExists, result)
 		workspace.Projects[options.Project] = project
 		if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
-			return nil, fmt.Errorf("registry update failed: %w", err)
+			return result, fmt.Errorf("registry update failed: %w", err)
 		}
 		return result, nil
 	}
@@ -120,7 +120,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	setAddMetadata(&project, branch, options.Machine, result.Source == "fetched", result)
 	workspace.Projects[options.Project] = project
 	if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
-		return nil, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
+		return result, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
 	}
 	return result, nil
 }

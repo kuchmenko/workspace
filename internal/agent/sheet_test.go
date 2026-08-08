@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/testutil"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -16,7 +18,8 @@ func newTestModel(p *Project, wts []Worktree) *Model {
 		expanded:   map[string]bool{},
 		wtCache:    NewWorktreeCache(),
 	}
-	m.wtCache.data[p.Path] = wts
+	m.wtCache.details[p.Path] = wts
+	m.wtCache.inventory[p.Path] = wts
 	return m
 }
 
@@ -62,6 +65,34 @@ func TestBuildProjectSheetRows_WorktreesSection(t *testing.T) {
 	}
 	if wtRows[2].hint != "dirty ↑3" {
 		t.Errorf("dirty+ahead hint = %q, want %q", wtRows[2].hint, "dirty ↑3")
+	}
+}
+
+func TestBuildProjectSheetRowsSortsByRegistryOrCommitRecency(t *testing.T) {
+	commitNewest := time.Unix(300, 0)
+	registryNewest := time.Unix(400, 0)
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha", BranchActivity: map[string]time.Time{"feat/registry": registryNewest}}
+	wts := []Worktree{
+		{Path: "/ws/alpha-old", Branch: "feat/registry", LastActiveAt: time.Unix(100, 0)},
+		{Path: "/ws/alpha-new", Branch: "feat/commit", LastActiveAt: commitNewest},
+	}
+	m := newTestModel(p, wts)
+
+	rows := filterByKind(buildProjectSheetRows(m, p), rowWorktree)
+	if len(rows) != 2 || rows[0].wt.Branch != "feat/registry" || !rows[0].wt.LastActiveAt.Equal(registryNewest) {
+		t.Fatalf("sorted worktrees = %#v, want registry-active branch first", rows)
+	}
+}
+
+func TestWorktreeInventoryReloadsAfterInvalidation(t *testing.T) {
+	repo := testutil.InitFakePlainCheckout(t, t.TempDir(), "repo", nil)
+	cache := NewWorktreeCache()
+	cache.SeedInventory(repo, []Worktree{{Path: repo + "-stale"}})
+	cache.Invalidate(repo)
+
+	wts := cache.Inventory(repo)
+	if len(wts) != 1 || wts[0].Path != repo || !wts[0].IsMain || wts[0].LastActiveAt.IsZero() {
+		t.Fatalf("reloaded inventory = %#v", wts)
 	}
 }
 
@@ -162,6 +193,76 @@ func TestSheet_EscPopsToParent(t *testing.T) {
 	parent.update(m, esc())
 	if m.sheet != nil {
 		t.Errorf("esc from root sheet should close to tree; got %p", m.sheet)
+	}
+}
+
+func TestSheetVimMotionsAndRightOpen(t *testing.T) {
+	projects := make([]Project, 30)
+	for i := range projects {
+		projects[i] = Project{ID: fmt.Sprint(i), Name: fmt.Sprintf("p%02d", i), Group: "org", Path: fmt.Sprintf("/ws/p%02d", i)}
+	}
+	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Groups: []string{"org"}, Projects: projects}}, wtCache: NewWorktreeCache()}
+	s := newGroupSheet(m, "/ws", "org")
+	m.sheet = s
+
+	m.height = 40
+	s.update(m, tui.KeyMsg{Type: tui.KeyCtrlF, Ctrl: true})
+	if s.cursor < sheetPageRows(m.height) || s.focused() == nil {
+		t.Fatalf("full page cursor = %d row=%#v", s.cursor, s.focused())
+	}
+	s.update(m, tui.KeyMsg{Type: tui.KeyEnd})
+	last := s.cursor
+	s.update(m, tui.KeyMsg{Type: tui.KeyCtrlD, Ctrl: true})
+	if s.cursor != last {
+		t.Fatalf("half page did not clamp: got %d want %d", s.cursor, last)
+	}
+	s.update(m, tui.KeyMsg{Type: tui.KeyHome})
+	for i, idx := range s.visible {
+		if s.rows[idx].kind == rowProject {
+			s.cursor = i
+			break
+		}
+	}
+	s.update(m, tui.KeyMsg{Type: tui.KeyRight})
+	if m.sheet == nil || m.sheet == s || m.sheet.parent != s {
+		t.Fatalf("right did not open project child sheet: %#v", m.sheet)
+	}
+	m.sheet.update(m, tui.KeyMsg{Type: tui.KeyLeft})
+	if m.sheet != s {
+		t.Fatalf("left did not return to parent: %#v", m.sheet)
+	}
+}
+
+func TestNarrowSheetKeepsChromeAndSelectionVisible(t *testing.T) {
+	projects := make([]Project, 24)
+	for i := range projects {
+		projects[i] = Project{ID: fmt.Sprint(i), Name: fmt.Sprintf("%02d-", i) + strings.Repeat("界-long-project-", 4), Group: strings.Repeat("long-group-", 4), Path: "/very/long/path/that/must/not/wrap"}
+	}
+	group := projects[0].Group
+	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Groups: []string{group}, Projects: projects}}, wtCache: NewWorktreeCache(), width: 42, height: 16}
+	s := newGroupSheet(m, "/ws", group)
+	s.statusMsg = strings.Repeat("status must stay one line ", 5)
+	s.moveCursor(12)
+	selected := s.focused().label
+	view := s.view(m.width, m.height)
+	if tui.Height(view) > m.height {
+		t.Fatalf("height = %d, want <= %d", tui.Height(view), m.height)
+	}
+	if !strings.Contains(view, "@long-group") || !strings.Contains(view, "⏎/l:open") || !strings.Contains(view, selected[:3]) {
+		t.Fatalf("title, footer, or selected item missing: %q", view)
+	}
+}
+
+func TestSheetFilterModeKeepsTextInputControlKeys(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	m := newTestModel(p, nil)
+	s := newProjectSheet(m, p, nil)
+	s.filterMode = true
+	s.filter.Focus()
+	s.cursor = 2
+	s.update(m, tui.KeyMsg{Type: tui.KeyCtrlU, Ctrl: true})
+	if s.cursor != 2 {
+		t.Fatalf("filter control key moved list cursor to %d", s.cursor)
 	}
 }
 

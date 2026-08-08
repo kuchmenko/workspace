@@ -7,6 +7,24 @@ import (
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
+func sheetPageRows(height int) int {
+	return min(18, max(1, height-12))
+}
+
+func (s *sheet) pageRows(height int) int {
+	chrome := 8
+	if s.subtitle() != "" {
+		chrome++
+	}
+	if s.filterMode || s.filter.Value() != "" {
+		chrome++
+	}
+	if s.statusMsg != "" {
+		chrome += 2
+	}
+	return min(18, max(1, height-chrome-2))
+}
+
 func (s *sheet) view(width, height int) string {
 	popupW := 60
 	if width < 66 {
@@ -18,9 +36,9 @@ func (s *sheet) view(width, height int) string {
 	innerW := popupW - 6
 
 	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(s.title()))
+	lines = append(lines, popupTitleStyle.Width(innerW).Render(tui.Truncate(s.title(), innerW)))
 	if sub := s.subtitle(); sub != "" {
-		lines = append(lines, popupDimStyle.Width(innerW).Render(sub))
+		lines = append(lines, popupDimStyle.Width(innerW).Render(tui.Truncate(sub, innerW)))
 	}
 
 	if s.filterMode || s.filter.Value() != "" {
@@ -28,7 +46,7 @@ func (s *sheet) view(width, height int) string {
 		if s.filterMode {
 			prompt = "/" + s.filter.View()
 		}
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(" "+prompt))
+		lines = append(lines, popupSelectedStyle.Width(innerW).Render(tui.Truncate(" "+prompt, innerW)))
 	}
 	lines = append(lines, "")
 
@@ -39,8 +57,7 @@ func (s *sheet) view(width, height int) string {
 		}
 		lines = append(lines, popupDimStyle.Width(innerW).Render(empty))
 	} else {
-		const maxRows = 18
-		start, end := tui.WindowAround(s.cursor, len(s.visible), maxRows)
+		start, end := tui.WindowAround(s.cursor, len(s.visible), s.pageRows(height))
 		for i := start; i < end; i++ {
 			lines = append(lines, s.renderRow(i, innerW))
 		}
@@ -54,11 +71,11 @@ func (s *sheet) view(width, height int) string {
 
 	if s.statusMsg != "" {
 		lines = append(lines, "")
-		lines = append(lines, statusMsgStyle.Width(innerW).Render(" "+presentLabel(s.statusMsg)))
+		lines = append(lines, statusMsgStyle.Width(innerW).Render(tui.Truncate(" "+presentLabel(s.statusMsg), innerW)))
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render(s.footerHint()))
+	lines = append(lines, popupDimStyle.Width(innerW).Render(tui.Truncate(s.footerHint(), innerW)))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)
@@ -71,9 +88,9 @@ func (s *sheet) renderRow(visIdx, innerW int) string {
 	selected := visIdx == s.cursor
 
 	if r.kind == rowHeader {
-		text := fmt.Sprintf("── %s ", r.label)
-		if len(text) < innerW {
-			text += strings.Repeat("─", innerW-len(text))
+		text := tui.Truncate(fmt.Sprintf("── %s ", presentLabel(r.label)), innerW)
+		if tui.Width(text) < innerW {
+			text += strings.Repeat("─", innerW-tui.Width(text))
 		}
 		return popupDimStyle.Width(innerW).Render(text)
 	}
@@ -97,6 +114,8 @@ func (s *sheet) renderRow(visIdx, innerW int) string {
 		}
 		right += key
 	}
+	right = tui.Truncate(right, max(0, innerW-1))
+	left = tui.Truncate(left, max(0, innerW-tui.Width(right)-1))
 
 	leftW := tui.Width(left)
 	rightW := tui.Width(right)
@@ -144,20 +163,20 @@ func (s *sheet) footerHint() string {
 		return "  type to filter · enter:apply · esc:clear"
 	}
 	if s.mode == sheetGroup {
-		return "  ⏎:open  /:filter  esc:back"
+		return "  ⏎/l:open  h:back  j/k:move  ^f/^b:page"
 	}
 	r := s.focused()
 	if r == nil {
-		return "  /:filter  esc:back"
+		return "  /:filter  h:back  j/k:move  ^f/^b:page"
 	}
 	switch r.kind {
 	case rowWorktree:
 		if r.wt != nil && !r.wt.IsMain {
-			return "  ⏎:shell  d:delete"
+			return "  ⏎/l:shell  h:back  d:delete"
 		}
-		return "  ⏎:shell"
+		return "  ⏎/l:shell  h:back"
 	case rowAction:
-		return "  ⏎:run  /:filter  esc:back"
+		return "  ⏎/l:run  /:filter  h:back"
 	}
-	return "  /:filter  esc:back"
+	return "  /:filter  h:back"
 }

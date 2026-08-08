@@ -38,9 +38,11 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 					}
 				}
 			}
-			m.flashQuery, _ = m.flashQuery.Update(msg)
-			m.recomputeFlash()
 		}
+		var cmd tui.Cmd
+		m.flashQuery, cmd = m.flashQuery.Update(msg)
+		m.recomputeFlash()
+		return m, cmd
 	}
 	return m, nil
 }
@@ -109,7 +111,7 @@ func (m *Model) recomputeFlash() {
 				if query == "" || strings.Contains(strings.ToLower(projectName), query) {
 					m.items = append(m.items, listItem{kind: KindProject, workspaceRoot: p.WorkspaceRoot, project: p, path: p.Path})
 				}
-				wts, _ := m.wtCache.Get(p.Path)
+				wts := m.wtCache.Inventory(p.Path)
 				for i := range wts {
 					name := p.Name + " › " + worktreeDisplayName(wts[i])
 					if query == "" || strings.Contains(strings.ToLower(name), query) {
