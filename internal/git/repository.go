@@ -54,6 +54,38 @@ func HasRemoteBranch(repoPath, remote, branch string) bool {
 	return exec.Command("git", "-C", repoPath, "show-ref", "--verify", "--quiet", "refs/remotes/"+remote+"/"+branch).Run() == nil
 }
 
+func FetchRemoteBranch(repoPath, remote, branch string) (string, error) {
+	trackingRef := "refs/remotes/" + remote + "/" + branch
+	refspec := "+refs/heads/" + branch + ":" + trackingRef
+	if err := FetchRefspec(repoPath, remote, refspec); err != nil {
+		return "", err
+	}
+	out, err := exec.Command("git", "-C", repoPath, "rev-parse", "--verify", trackingRef+"^{commit}").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("resolve %s in %s: %s", trackingRef, repoPath, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func DeleteLocalBranch(repoPath, branch, expectedOID string) error {
+	ref := "refs/heads/" + branch
+	out, err := exec.Command("git", "-C", repoPath, "update-ref", "-d", ref, expectedOID).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git update-ref delete %s at %s in %s: %s", ref, expectedOID, repoPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func DeleteRemoteBranch(repoPath, remote, branch, expectedOID string) error {
+	ref := "refs/heads/" + branch
+	lease := "--force-with-lease=" + ref + ":" + expectedOID
+	out, err := remoteCommand(context.Background(), "-C", repoPath, "push", lease, remote, ":"+ref).CombinedOutput()
+	if err != nil {
+		return commandError(context.Background(), fmt.Sprintf("git push %s leased delete %s in %s", RedactRemote(remote), branch, repoPath), RedactDiagnostic(string(out), remote), err)
+	}
+	return nil
+}
+
 func Pull(repoPath string) error {
 	return PullContext(context.Background(), repoPath)
 }

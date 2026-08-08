@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/kuchmenko/workspace/internal/config"
 	"codeberg.org/kuchmenko/workspace/internal/tui"
 )
 
@@ -81,7 +82,7 @@ func (m *Model) itemGroupKey(item listItem) string {
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
-	if m.expanded[item.group] {
+	if m.expanded[item.expandKey] {
 		arrow = "▾"
 	}
 	name := item.group
@@ -104,6 +105,9 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	indent := strings.Repeat("    ", item.indent)
 
 	name := p.Name
+	if m.homeView == config.ExplorerViewRecent && p.Group != "" {
+		name += "  @" + p.Group
+	}
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery, flashLabel)
 	}
@@ -278,7 +282,11 @@ func (m *Model) viewList() string {
 	} else {
 		bc := m.breadcrumb()
 		pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-		hdr := m.padRight(" "+bc, pos+" ", listW)
+		view := m.homeView
+		if m.homeView == config.ExplorerViewRecent {
+			view += " " + m.recentOrder
+		}
+		hdr := m.padRight(" "+bc+" · "+view, pos+" ", listW)
 		rows = append(rows, headerStyle.Width(listW).Render(hdr))
 	}
 
@@ -556,12 +564,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.exitFlash(false)
 		}
 	case "enter":
-
-		if len(m.flashMatches) > 0 {
-			m.cursor = m.flashMatches[0]
-			m.ensureVisible()
-		}
-		m.exitFlash(true)
+		return m, m.activateFlashMatch(0)
 	default:
 		if len(key) == 1 && key[0] >= 32 && key[0] < 127 {
 			ch := rune(key[0])
@@ -569,10 +572,7 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			if m.flashQuery != "" {
 				for i, label := range m.flashLabels {
 					if label != 0 && ch == label && i < len(m.flashMatches) {
-						m.cursor = m.flashMatches[i]
-						m.ensureVisible()
-						m.exitFlash(true)
-						return m, nil
+						return m, m.activateFlashMatch(i)
 					}
 				}
 			}
@@ -586,19 +586,58 @@ func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 func (m *Model) exitFlash(jumped bool) {
 	m.mode = viewList
-	if m.flashGlobal && !jumped && m.savedExpanded != nil {
-		m.expanded = m.savedExpanded
-		m.savedExpanded = nil
+	if m.flashGlobal && !jumped {
 		m.rebuildItems()
-		m.ensureVisible()
+		m.cursor, m.scroll = m.savedCursor, m.savedScroll
 	}
 	m.flashGlobal = false
+}
+
+func (m *Model) activateFlashMatch(match int) tui.Cmd {
+	if match < 0 || match >= len(m.flashMatches) {
+		return nil
+	}
+	item := m.items[m.flashMatches[match]]
+	if m.flashGlobal {
+		m.exitFlash(false)
+		switch item.kind {
+		case KindProject:
+			m.sheet = newProjectSheet(m, item.project, nil)
+		case KindWorktree:
+			m.Launch = &LaunchRequest{Cwd: item.path}
+			return tui.Quit
+		}
+		return nil
+	}
+	m.cursor = m.flashMatches[match]
+	m.ensureVisible()
+	m.exitFlash(true)
+	return nil
 }
 
 func (m *Model) recomputeFlash() {
 	query := strings.ToLower(m.flashQuery)
 	m.flashMatches = nil
 	m.flashLabels = nil
+	if m.flashGlobal {
+		m.items = nil
+		for wi := range m.workspaces {
+			for pi := range m.workspaces[wi].Projects {
+				p := &m.workspaces[wi].Projects[pi]
+				if query == "" || strings.Contains(strings.ToLower(p.Name), query) {
+					m.addProjectItem(p, 0)
+				}
+				for i := range m.wtCache.Get(p.Path) {
+					wt := &m.wtCache.data[p.Path][i]
+					label := p.Name + " › " + worktreeDisplayName(*wt)
+					if query == "" || strings.Contains(strings.ToLower(label), query) {
+						m.items = append(m.items, listItem{kind: KindWorktree, group: label, worktree: wt, path: wt.Path, parentProj: p})
+					}
+				}
+			}
+		}
+		m.cursor, m.scroll = 0, 0
+	}
 
 	for i, item := range m.items {
 		name := m.itemSearchName(item)
@@ -694,6 +733,6 @@ func (m *Model) openSheetForChip(c Chip) {
 			m.sheet = newProjectSheet(m, c.Project, nil)
 		}
 	case KindGroup:
-		m.sheet = newGroupSheet(m, c.Name)
+		m.sheet = newGroupSheet(m, c.WorkspaceRoot, c.Name)
 	}
 }

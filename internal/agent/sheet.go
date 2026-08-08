@@ -37,6 +37,8 @@ const (
 	actSearch
 	actEdit
 	actFavorite
+	actArchiveProject
+	actArchiveOldWorktrees
 )
 
 type sheetRow struct {
@@ -56,6 +58,7 @@ type sheet struct {
 	mode       sheetMode
 	target     *Project
 	group      string
+	groupRoot  string
 	groupPath  string
 	rows       []sheetRow
 	visible    []int
@@ -64,7 +67,6 @@ type sheet struct {
 	filterMode bool
 	wtOpen     map[string]bool
 	parent     *sheet
-	pendingDel *Worktree
 	statusMsg  string
 }
 
@@ -79,29 +81,22 @@ func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
 	return s
 }
 
-func newGroupSheet(m *Model, group string) *sheet {
+func newGroupSheet(m *Model, root, group string) *sheet {
 	s := &sheet{
 		mode:      sheetGroup,
 		group:     group,
-		groupPath: groupRootPath(m, group),
+		groupRoot: root,
+		groupPath: GroupPath(root, group),
 	}
 	s.rebuild(m)
 	return s
-}
-
-func groupRootPath(m *Model, group string) string {
-	root := m.workspaceRootForGroup(group)
-	if root == "" {
-		return ""
-	}
-	return GroupPath(root, group)
 }
 
 func (s *sheet) rebuild(m *Model) {
 	if s.mode == sheetProject {
 		s.rows = buildProjectSheetRows(m, s.target, s.wtOpen)
 	} else {
-		s.rows = buildGroupSheetRows(m, s.group, s.groupPath)
+		s.rows = buildGroupSheetRows(m, s.groupRoot, s.group, s.groupPath)
 	}
 	s.applyFilter()
 }
@@ -246,9 +241,19 @@ func buildProjectSheetRows(m *Model, p *Project, wtOpen map[string]bool) []sheet
 		sheetRow{kind: rowAction, action: actPrompt, label: "+ prompt", hint: "claude w/ prompt", keyHint: "p", section: "main"},
 		sheetRow{kind: rowAction, action: actNewWorktree, label: "+ worktree", hint: "create new + claude", keyHint: "w", section: "main"},
 		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "main"},
+		sheetRow{kind: rowAction, action: actArchiveProject, label: "archive project", hint: "hide; keep all files", keyHint: "a", section: "main"},
+		sheetRow{kind: rowAction, action: actArchiveOldWorktrees, label: "archive old worktrees", hint: "safe local cleanup", keyHint: "A", section: "main"},
 	)
 
 	wts := m.wtCache.Get(p.Path)
+	for i := range wts {
+		if active := p.BranchActivity[wts[i].Branch]; active.After(wts[i].LastActiveAt) {
+			wts[i].LastActiveAt = active
+		}
+	}
+	sort.Slice(wts, func(i, j int) bool {
+		return recencyLess(wts[i].LastActiveAt, wts[j].LastActiveAt, worktreeDisplayName(wts[i]), worktreeDisplayName(wts[j]), true)
+	})
 
 	sessByPath := sheetSessions(m, p, wts)
 
@@ -339,7 +344,7 @@ func buildProjectSheetRows(m *Model, p *Project, wtOpen map[string]bool) []sheet
 	return rows
 }
 
-func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
+func buildGroupSheetRows(m *Model, groupRoot, group, groupPath string) []sheetRow {
 	var rows []sheetRow
 
 	inHint := "in @" + group
@@ -353,6 +358,9 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 	var projects []*Project
 	for wi := range m.workspaces {
 		ws := &m.workspaces[wi]
+		if ws.Root != groupRoot {
+			continue
+		}
 		for pi := range ws.Projects {
 			p := &ws.Projects[pi]
 			if p.Group == group {
@@ -412,15 +420,17 @@ func buildGroupSheetRows(m *Model, group, groupPath string) []sheetRow {
 
 	rows = append(rows,
 		sheetRow{kind: rowHeader, label: "manage", section: "manage"},
-		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, group), keyHint: "f", section: "manage"},
+		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, groupPath, group), keyHint: "f", section: "manage"},
+		sheetRow{kind: rowAction, action: actArchiveProject, label: "archive group projects", hint: "keep all files", keyHint: "a", section: "manage"},
+		sheetRow{kind: rowAction, action: actArchiveOldWorktrees, label: "archive old worktrees", hint: "safe local cleanup", keyHint: "A", section: "manage"},
 	)
 
 	return rows
 }
 
-func groupFavoriteLabel(m *Model, group string) string {
+func groupFavoriteLabel(m *Model, groupPath, group string) string {
 	for _, ws := range m.workspaces {
-		if ws.FavoriteGroups[group] {
+		if GroupPath(ws.Root, group) == groupPath && ws.FavoriteGroups[group] {
 			return "unfavorite group"
 		}
 	}
@@ -483,16 +493,6 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 
 	// Pending wt delete confirmation lives inside the sheet.
-	if s.pendingDel != nil {
-		s.statusMsg = ""
-		wt := s.pendingDel
-		s.pendingDel = nil
-		if key == "y" {
-			return s.dispatchWtDelete(m, wt)
-		}
-		return m, nil
-	}
-
 	switch key {
 	case "esc":
 		return s.close(m)
@@ -673,9 +673,35 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 			if s.target != nil {
 				m.toggleFavoriteFor(s.target)
 			} else if s.group != "" {
-				m.toggleFavoriteGroup(s.group)
+				m.toggleFavoriteGroup(s.groupRoot, s.group)
 			}
 			s.rebuild(m)
+			return m, nil
+		}
+	case actArchiveProject:
+		if key == "enter" || key == "a" {
+			m.sheet = nil
+			kind := lifecycleProject
+			if s.mode == sheetGroup {
+				kind = lifecycleGroup
+			}
+			m.openLifecycle(lifecycleScope{kind: kind, project: s.target, group: s.group, workspaceRoot: s.groupRoot})
+			m.lifecycle.parentSheet = s
+			m.lifecycle.action = lifecycleArchiveProjects
+			m.prepareLifecycle()
+			return m, nil
+		}
+	case actArchiveOldWorktrees:
+		if key == "enter" || key == "A" {
+			m.sheet = nil
+			kind := lifecycleProject
+			if s.mode == sheetGroup {
+				kind = lifecycleGroup
+			}
+			m.openLifecycle(lifecycleScope{kind: kind, project: s.target, group: s.group, workspaceRoot: s.groupRoot})
+			m.lifecycle.parentSheet = s
+			m.lifecycle.action = lifecycleArchiveOldWorktrees
+			m.prepareLifecycle()
 			return m, nil
 		}
 	}
@@ -699,8 +725,17 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 		if wt.IsMain {
 			return m, nil
 		}
-		s.pendingDel = wt
-		s.statusMsg = fmt.Sprintf("delete %s? y to confirm", worktreeDisplayName(*wt))
+		m.sheet = nil
+		m.openWorktreeDelete(s.target, wt)
+		m.lifecycle.parentSheet = s
+		return m, nil
+	case "a":
+		if wt.IsMain {
+			return m, nil
+		}
+		m.sheet = nil
+		m.openWorktreeArchive(s.target, wt)
+		m.lifecycle.parentSheet = s
 		return m, nil
 	}
 	return m, nil
@@ -733,34 +768,8 @@ func (s *sheet) openGlobalSearch(m *Model) (tui.Model, tui.Cmd) {
 	m.mode = viewFlash
 	m.flashGlobal = true
 	m.flashQuery = ""
-	m.savedExpanded = make(map[string]bool)
-	for k, v := range m.expanded {
-		m.savedExpanded[k] = v
-	}
-	for _, ws := range m.workspaces {
-		for _, g := range ws.Groups {
-			m.expanded[g] = true
-		}
-	}
-	m.rebuildItems()
+	m.savedCursor, m.savedScroll = m.cursor, m.scroll
 	m.recomputeFlash()
-	return m, nil
-}
-
-func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
-	p := s.target
-	projID := ""
-	if p != nil {
-		projID = p.ID
-	}
-	wsRoot := m.workspaceRootFor(p)
-	if err := DeleteWorktreeWithRegistry(p.Path, wt.Path, false, wsRoot, projID, wt.Branch); err != nil {
-		s.statusMsg = err.Error()
-		return m, nil
-	}
-	m.wtCache.Invalidate(p.Path)
-	s.rebuild(m)
-	s.statusMsg = "worktree deleted"
 	return m, nil
 }
 

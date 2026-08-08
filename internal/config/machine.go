@@ -17,7 +17,17 @@ import (
 type MachineConfig struct {
 	MachineName    string   `toml:"machine_name"`
 	WorkspaceRoots []string `toml:"workspace_roots,omitempty"`
+	ExplorerView   string   `toml:"explorer_view,omitempty"`
+	RecentOrder    string   `toml:"recent_order,omitempty"`
 }
+
+const (
+	ExplorerViewProjects = "projects"
+	ExplorerViewRecent   = "recent"
+	ExplorerViewLanguage = "language"
+	RecentOrderAsc       = "asc"
+	RecentOrderDesc      = "desc"
+)
 
 type legacyDaemonConfig struct {
 	Workspaces []struct {
@@ -201,6 +211,18 @@ func ListWorkspaceRoots() ([]string, error) {
 }
 
 func normalizeMachineConfig(cfg *MachineConfig) error {
+	if cfg.ExplorerView == "" {
+		cfg.ExplorerView = ExplorerViewRecent
+	}
+	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
+		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
+	}
+	if cfg.RecentOrder == "" {
+		cfg.RecentOrder = RecentOrderDesc
+	}
+	if cfg.RecentOrder != RecentOrderAsc && cfg.RecentOrder != RecentOrderDesc {
+		return fmt.Errorf("invalid recent_order %q", cfg.RecentOrder)
+	}
 	roots := make([]string, 0, len(cfg.WorkspaceRoots))
 	for _, root := range cfg.WorkspaceRoots {
 		if strings.TrimSpace(root) == "" {

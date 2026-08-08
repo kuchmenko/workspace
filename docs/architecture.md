@@ -30,12 +30,14 @@ metadata. It is committed through the workspace's own git repository.
 merge cleanly in the common case.
 
 `~/.config/ws/config.toml` is machine-local. It contains the machine name
-used for branch attribution and canonical workspace roots used by the
-explorer:
+used for branch attribution, canonical workspace roots, and local explorer
+presentation preferences:
 
 ```toml
 machine_name = "linux"
 workspace_roots = ["/home/user/dev", "/home/user/work"]
+explorer_view = "recent"
+recent_order = "desc"
 ```
 
 `ws workspace add/rm/list` is the supported writer for

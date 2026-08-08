@@ -18,7 +18,7 @@ piping / scripts get help instead of a TUI prompt.
 
 The explorer reads `workspace_roots` from `~/.config/ws/config.toml`,
 walks each root for projects / groups / worktrees / Claude sessions,
-and renders a pinned quick-nav header above a scrollable tree. Manage
+and renders a pinned quick-nav header above a scrollable view. Manage
 the roots with `ws workspace add/rm/list`. The current workspace is a
 fallback when no roots are registered.
 
@@ -50,11 +50,19 @@ A project icon is rendered per ecosystem (Go, Rust, Python, Node, TS,
 Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
 `Cargo.toml`, `pyproject.toml`, etc.) in the project directory.
 
-### Tree
+### Views
 
-Group / project rows expand and collapse with `tab`. Worktrees show
-the same ownership tags as `ws worktree list` (`main`, `mine`,
-`shared with <machines>`, `legacy-wt`).
+Press `v` to cycle through:
+
+- **Recent** — the default cross-group view, ordered by the newer of
+  branch activity and the worktree HEAD commit time. Press `o` to
+  reverse the order. Canonical groups appear as row context without
+  changing `workspace.toml`.
+- **Projects** — canonical workspace groups and projects.
+- **Language** — ephemeral language groups inferred from project files.
+
+The selected view and Recent order are stored in machine-local config.
+Group rows expand and collapse with `tab`.
 
 ## Keys
 
@@ -62,6 +70,8 @@ Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
 - `tab` — toggle expand/collapse for groups and projects
+- `v` — cycle Recent / Projects / Language views
+- `o` — reverse Recent ordering
 - `h` / `←` — collapse one level. Smart: from a worktree row it
   closes the parent project; from a project row under a group it
   closes the group.
@@ -78,9 +88,15 @@ Per-row actions:
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
 - `e` — on a project row, edit the project's group / category.
-- `d` — on a non-main worktree row, prompt for delete (with
-  registry release; releases this machine from
-  `[[branches]].machines`).
+- `a` — archive the selected project, canonical project group, or
+  non-main worktree. Worktree archive removes its local checkout but
+  preserves local and remote branches.
+- `d` — destructively delete one non-main worktree after exact branch
+  confirmation. This removes its checkout, remote branch, and local
+  branch. `main`, `master`, `dev`, and the configured default branch
+  are protected.
+- `A` — open global lifecycle maintenance. Archive projects or archive
+  old worktrees using thresholds such as `72h`, `1w`, or `1month`.
 - `f` — on a project row, toggle favorite. Equivalent to
   `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
   persisted to `workspace.toml` and reaches other machines on the next
@@ -88,8 +104,9 @@ Per-row actions:
 
 Search:
 
-- `s` — flash search inside the current view (jump labels per match).
-- `S` — global flash search (expands every group temporarily).
+- `s` / `/` — flash search inside the current view.
+- `S` — global filtered search across projects and worktrees, including
+  matches outside the current view and viewport.
 
 Help:
 
@@ -109,6 +126,22 @@ explorer runs the same path as `ws worktree add <project> <branch>`:
 
 After the form closes, the explorer invalidates its worktree cache
 and re-renders so the new entry appears immediately.
+
+## Archival and deletion
+
+Project archive changes project status to `archived` and leaves files,
+repositories, worktrees, and branches untouched. It is available for a
+project, canonical group, or all loaded workspaces.
+
+Worktree archive is reversible: it removes a non-main checkout, retains
+the branch, and releases this machine's ownership metadata. Restore it
+with `ws worktree add <project> <branch>`. Age-based project, group, and
+global archival previews eligible and skipped counts before confirmation.
+Main, dirty, recent, local-only, and unpushed worktrees are skipped.
+
+Worktree delete is single-item only and intentionally destructive. It
+verifies the remote branch, requires the exact branch name, and uses a
+leased remote deletion so a concurrently changed branch is not removed.
 
 ## Project edit
 

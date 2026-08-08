@@ -230,3 +230,36 @@ func TestEnsureLegacyDaemonStoppedReturnsActionableError(t *testing.T) {
 		}
 	}
 }
+
+func TestMachineConfigExplorerDefaultsAndRoundTrip(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg, err := LoadMachineConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ExplorerView != ExplorerViewRecent || cfg.RecentOrder != RecentOrderDesc {
+		t.Fatalf("defaults = %q/%q, want recent/desc", cfg.ExplorerView, cfg.RecentOrder)
+	}
+	cfg.ExplorerView = ExplorerViewLanguage
+	cfg.RecentOrder = RecentOrderAsc
+	if err := SaveMachineConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadMachineConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ExplorerView != ExplorerViewLanguage || got.RecentOrder != RecentOrderAsc {
+		t.Fatalf("round trip = %q/%q", got.ExplorerView, got.RecentOrder)
+	}
+}
+
+func TestMachineConfigRejectsInvalidExplorerPreferences(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := SaveMachineConfig(&MachineConfig{ExplorerView: "invalid"}); err == nil {
+		t.Fatal("invalid explorer view was accepted")
+	}
+	if err := SaveMachineConfig(&MachineConfig{RecentOrder: "invalid"}); err == nil {
+		t.Fatal("invalid recent order was accepted")
+	}
+}

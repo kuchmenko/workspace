@@ -21,11 +21,12 @@ func newExplorerCmd() *cobra.Command {
 		},
 		Long: `Launch the interactive TUI explorer over every registered workspace.
 The pinned quick-nav header shows up to nine numbered chips (favorites
-+ recently-touched) — press 1-9 to launch the matching project. Below
-the header, the full project tree scrolls with j/k navigation.
++ recently-touched) — press 1-9 to open the matching project. Below
+the header, switch between Recent, Projects, and Language views.
 
 Navigation: j/k to move, Enter to open, h/Esc to go back, q to quit.
-1-9 to launch a chip directly. Subcommands provide non-interactive
+Use v to change view, o to reverse recency, S to search projects and
+worktrees globally, and A for lifecycle maintenance. Subcommands provide non-interactive
 access to the same actions.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExplorerTUI()

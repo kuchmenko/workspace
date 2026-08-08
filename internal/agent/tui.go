@@ -27,6 +27,7 @@ const (
 	viewPromptInput
 	viewWhichKey
 	viewEditProject
+	viewLifecycle
 )
 
 const (
@@ -39,6 +40,9 @@ const (
 type listItem struct {
 	kind       NodeKind
 	group      string
+	groupKind  groupIdentity
+	groupRoot  string
+	expandKey  string
 	project    *Project
 	worktree   *Worktree
 	session    *Session
@@ -55,12 +59,16 @@ type LaunchRequest struct {
 }
 
 type Model struct {
-	workspaces []WorkspaceData
-	mode       viewMode
-	items      []listItem
-	cursor     int
-	expanded   map[string]bool
-	scroll     int
+	workspaces  []WorkspaceData
+	mode        viewMode
+	items       []listItem
+	cursor      int
+	expanded    map[string]bool
+	scroll      int
+	homeView    string
+	recentOrder string
+	savedCursor int
+	savedScroll int
 
 	headerChips []Chip
 
@@ -70,9 +78,6 @@ type Model struct {
 	wtCache   *WorktreeCache
 
 	statusMsg string
-
-	pendingDelete bool
-	deleteItem    *listItem
 
 	popupProj *Project
 
@@ -88,13 +93,13 @@ type Model struct {
 	pendingLaunch *LaunchRequest
 	promptInput   string
 
-	flashQuery    string
-	flashMatches  []int
-	flashLabels   []rune
-	flashGlobal   bool
-	savedExpanded map[string]bool
+	flashQuery   string
+	flashMatches []int
+	flashLabels  []rune
+	flashGlobal  bool
 
 	whichKeyLevel int
+	lifecycle     *lifecycleModel
 
 	Launch *LaunchRequest
 
@@ -106,17 +111,26 @@ func NewModel(workspaces []WorkspaceData, sessCache *SessionCache) *Model {
 		sessCache = NewSessionCache()
 	}
 	m := &Model{
-		workspaces: workspaces,
-		mode:       viewList,
-		expanded:   make(map[string]bool),
-		sessCache:  sessCache,
-		wtCache:    NewWorktreeCache(),
+		workspaces:  workspaces,
+		mode:        viewList,
+		expanded:    make(map[string]bool),
+		sessCache:   sessCache,
+		wtCache:     NewWorktreeCache(),
+		homeView:    config.ExplorerViewRecent,
+		recentOrder: config.RecentOrderDesc,
+	}
+	if mc, err := config.LoadMachineConfig(); err == nil {
+		m.homeView = mc.ExplorerView
+		m.recentOrder = mc.RecentOrder
 	}
 
 	for _, ws := range workspaces {
 		for _, g := range ws.Groups {
-			m.expanded[g] = true
+			m.expanded[canonicalGroupKey(ws.Root, g)] = true
 		}
+	}
+	for _, language := range []string{"Go", "Rust", "Python", "TypeScript", "JavaScript", "Ruby", "Java", "C#", "Docker", "Shell", "Markdown", "Other"} {
+		m.expanded["lang:"+language] = true
 	}
 	m.rebuildItems()
 	return m
@@ -159,6 +173,9 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if m.mode == viewEditProject {
 			return m.updateEditProject(msg)
 		}
+		if m.mode == viewLifecycle {
+			return m.updateLifecycle(msg)
+		}
 		if m.sheet != nil {
 			return m.sheet.update(m, msg)
 		}
@@ -179,6 +196,9 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewEditProject {
 		return m.viewEditProject()
+	}
+	if m.mode == viewLifecycle {
+		return m.viewLifecycle()
 	}
 	if m.sheet != nil {
 		return m.sheet.view(m.width, m.height)
@@ -213,9 +233,16 @@ func (m *Model) toggleExpand(key string) {
 	m.ensureVisible()
 }
 
-func (m *Model) jumpToGroup(group string) {
+type groupIdentity int
+
+const (
+	groupCanonical groupIdentity = iota
+	groupLanguage
+)
+
+func (m *Model) jumpToGroup(root, group string) {
 	for i, it := range m.items {
-		if it.kind == KindGroup && it.group == group {
+		if it.kind == KindGroup && it.groupKind == groupCanonical && it.groupRoot == root && it.group == group {
 			m.cursor = i
 			break
 		}
@@ -260,7 +287,7 @@ func (m *Model) listHeight() int {
 }
 
 func (m *Model) footerHints() (actions, nav string) {
-	nav = "j/k:↕  1-9:chip  s:find  S:all  ?:more"
+	nav = "j/k:↕  1-9:chip  v:view  o:order  S:search  ?:more"
 	item := m.currentItem()
 	if item == nil {
 		return "⏎:open  s:find  S:all", nav
@@ -302,32 +329,6 @@ func (m *Model) breadcrumb() string {
 }
 
 func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
-	if m.pendingDelete {
-		m.pendingDelete = false
-		if msg.String() == "y" && m.deleteItem != nil {
-			it := m.deleteItem
-			m.deleteItem = nil
-
-			projID := ""
-			if it.parentProj != nil {
-				projID = it.parentProj.ID
-			}
-			wsRoot := m.workspaceRootFor(it.parentProj)
-			if err := DeleteWorktreeWithRegistry(it.parentProj.Path, it.worktree.Path, false, wsRoot, projID, it.worktree.Branch); err != nil {
-				m.statusMsg = err.Error()
-				return m, nil
-			}
-			m.wtCache.Invalidate(it.parentProj.Path)
-			m.rebuildItems()
-			m.ensureVisible()
-			m.statusMsg = "worktree deleted"
-			return m, nil
-		}
-		m.deleteItem = nil
-		m.statusMsg = ""
-		return m, nil
-	}
-
 	m.statusMsg = ""
 	item := m.currentItem()
 
@@ -342,6 +343,9 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tui.Quit
+	case "A":
+		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
+		return m, nil
 	case "j", "down":
 		if m.cursor+1 < len(m.items) {
 			m.cursor++
@@ -359,7 +363,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		switch item.kind {
 		case KindGroup:
-			m.sheet = newGroupSheet(m, item.group)
+			if item.groupKind == groupCanonical {
+				m.sheet = newGroupSheet(m, item.groupRoot, item.group)
+			} else {
+				m.toggleExpand(item.expandKey)
+			}
 			return m, nil
 		case KindProject:
 			m.sheet = newProjectSheet(m, item.project, nil)
@@ -427,19 +435,20 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
 		}
-		if item != nil && item.kind == KindGroup && item.group != "" {
-			m.toggleFavoriteGroup(item.group)
+		if item != nil && item.kind == KindGroup && item.groupKind == groupCanonical {
+			m.toggleFavoriteGroup(item.groupRoot, item.group)
 		}
 
 	case "h", "left":
 		if item != nil {
 			switch {
-			case item.kind == KindProject && item.project.Group != "":
-				m.expanded[item.project.Group] = false
+			case m.homeView == config.ExplorerViewProjects && item.kind == KindProject && item.project.Group != "":
+				root := m.workspaceRootFor(item.project)
+				m.expanded[canonicalGroupKey(root, item.project.Group)] = false
 				m.rebuildItems()
-				m.jumpToGroup(item.project.Group)
-			case item.kind == KindGroup && m.expanded[item.group]:
-				m.expanded[item.group] = false
+				m.jumpToGroup(root, item.project.Group)
+			case item.kind == KindGroup && m.expanded[item.expandKey]:
+				m.expanded[item.expandKey] = false
 				m.rebuildItems()
 				m.ensureVisible()
 			}
@@ -448,26 +457,31 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "tab":
 
 		if item != nil && item.kind == KindGroup {
-			m.toggleExpand(item.group)
+			m.toggleExpand(item.expandKey)
 		}
 
 	case "d":
 		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
-			wt := item.worktree
-			if git.IsDirty(wt.Path) {
-				m.statusMsg = "cannot delete: uncommitted changes"
-				break
-			}
-			ahead, _, hasUpstream := git.AheadBehind(wt.Path, wt.Branch)
-			if hasUpstream && ahead > 0 {
-				m.statusMsg = fmt.Sprintf("cannot delete: %d unpushed commit(s)", ahead)
-				break
-			}
+			m.openWorktreeDelete(item.parentProj, item.worktree)
+			return m, nil
+		}
 
-			name := worktreeDisplayName(*wt)
-			m.statusMsg = fmt.Sprintf("delete %s? y to confirm", name)
-			m.pendingDelete = true
-			m.deleteItem = item
+	case "a":
+		if item != nil && item.kind == KindWorktree && item.worktree != nil && !item.worktree.IsMain && item.parentProj != nil {
+			m.openWorktreeArchive(item.parentProj, item.worktree)
+			return m, nil
+		}
+		if item != nil && item.kind == KindProject && item.project != nil {
+			m.openLifecycle(lifecycleScope{kind: lifecycleProject, project: item.project})
+			m.lifecycle.action = lifecycleArchiveProjects
+			m.prepareLifecycle()
+			return m, nil
+		}
+		if item != nil && item.kind == KindGroup && item.groupKind == groupCanonical {
+			m.openLifecycle(lifecycleScope{kind: lifecycleGroup, group: item.group, workspaceRoot: item.groupRoot})
+			m.lifecycle.action = lifecycleArchiveProjects
+			m.prepareLifecycle()
+			return m, nil
 		}
 
 	case "s", "/":
@@ -477,25 +491,31 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.recomputeFlash()
 
 	case "S":
-
 		m.flashGlobal = true
-		m.savedExpanded = make(map[string]bool)
-		for k, v := range m.expanded {
-			m.savedExpanded[k] = v
-		}
-
-		for _, ws := range m.workspaces {
-			for _, g := range ws.Groups {
-				m.expanded[g] = true
-			}
-			for i := range ws.Projects {
-				m.expanded["proj:"+ws.Projects[i].ID] = true
-			}
-		}
-		m.rebuildItems()
+		m.savedCursor, m.savedScroll = m.cursor, m.scroll
 		m.mode = viewFlash
 		m.flashQuery = ""
 		m.recomputeFlash()
+
+	case "v":
+		switch m.homeView {
+		case config.ExplorerViewRecent:
+			m.homeView = config.ExplorerViewProjects
+		case config.ExplorerViewProjects:
+			m.homeView = config.ExplorerViewLanguage
+		default:
+			m.homeView = config.ExplorerViewRecent
+		}
+		m.saveExplorerPreferences()
+		m.rebuildItems()
+	case "o":
+		if m.recentOrder == config.RecentOrderDesc {
+			m.recentOrder = config.RecentOrderAsc
+		} else {
+			m.recentOrder = config.RecentOrderDesc
+		}
+		m.saveExplorerPreferences()
+		m.rebuildItems()
 
 	case "?", " ":
 		m.whichKeyLevel = 0
@@ -512,11 +532,23 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 type Worktree struct {
-	Path   string
-	Branch string
-	IsMain bool
-	Dirty  bool
-	Ahead  int
+	Path         string
+	Branch       string
+	IsMain       bool
+	Dirty        bool
+	Ahead        int
+	LastActiveAt time.Time
+}
+
+func (m *Model) saveExplorerPreferences() {
+	mc, err := config.LoadMachineConfig()
+	if err == nil {
+		mc.ExplorerView, mc.RecentOrder = m.homeView, m.recentOrder
+		err = config.SaveMachineConfig(mc)
+	}
+	if err != nil {
+		m.statusMsg = "preferences: " + err.Error()
+	}
 }
 
 type WorktreeResult struct {
@@ -612,37 +644,6 @@ func CreateWorktree(p *Project, branch, wsRoot, projID string) (*WorktreeResult,
 	return &WorktreeResult{Path: wtPath, Branch: branch}, nil
 }
 
-func DeleteWorktreeWithRegistry(mainPath, wtPath string, force bool, wsRoot, projID, branch string) error {
-	if wtPath == mainPath {
-		return fmt.Errorf("cannot delete main worktree")
-	}
-	barePath := layout.BarePath(mainPath)
-	if err := git.WorktreeRemove(barePath, wtPath, force); err != nil {
-		return err
-	}
-	if wsRoot == "" || projID == "" || branch == "" {
-		return nil
-	}
-	mc, _ := config.LoadMachineConfig()
-	machine := "unknown"
-	if mc != nil && mc.MachineName != "" {
-		machine = mc.MachineName
-	}
-	ws, err := config.Load(wsRoot)
-	if err != nil {
-		return nil
-	}
-	proj, ok := ws.Projects[projID]
-	if !ok {
-		return nil
-	}
-	if changed, _ := proj.ReleaseBranch(branch, machine); changed {
-		ws.Projects[projID] = proj
-		_ = config.Save(wsRoot, ws)
-	}
-	return nil
-}
-
 func findWorktreeForBranch(barePath, branch string) string {
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
@@ -699,12 +700,18 @@ func (c *WorktreeCache) Invalidate(mainPath string) {
 func LoadWorktrees(mainPath string) []Worktree {
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
+		wt := Worktree{Path: mainPath, IsMain: true, Dirty: git.IsDirty(mainPath)}
+		wt.Branch, _ = git.CurrentBranch(mainPath)
+		wt.LastActiveAt, _ = git.LastCommitTime(mainPath)
+		return []Worktree{wt}
 	}
 
 	wts, err := git.WorktreeList(barePath)
 	if err != nil {
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}
+		wt := Worktree{Path: mainPath, IsMain: true, Dirty: git.IsDirty(mainPath)}
+		wt.Branch, _ = git.CurrentBranch(mainPath)
+		wt.LastActiveAt, _ = git.LastCommitTime(mainPath)
+		return []Worktree{wt}
 	}
 
 	var result []Worktree
@@ -717,6 +724,9 @@ func LoadWorktrees(mainPath string) []Worktree {
 			Branch: wt.Branch,
 			IsMain: wt.Path == mainPath,
 			Dirty:  git.IsDirty(wt.Path),
+		}
+		if commitAt, err := git.LastCommitTime(wt.Path); err == nil {
+			w.LastActiveAt = commitAt
 		}
 		ahead, _, _ := git.AheadBehind(wt.Path, wt.Branch)
 		w.Ahead = ahead
@@ -1361,10 +1371,18 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 
 	switch item.kind {
 	case KindGroup:
+		if item.groupKind == groupLanguage {
+			return []whichKeyAction{
+				{"⏎", "expand"},
+				{"tab", "expand"},
+				{"", ""},
+				{"esc", "close"},
+			}
+		}
 		return []whichKeyAction{
 			{"⏎", "open sheet"},
 			{"p", "+prompt"},
-			{"f", m.favoriteToggleLabelGroup(item.group)},
+			{"f", m.favoriteToggleLabelGroup(item.groupRoot, item.group)},
 			{"l", "shell"},
 			{"tab", "expand"},
 			{"", ""},
@@ -1392,9 +1410,9 @@ func (m *Model) favoriteToggleLabel(it *listItem) string {
 	return "favorite"
 }
 
-func (m *Model) favoriteToggleLabelGroup(group string) string {
+func (m *Model) favoriteToggleLabelGroup(root, group string) string {
 	for _, ws := range m.workspaces {
-		if ws.FavoriteGroups[group] {
+		if ws.Root == root && ws.FavoriteGroups[group] {
 			return "unfavorite"
 		}
 	}
@@ -1457,8 +1475,8 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
 		}
-		if item != nil && item.kind == KindGroup && item.group != "" {
-			m.toggleFavoriteGroup(item.group)
+		if item != nil && item.kind == KindGroup && item.groupKind == groupCanonical {
+			m.toggleFavoriteGroup(item.groupRoot, item.group)
 		}
 		return m, nil
 	case "tab":
@@ -1468,8 +1486,7 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m *Model) toggleFavoriteGroup(group string) {
-	root := m.workspaceRootForGroup(group)
+func (m *Model) toggleFavoriteGroup(root, group string) {
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for group"
 		return
@@ -1508,17 +1525,6 @@ func (m *Model) toggleFavoriteGroup(group string) {
 	m.rebuildItems()
 	m.clampCursor()
 	m.ensureVisible()
-}
-
-func (m *Model) workspaceRootForGroup(name string) string {
-	for _, ws := range m.workspaces {
-		for _, g := range ws.Groups {
-			if g == name {
-				return ws.Root
-			}
-		}
-	}
-	return ""
 }
 
 func (m *Model) toggleFavoriteFor(proj *Project) {

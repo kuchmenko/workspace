@@ -36,10 +36,16 @@ type Project struct {
 	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
+	BranchActivity    map[string]time.Time
+	Language          string
 }
 
 func GroupPath(wsRoot, group string) string {
 	return filepath.Join(wsRoot, group)
+}
+
+func canonicalGroupKey(root, group string) string {
+	return "group:" + root + ":" + group
 }
 
 type WorkspaceData struct {
@@ -64,21 +70,40 @@ type Chip struct {
 
 func (m *Model) rebuildItems() {
 	m.items = nil
+	for wi := range m.workspaces {
+		for pi := range m.workspaces[wi].Projects {
+			m.refreshProjectRecency(&m.workspaces[wi].Projects[pi])
+		}
+	}
 	m.headerChips = buildHeaderChips(m.workspaces)
 
+	if m.homeView == config.ExplorerViewRecent {
+		m.rebuildRecentItems()
+		m.clampCursor()
+		return
+	}
+	if m.homeView == config.ExplorerViewLanguage {
+		m.rebuildLanguageItems()
+		m.clampCursor()
+		return
+	}
 	for _, ws := range m.workspaces {
+		projects := make([]*Project, 0, len(ws.Projects))
 		for i := range ws.Projects {
-			p := &ws.Projects[i]
+			projects = append(projects, &ws.Projects[i])
+		}
+		sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
+		for _, p := range projects {
 			if p.Group == "" {
 				m.addProjectItem(p, 0)
 			}
 		}
 
 		for _, g := range ws.Groups {
-			m.items = append(m.items, listItem{kind: KindGroup, group: g, indent: 0, path: GroupPath(ws.Root, g)})
-			if m.expanded[g] {
-				for i := range ws.Projects {
-					p := &ws.Projects[i]
+			key := canonicalGroupKey(ws.Root, g)
+			m.items = append(m.items, listItem{kind: KindGroup, group: g, groupKind: groupCanonical, groupRoot: ws.Root, expandKey: key, indent: 0, path: GroupPath(ws.Root, g)})
+			if m.expanded[key] {
+				for _, p := range projects {
 					if p.Group == g {
 						m.addProjectItem(p, 1)
 					}
@@ -87,6 +112,87 @@ func (m *Model) rebuildItems() {
 		}
 	}
 	m.clampCursor()
+}
+
+func (m *Model) rebuildRecentItems() {
+	for wi := range m.workspaces {
+		for pi := range m.workspaces[wi].Projects {
+			p := &m.workspaces[wi].Projects[pi]
+			m.refreshProjectRecency(p)
+			m.addProjectItem(p, 0)
+		}
+	}
+	sort.Slice(m.items, func(i, j int) bool {
+		return recencyLess(m.items[i].project.LastActiveAt, m.items[j].project.LastActiveAt, m.items[i].project.Name, m.items[j].project.Name, m.recentOrder == config.RecentOrderDesc)
+	})
+}
+
+func (m *Model) rebuildLanguageItems() {
+	groups := map[string][]*Project{}
+	for wi := range m.workspaces {
+		for pi := range m.workspaces[wi].Projects {
+			p := &m.workspaces[wi].Projects[pi]
+			groups[p.Language] = append(groups[p.Language], p)
+		}
+	}
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		if name == "" {
+			name = "Other"
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		key := "lang:" + name
+		m.items = append(m.items, listItem{kind: KindGroup, group: name, groupKind: groupLanguage, expandKey: key})
+		ps := groups[name]
+		if name == "Other" && len(ps) == 0 {
+			ps = groups[""]
+		}
+		sort.Slice(ps, func(i, j int) bool { return ps[i].Name < ps[j].Name })
+		if m.expanded[key] {
+			for _, p := range ps {
+				m.addProjectItem(p, 1)
+			}
+		}
+	}
+}
+
+func recencyLess(a, b time.Time, an, bn string, desc bool) bool {
+	if a.Equal(b) {
+		return an < bn
+	}
+	if a.IsZero() {
+		return false
+	}
+	if b.IsZero() {
+		return true
+	}
+	if desc {
+		return a.After(b)
+	}
+	return a.Before(b)
+}
+
+func (m *Model) refreshProjectRecency(p *Project) {
+	wts := m.wtCache.Get(p.Path)
+	var latest time.Time
+	for i := range wts {
+		if active := p.BranchActivity[wts[i].Branch]; active.After(wts[i].LastActiveAt) {
+			wts[i].LastActiveAt = active
+		}
+		if wts[i].LastActiveAt.After(latest) {
+			latest = wts[i].LastActiveAt
+		}
+	}
+	for _, active := range p.BranchActivity {
+		if active.After(latest) {
+			latest = active
+		}
+	}
+	p.LastActiveAt = latest
+	m.wtCache.data[p.Path] = wts
 }
 
 func (m *Model) clampCursor() {
@@ -352,7 +458,9 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 			Favorite:          p.Favorite,
 			LastActiveAt:      lastAt,
 			LastActiveMachine: lastMachine,
+			BranchActivity:    branchActivity(p.Branches),
 		}
+		proj.Language = DetectLanguage(mainPath)
 
 		barePath := layout.BarePath(mainPath)
 		if _, err := os.Stat(barePath); err == nil {
@@ -373,6 +481,26 @@ func loadOneWorkspace(root string, sessCache *SessionCache) (*WorkspaceData, []s
 	}
 
 	return ws, diagnostics
+}
+
+func branchActivity(branches []config.BranchMeta) map[string]time.Time {
+	result := map[string]time.Time{}
+	for _, b := range branches {
+		if t, err := time.Parse(time.RFC3339, b.LastActiveAt); err == nil {
+			result[b.Name] = t
+		}
+	}
+	return result
+}
+
+func DetectLanguage(path string) string {
+	icon := DetectIcon(path)
+	for _, v := range []struct{ icon, name string }{{iconGo, "Go"}, {iconRust, "Rust"}, {iconPython, "Python"}, {iconTypeScript, "TypeScript"}, {iconJavaScript, "JavaScript"}, {iconNode, "JavaScript"}, {iconRuby, "Ruby"}, {iconJava, "Java"}, {iconCSharp, "C#"}, {iconDocker, "Docker"}, {iconShell, "Shell"}, {iconMarkdown, "Markdown"}} {
+		if icon == v.icon {
+			return v.name
+		}
+	}
+	return "Other"
 }
 
 func projectActivity(branches []config.BranchMeta) (time.Time, string) {

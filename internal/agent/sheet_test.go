@@ -147,7 +147,7 @@ func TestBuildGroupSheetRows_SortsProjectsByActivityDescThenName(t *testing.T) {
 	}
 	m.sessCache.data["/ws/org"] = nil
 
-	rows := buildGroupSheetRows(m, "org", "/ws/org")
+	rows := buildGroupSheetRows(m, "/ws", "org", "/ws/org")
 
 	var projectNames []string
 	for _, r := range rows {
@@ -190,17 +190,37 @@ func TestBuildGroupSheetRows_SessionsForGroupRoot(t *testing.T) {
 		{ID: "s1", Title: "hack at org root", Cwd: "/ws/org", Updated: now},
 	}
 
-	rows := buildGroupSheetRows(m, "org", "/ws/org")
+	rows := buildGroupSheetRows(m, "/ws", "org", "/ws/org")
 	sess := filterByKind(rows, rowSession)
 	if len(sess) != 1 || sess[0].session == nil || sess[0].session.ID != "s1" {
 		t.Errorf("expected one session row from group root; got %+v", sess)
 	}
 }
 
+func TestBuildGroupSheetRowsScopesSameNamedGroupToRoot(t *testing.T) {
+	m := &Model{
+		workspaces: []WorkspaceData{
+			{Root: "/one", Projects: []Project{{Name: "one", Group: "org"}}, FavoriteGroups: map[string]bool{"org": true}},
+			{Root: "/two", Projects: []Project{{Name: "two", Group: "org"}}, FavoriteGroups: map[string]bool{}},
+		},
+		sessCache: NewSessionCache(),
+	}
+	rows := buildGroupSheetRows(m, "/two", "org", "/two/org")
+	projects := filterByKind(rows, rowProject)
+	if len(projects) != 1 || projects[0].label != "two" {
+		t.Fatalf("project rows = %+v", projects)
+	}
+	for _, row := range rows {
+		if row.action == actFavorite && row.label != "favorite group" {
+			t.Fatalf("favorite label leaked from another root: %q", row.label)
+		}
+	}
+}
+
 func TestSheet_EscPopsToParent(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
 	m := newTestModel(p, nil, nil)
-	parent := newGroupSheet(m, "org")
+	parent := newGroupSheet(m, "/ws", "org")
 	child := newProjectSheet(m, p, parent)
 	m.sheet = child
 
@@ -229,7 +249,7 @@ func TestSheet_EnterClaudeMainLaunches(t *testing.T) {
 	}
 }
 
-func TestSheet_WtDeleteRequiresConfirm(t *testing.T) {
+func TestSheet_WtDeleteOpensDestructiveLifecycle(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
 	wts := []Worktree{
 		{Path: "/ws/alpha", IsMain: true},
@@ -253,13 +273,11 @@ func TestSheet_WtDeleteRequiresConfirm(t *testing.T) {
 	s.cursor = wtVisIdx
 
 	s.update(m, rune1('d'))
-	if s.pendingDel == nil {
-		t.Fatalf("expected pending delete after 'd'")
+	if m.mode != viewLifecycle || m.lifecycle == nil || m.lifecycle.action != lifecycleDeleteWorktree {
+		t.Fatalf("delete did not open destructive lifecycle: mode=%v lifecycle=%+v", m.mode, m.lifecycle)
 	}
-	// Cancel: any non-y key clears.
-	s.update(m, rune1('n'))
-	if s.pendingDel != nil {
-		t.Errorf("non-y should cancel pending delete")
+	if m.lifecycle.phase != lifecycleResult || m.lifecycle.errorText == "" {
+		t.Fatalf("unverified branch was not rejected: %+v", m.lifecycle)
 	}
 }
 
