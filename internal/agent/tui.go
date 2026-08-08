@@ -27,16 +27,16 @@ const (
 )
 
 type listItem struct {
-	kind          NodeKind
-	workspaceRoot string
-	group         string
-	project       *Project
-	indent        int
-	path          string
-	expandKey     string
-	languageGroup bool
-	worktree      *Worktree
-	parentProj    *Project
+	kind            NodeKind
+	workspaceRoot   string
+	group           string
+	project         *Project
+	indent          int
+	path            string
+	expandKey       string
+	projectionGroup bool
+	worktree        *Worktree
+	parentProj      *Project
 }
 
 type LaunchRequest struct {
@@ -226,62 +226,6 @@ func (m *Model) launch(workspaceRoot, path string) (tui.Model, tui.Cmd) {
 	return m, tui.Quit
 }
 
-func (m *Model) toggleExpand(key string) {
-	m.expanded[key] = !m.expanded[key]
-	m.rebuildItems()
-	m.ensureVisible()
-}
-
-func (m *Model) jumpToGroup(workspaceRoot, group string) {
-	for i, it := range m.items {
-		if it.kind == KindGroup && it.workspaceRoot == workspaceRoot && it.group == group {
-			m.cursor = i
-			break
-		}
-	}
-	m.ensureVisible()
-}
-
-func (m *Model) jumpToExpandKey(key string) {
-	for i, it := range m.items {
-		if it.kind == KindGroup && it.expandKey == key {
-			m.cursor = i
-			break
-		}
-	}
-	m.ensureVisible()
-}
-
-func (m *Model) jumpToProject(workspaceRoot, projID string) {
-	for _, ws := range m.workspaces {
-		if ws.Root != workspaceRoot {
-			continue
-		}
-		for _, project := range ws.Projects {
-			if project.ID != projID {
-				continue
-			}
-			switch m.homeView {
-			case config.ExplorerViewProjects:
-				if project.Group != "" {
-					m.expanded[groupKey(workspaceRoot, project.Group)] = true
-				}
-			case config.ExplorerViewLanguage:
-				m.expanded[languageKey(project.Language)] = true
-			}
-			m.rebuildItems()
-			break
-		}
-	}
-	for i, it := range m.items {
-		if it.kind == KindProject && it.workspaceRoot == workspaceRoot && it.project != nil && it.project.ID == projID {
-			m.cursor = i
-			break
-		}
-	}
-	m.ensureVisible()
-}
-
 func (m *Model) ensureVisible() {
 	maxVisible := m.listHeight()
 	m.scroll = m.cursor - maxVisible/2
@@ -316,7 +260,11 @@ func (m *Model) footerHints() (actions, nav string) {
 	}
 	switch item.kind {
 	case KindGroup:
-		actions = "⏎:sheet  tab:expand  l:shell"
+		if item.projectionGroup {
+			actions = "⏎/tab:expand"
+		} else {
+			actions = "⏎:sheet  tab:expand  l:shell"
+		}
 	case KindProject:
 		actions = "⏎:sheet  w:worktree  e:edit  l:shell"
 	default:
@@ -399,7 +347,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		switch item.kind {
 		case KindGroup:
-			if item.languageGroup {
+			if item.projectionGroup {
 				m.toggleExpand(item.expandKey)
 			} else {
 				m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
@@ -449,7 +397,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
 		}
-		if item != nil && item.kind == KindGroup && item.group != "" {
+		if item != nil && item.kind == KindGroup && item.group != "" && !item.projectionGroup {
 			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 

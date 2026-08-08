@@ -65,13 +65,51 @@ func TestRecentViewSortsZeroActivityLastInBothOrders(t *testing.T) {
 			recentOrder: order,
 		}
 		m.rebuildItems()
-		got := []string{m.items[0].project.Name, m.items[1].project.Name, m.items[2].project.Name}
-		want := []string{"old", "new", "none"}
+		got := []string{m.items[0].group, m.items[1].project.Name, m.items[2].project.Name, m.items[3].project.Name}
+		want := []string{"Recent", "old", "new", "none"}
 		if order == config.RecentOrderDesc {
-			want = []string{"new", "old", "none"}
+			want = []string{"Recent", "new", "old", "none"}
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("order %s = %v, want %v", order, got, want)
+		}
+	}
+}
+
+func TestRecentProjectionDefaultsExpandedAndCollapsesFromChild(t *testing.T) {
+	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws"}
+	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Projects: []Project{p}}}, expanded: map[string]bool{}, homeView: config.ExplorerViewRecent}
+	m.rebuildItems()
+	if !m.expanded[recentKey()] || len(m.items) != 2 || !m.items[0].projectionGroup || m.items[1].expandKey != recentKey() {
+		t.Fatalf("recent projection = %#v expanded=%v", m.items, m.expanded)
+	}
+	m.cursor = 1
+	m.updateList(tui.KeyMsg{Type: tui.KeyLeft})
+	if item := m.currentItem(); item == nil || item.kind != KindGroup || item.group != "Recent" || m.expanded[recentKey()] {
+		t.Fatalf("item=%#v expanded=%v", item, m.expanded)
+	}
+}
+
+func TestProjectionHeadingActionsAreSafe(t *testing.T) {
+	m := &Model{expanded: map[string]bool{recentKey(): true}, homeView: config.ExplorerViewRecent}
+	m.rebuildItems()
+	m.updateList(tui.KeyMsg{Type: tui.KeyEnter})
+	if m.sheet != nil {
+		t.Fatalf("projection heading opened canonical sheet: %v", m.sheet)
+	}
+	for _, key := range []tui.KeyMsg{{Type: tui.KeyRunes, Runes: []rune("f")}, {Type: tui.KeyRunes, Runes: []rune("l")}, {Type: tui.KeyRunes, Runes: []rune("w")}, {Type: tui.KeyRunes, Runes: []rune("e")}} {
+		m.updateList(key)
+	}
+	if m.sheet != nil || m.Launch != nil || m.mode != viewList || m.statusMsg != "" {
+		t.Fatalf("projection action changed state: sheet=%v launch=%v mode=%v status=%q", m.sheet, m.Launch, m.mode, m.statusMsg)
+	}
+	actions, _ := m.footerHints()
+	if strings.Contains(actions, "sheet") || strings.Contains(actions, "shell") {
+		t.Fatalf("projection footer actions = %q", actions)
+	}
+	for _, action := range m.whichKeyActions() {
+		if action.key == "f" || action.key == "l" || action.key == "d" || action.key == "m" {
+			t.Fatalf("unsafe projection which-key action = %#v", action)
 		}
 	}
 }
@@ -166,12 +204,15 @@ func TestGlobalSearchProjectSelectionExpandsParentProjection(t *testing.T) {
 	}{
 		{name: "projects", homeView: config.ExplorerViewProjects, key: groupKey("/ws", "org")},
 		{name: "language", homeView: config.ExplorerViewLanguage, key: languageKey("Go")},
+		{name: "recent", homeView: config.ExplorerViewRecent, key: recentKey()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			project := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/alpha", Language: "Go"}
 			m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Groups: []string{"org"}, Projects: []Project{project}}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache(), homeView: tt.homeView}
 			m.flashQuery = tui.NewTextInput()
+			m.rebuildItems()
+			m.expanded[tt.key] = false
 			m.rebuildItems()
 			m.openGlobalSearch()
 			m.flashQuery.SetValue("alpha")

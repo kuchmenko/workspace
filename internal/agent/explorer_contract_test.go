@@ -62,6 +62,7 @@ func TestExplorerLaunchContracts(t *testing.T) {
 		t.Fatalf("digit launch = %+v", m.Launch)
 	}
 	m.Launch = nil
+	m.cursor = 1
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'l'}})
 	if m.Launch == nil || m.Launch.Cwd != projectPath {
 		t.Fatalf("direct launch = %+v", m.Launch)

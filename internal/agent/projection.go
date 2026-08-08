@@ -14,6 +14,8 @@ func groupKey(wsRoot, group string) string {
 
 func languageKey(language string) string { return "language\x00" + language }
 
+func recentKey() string { return "projection\x00recent" }
+
 func (m *Model) rebuildItems() {
 	m.items = nil
 	for wi := range m.workspaces {
@@ -34,13 +36,23 @@ func (m *Model) rebuildItems() {
 }
 
 func (m *Model) rebuildRecentItems() {
+	key := recentKey()
+	if _, ok := m.expanded[key]; !ok {
+		m.expanded[key] = true
+	}
+	m.items = append(m.items, listItem{kind: KindGroup, group: "Recent", expandKey: key, projectionGroup: true})
+	if !m.expanded[key] {
+		return
+	}
 	for wi := range m.workspaces {
 		for pi := range m.workspaces[wi].Projects {
-			m.addProjectItem(&m.workspaces[wi].Projects[pi], 0)
+			m.addProjectItem(&m.workspaces[wi].Projects[pi], 1)
+			m.items[len(m.items)-1].expandKey = key
 		}
 	}
-	sort.SliceStable(m.items, func(i, j int) bool {
-		return recencyLess(m.items[i].project.LastActiveAt, m.items[j].project.LastActiveAt, m.items[i].project.Name, m.items[j].project.Name, m.recentOrder == config.RecentOrderDesc)
+	projects := m.items[1:]
+	sort.SliceStable(projects, func(i, j int) bool {
+		return recencyLess(projects[i].project.LastActiveAt, projects[j].project.LastActiveAt, projects[i].project.Name, projects[j].project.Name, m.recentOrder == config.RecentOrderDesc)
 	})
 }
 
@@ -64,7 +76,7 @@ func (m *Model) rebuildLanguageItems() {
 
 func (m *Model) addLanguageItems(name string, projects []*Project) {
 	key := languageKey(name)
-	m.items = append(m.items, listItem{kind: KindGroup, group: name, expandKey: key, languageGroup: true})
+	m.items = append(m.items, listItem{kind: KindGroup, group: name, expandKey: key, projectionGroup: true})
 	if !m.expanded[key] {
 		return
 	}

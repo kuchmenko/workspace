@@ -30,6 +30,14 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 
 	switch item.kind {
 	case KindGroup:
+		if item.projectionGroup {
+			return []whichKeyAction{
+				{"⏎", "expand"},
+				{"tab", "expand"},
+				{"", ""},
+				{"esc", "close"},
+			}
+		}
 		return []whichKeyAction{
 			{"⏎", "open sheet"},
 			{"f", m.favoriteToggleLabelGroup(item.workspaceRoot, item.group)},
@@ -124,7 +132,7 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		if item != nil && item.kind == KindProject && item.project != nil {
 			m.toggleFavoriteFor(item.project)
 		}
-		if item != nil && item.kind == KindGroup && item.group != "" {
+		if item != nil && item.kind == KindGroup && item.group != "" && !item.projectionGroup {
 			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 		return m, nil
