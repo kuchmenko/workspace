@@ -71,6 +71,7 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 	for _, destructive := range []bool{false, true} {
 		t.Run(map[bool]string{false: "archive", true: "delete"}[destructive], func(t *testing.T) {
 			root, project, worktree, bare := lifecycleGitFixture(t)
+			testutil.AddDirty(t, worktree.Path)
 			if destructive {
 				message, detail := DeleteWorktreeDestructive(project, worktree, root)
 				if detail != "" || !strings.Contains(message, "Deleted checkout") {
@@ -80,7 +81,7 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 					t.Fatal("destructive delete preserved a branch")
 				}
 			} else {
-				result := ArchiveWorktree(project, worktree, root)
+				result := ArchiveWorktree(project, worktree, root, true)
 				if result.Err != nil || !result.CheckoutRemoved || !result.MetadataReleased {
 					t.Fatalf("archive = %+v", result)
 				}
@@ -98,12 +99,67 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 func TestArchiveWorktreeRejectsCheckoutBranchMismatch(t *testing.T) {
 	root, project, worktree, _ := lifecycleGitFixture(t)
 	worktree.Branch = "feat/reviewed"
-	result := ArchiveWorktree(project, worktree, root)
+	result := ArchiveWorktree(project, worktree, root, true)
 	if result.Err == nil || !strings.Contains(result.Err.Error(), "branch changed") {
 		t.Fatalf("archive = %+v", result)
 	}
 	if _, err := os.Stat(worktree.Path); err != nil {
 		t.Fatalf("checkout was mutated: %v", err)
+	}
+}
+
+func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
+	root, project, worktree, _ := lifecycleGitFixture(t)
+	testutil.AddDirty(t, worktree.Path)
+	worktree.Dirty = true
+	m := &Model{workspaces: []WorkspaceData{{Root: root, Projects: []Project{*project}}}, wtCache: NewWorktreeCache()}
+
+	m.openWorktreeArchive(project, worktree)
+	if m.lifecycle.phase != lifecycleReview || !strings.Contains(m.lifecycle.message, "uncommitted changes will be discarded") {
+		t.Fatalf("dirty archive confirmation = phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+	}
+
+	m.openWorktreeDelete(project, worktree)
+	if m.lifecycle.phase != lifecycleTypedConfirm || !strings.Contains(m.lifecycle.message, "uncommitted changes will be discarded") {
+		t.Fatalf("dirty delete confirmation = phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+	}
+}
+
+func TestBulkArchiveStillRejectsDirtyWorktree(t *testing.T) {
+	root, project, worktree, _ := lifecycleGitFixture(t)
+	testutil.AddDirty(t, worktree.Path)
+	result := ArchiveWorktree(project, worktree, root, false)
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "dirty worktree") {
+		t.Fatalf("bulk-safe archive = %+v", result)
+	}
+	if _, err := os.Stat(worktree.Path); err != nil {
+		t.Fatalf("dirty checkout was removed: %v", err)
+	}
+}
+
+func TestDeleteDoesNotBlockAheadOrLocalOnlyWorktrees(t *testing.T) {
+	for _, state := range []string{"ahead", "local-only"} {
+		t.Run(state, func(t *testing.T) {
+			root, project, worktree, bare := lifecycleGitFixture(t)
+			switch state {
+			case "ahead":
+				if err := os.WriteFile(filepath.Join(worktree.Path, "ahead.txt"), []byte("ahead\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				testutil.RunGit(t, worktree.Path, "add", "ahead.txt")
+				testutil.RunGit(t, worktree.Path, "commit", "-m", "ahead")
+			case "local-only":
+				testutil.RunGit(t, worktree.Path, "push", "origin", "--delete", worktree.Branch)
+			}
+
+			message, detail := DeleteWorktreeDestructive(project, worktree, root)
+			if detail != "" || !strings.Contains(message, "Deleted checkout") {
+				t.Fatalf("delete %s = %q, %q", state, message, detail)
+			}
+			if gitRefExists(t, bare, "refs/heads/"+worktree.Branch) {
+				t.Fatalf("delete %s preserved local branch", state)
+			}
+		})
 	}
 }
 

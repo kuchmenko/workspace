@@ -90,11 +90,14 @@ func (m *Model) prepareLifecycle() {
 	case lifecycleArchiveOldWorktrees:
 		lm.phase = lifecycleThreshold
 	case lifecycleArchiveWorktree:
-		if err := validateArchiveWorktree(lm.scope.project, lm.scope.worktree); err != nil {
+		if err := validateWorktreeTarget(lm.scope.project, lm.scope.worktree); err != nil {
 			lm.phase, lm.errorText = lifecycleResult, err.Error()
 		} else {
 			lm.phase = lifecycleReview
 			lm.message = "Archive checkout and preserve branches?"
+			if worktreeDirty(lm.scope.worktree) {
+				lm.message = "WARNING: uncommitted changes will be discarded. Archive checkout and preserve branches?"
+			}
 		}
 	case lifecycleDeleteWorktree:
 		if err := validateDeleteWorktree(lm.scope.project, lm.scope.worktree); err != nil {
@@ -102,6 +105,9 @@ func (m *Model) prepareLifecycle() {
 		} else {
 			lm.phase = lifecycleTypedConfirm
 			lm.message = "Type the exact branch name:"
+			if worktreeDirty(lm.scope.worktree) {
+				lm.message = "WARNING: uncommitted changes will be discarded. Type the exact branch name:"
+			}
 		}
 	}
 }
@@ -178,11 +184,22 @@ func worktreePublishedFresh(p *Project, wt *Worktree) bool {
 	_, err := refreshWorktreePublication(p, wt)
 	return err == nil
 }
-func validateArchiveWorktree(p *Project, wt *Worktree) error {
+func validateWorktreeTarget(p *Project, wt *Worktree) error {
 	if p == nil || wt == nil || wt.IsMain {
 		return fmt.Errorf("cannot archive main worktree")
 	}
-	if wt.Dirty || git.IsDirty(wt.Path) {
+	return nil
+}
+
+func worktreeDirty(wt *Worktree) bool {
+	return wt != nil && (wt.Dirty || git.IsDirty(wt.Path))
+}
+
+func validateArchiveWorktree(p *Project, wt *Worktree) error {
+	if err := validateWorktreeTarget(p, wt); err != nil {
+		return err
+	}
+	if worktreeDirty(wt) {
 		return fmt.Errorf("cannot archive dirty worktree")
 	}
 	return nil
@@ -194,15 +211,18 @@ type WorktreeArchiveResult struct {
 	Err                               error
 }
 
-func ArchiveWorktree(p *Project, wt *Worktree, root string) WorktreeArchiveResult {
+func ArchiveWorktree(p *Project, wt *Worktree, root string, force bool) WorktreeArchiveResult {
 	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, p, wt)
 	if err != nil {
 		return WorktreeArchiveResult{Err: err}
 	}
-	if err := validateArchiveWorktree(liveProject, liveWorktree); err != nil {
+	if err := validateWorktreeTarget(liveProject, liveWorktree); err != nil {
 		return WorktreeArchiveResult{Err: err}
 	}
-	if err := git.WorktreeRemove(layout.BarePath(liveProject.Path), liveWorktree.Path, false); err != nil {
+	if !force && worktreeDirty(liveWorktree) {
+		return WorktreeArchiveResult{Err: fmt.Errorf("cannot archive dirty worktree")}
+	}
+	if err := git.WorktreeRemove(layout.BarePath(liveProject.Path), liveWorktree.Path, force); err != nil {
 		return WorktreeArchiveResult{Err: err}
 	}
 	r := WorktreeArchiveResult{CheckoutRemoved: true, ProjectPath: liveProject.Path}
@@ -227,7 +247,7 @@ func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan) WorktreeArchiveExecuti
 			r.Details = append(r.Details, c.Project.Name+"/"+c.Worktree.Branch+": "+reason)
 			continue
 		}
-		a := ArchiveWorktree(c.Project, fresh, c.WorkspaceRoot)
+		a := ArchiveWorktree(c.Project, fresh, c.WorkspaceRoot, false)
 		if a.CheckoutRemoved {
 			r.RemovedProjectPaths = append(r.RemovedProjectPaths, a.ProjectPath)
 			r.AffectedProjects = append(r.AffectedProjects, ProjectIdentity{c.WorkspaceRoot, c.ProjectID})
@@ -294,33 +314,43 @@ func DeleteWorktreeDestructive(p *Project, wt *Worktree, root string) (string, s
 	if err != nil {
 		return "checkout unchanged", err.Error()
 	}
-	if err := validateArchiveWorktree(liveProject, liveWorktree); err != nil {
+	if err := validateWorktreeTarget(liveProject, liveWorktree); err != nil {
 		return "", err.Error()
 	}
-	if protectedBranch(liveProject, liveWorktree.Branch) {
-		return "", "cannot delete protected branch " + liveWorktree.Branch
-	}
-	pub, err := refreshWorktreePublication(liveProject, liveWorktree)
-	if err != nil {
-		return "checkout unchanged", err.Error()
-	}
 	bare := layout.BarePath(liveProject.Path)
-	if err := git.WorktreeRemove(bare, liveWorktree.Path, false); err != nil {
+	localOID := git.RevParse(bare, "refs/heads/"+liveWorktree.Branch)
+	if localOID == "" {
+		return "checkout unchanged", "local branch is unavailable"
+	}
+	remoteOID := git.RevParse(bare, "refs/remotes/origin/"+liveWorktree.Branch)
+	if err := git.WorktreeRemove(bare, liveWorktree.Path, true); err != nil {
 		return "checkout unchanged", err.Error()
 	}
-	if git.RevParse(bare, "refs/heads/"+liveWorktree.Branch) != pub.LocalOID {
+	if git.RevParse(bare, "refs/heads/"+liveWorktree.Branch) != localOID {
 		return "Checkout removed; local and remote branches remain.", "local branch changed after verification"
 	}
-	if err := git.DeleteRemoteBranch(bare, "origin", liveWorktree.Branch, pub.RemoteOID); err != nil {
-		return "Checkout removed; local and remote branches remain.", err.Error()
+	var details []string
+	remoteDeleted := remoteOID == ""
+	if remoteOID != "" {
+		if err := git.DeleteRemoteBranch(bare, "origin", liveWorktree.Branch, remoteOID); err != nil {
+			details = append(details, "remote branch remains: "+err.Error())
+		} else {
+			remoteDeleted = true
+		}
 	}
-	if err := git.DeleteLocalBranch(bare, liveWorktree.Branch, pub.LocalOID); err != nil {
-		return "Checkout and remote branch removed; local branch remains.", err.Error()
+	localDeleted := false
+	if err := git.DeleteLocalBranch(bare, liveWorktree.Branch, localOID); err != nil {
+		details = append(details, "local branch remains: "+err.Error())
+	} else {
+		localDeleted = true
 	}
 	if err := releaseWorktreeOwnership(root, liveProject.ID, liveWorktree.Branch); err != nil {
-		return "Branches removed; ownership metadata remains.", err.Error()
+		details = append(details, "ownership metadata remains: "+err.Error())
 	}
-	return "Deleted checkout and branches.", ""
+	if localDeleted && remoteDeleted && len(details) == 0 {
+		return "Deleted checkout and branches.", ""
+	}
+	return "Checkout deleted; some branch state remains.", strings.Join(details, "; ")
 }
 
 func revalidateLifecycleWorktree(root string, reviewedProject *Project, reviewedWorktree *Worktree) (*Project, *Worktree, error) {
@@ -447,7 +477,7 @@ func (m *Model) executeLifecycle() {
 		lm.errorText = strings.Join(r.Failures, "; ")
 	case lifecycleArchiveWorktree:
 		root := m.workspaceRootFor(lm.scope.project)
-		r := ArchiveWorktree(lm.scope.project, lm.scope.worktree, root)
+		r := ArchiveWorktree(lm.scope.project, lm.scope.worktree, root, true)
 		if r.CheckoutRemoved {
 			m.wtCache.Invalidate(lm.scope.project.Path)
 		}

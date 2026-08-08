@@ -81,9 +81,12 @@ Per-row actions:
 - `e` — on a project row, edit the project's group / category.
 - `a` — archive a project, canonical group, or worktree. Project archive
   leaves files untouched; worktree archive removes the checkout but preserves
-  its local and remote branches.
-- `d` — destructively delete one safe non-main worktree after typing its exact
-  branch name. Dirty, local-only, ahead, and protected branches are rejected.
+  its local and remote branches. A dirty single worktree shows a data-loss
+  warning and can be force-archived after confirmation.
+- `d` — destructively delete one non-main worktree after typing its exact
+  branch name. Dirty worktrees show a data-loss warning and are force-removed
+  after confirmation. Local-only and ahead branches are also deleted; remote
+  deletion failures are reported without preventing local cleanup.
 - `A` — archive projects or preview/archive old safe worktrees in the current
   project or group when invoked there, or globally when invoked from home.
 - `f` — on a project row, toggle favorite. Equivalent to

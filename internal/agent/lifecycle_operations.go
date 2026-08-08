@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 func ParseArchiveThreshold(value string) (time.Duration, error) {
@@ -33,14 +35,13 @@ func protectedBranch(p *Project, branch string) bool {
 }
 
 func validateDeleteWorktree(p *Project, wt *Worktree) error {
-	if err := validateArchiveWorktree(p, wt); err != nil {
+	if err := validateWorktreeTarget(p, wt); err != nil {
 		return err
 	}
-	if protectedBranch(p, wt.Branch) {
-		return fmt.Errorf("cannot delete protected branch %s", wt.Branch)
+	if git.RevParse(layout.BarePath(p.Path), "refs/heads/"+wt.Branch) == "" {
+		return fmt.Errorf("local branch %s is unavailable", wt.Branch)
 	}
-	_, err := refreshWorktreePublication(p, wt)
-	return err
+	return nil
 }
 
 type ProjectIdentity struct{ WorkspaceRoot, ProjectID string }
