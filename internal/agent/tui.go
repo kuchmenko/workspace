@@ -17,6 +17,7 @@ const (
 	viewFlash
 	viewWhichKey
 	viewEditProject
+	viewLifecycle
 )
 
 const (
@@ -32,6 +33,10 @@ type listItem struct {
 	project       *Project
 	indent        int
 	path          string
+	expandKey     string
+	languageGroup bool
+	worktree      *Worktree
+	parentProj    *Project
 }
 
 type LaunchRequest struct {
@@ -39,12 +44,17 @@ type LaunchRequest struct {
 }
 
 type Model struct {
-	workspaces []WorkspaceData
-	mode       viewMode
-	items      []listItem
-	cursor     int
-	expanded   map[string]bool
-	scroll     int
+	workspaces  []WorkspaceData
+	mode        viewMode
+	items       []listItem
+	cursor      int
+	expanded    map[string]bool
+	scroll      int
+	homeView    string
+	recentOrder string
+	savedItems  []listItem
+	savedCursor int
+	savedScroll int
 
 	headerChips []Chip
 
@@ -71,6 +81,7 @@ type Model struct {
 	savedExpanded map[string]bool
 
 	whichKeyLevel int
+	lifecycle     *lifecycleModel
 
 	Launch *LaunchRequest
 
@@ -85,13 +96,18 @@ func NewModel(workspaces []WorkspaceData) *Model {
 	flashQuery := tui.NewTextInput()
 	flashQuery.SetPrompt("")
 	m := &Model{
-		workspaces: workspaces,
-		mode:       viewList,
-		expanded:   make(map[string]bool),
-		wtCache:    NewWorktreeCache(),
-		wtBranch:   wtBranch,
-		editGroup:  editGroup,
-		flashQuery: flashQuery,
+		workspaces:  workspaces,
+		mode:        viewList,
+		expanded:    make(map[string]bool),
+		wtCache:     NewWorktreeCache(),
+		wtBranch:    wtBranch,
+		editGroup:   editGroup,
+		flashQuery:  flashQuery,
+		homeView:    config.ExplorerViewRecent,
+		recentOrder: config.RecentOrderDesc,
+	}
+	if mc, err := config.LoadMachineConfig(); err == nil {
+		m.homeView, m.recentOrder = mc.ExplorerView, mc.RecentOrder
 	}
 
 	for _, ws := range workspaces {
@@ -136,6 +152,9 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if m.mode == viewEditProject {
 			return m.updateEditProject(msg)
 		}
+		if m.mode == viewLifecycle {
+			return m.updateLifecycle(msg)
+		}
 		if m.sheet != nil {
 			return m.sheet.update(m, msg)
 		}
@@ -153,6 +172,9 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewEditProject {
 		return m.viewEditProject()
+	}
+	if m.mode == viewLifecycle {
+		return m.viewLifecycle()
 	}
 	if m.sheet != nil {
 		return m.sheet.view(m.width, m.height)
@@ -220,7 +242,37 @@ func (m *Model) jumpToGroup(workspaceRoot, group string) {
 	m.ensureVisible()
 }
 
+func (m *Model) jumpToExpandKey(key string) {
+	for i, it := range m.items {
+		if it.kind == KindGroup && it.expandKey == key {
+			m.cursor = i
+			break
+		}
+	}
+	m.ensureVisible()
+}
+
 func (m *Model) jumpToProject(workspaceRoot, projID string) {
+	for _, ws := range m.workspaces {
+		if ws.Root != workspaceRoot {
+			continue
+		}
+		for _, project := range ws.Projects {
+			if project.ID != projID {
+				continue
+			}
+			switch m.homeView {
+			case config.ExplorerViewProjects:
+				if project.Group != "" {
+					m.expanded[groupKey(workspaceRoot, project.Group)] = true
+				}
+			case config.ExplorerViewLanguage:
+				m.expanded[languageKey(project.Language)] = true
+			}
+			m.rebuildItems()
+			break
+		}
+	}
 	for i, it := range m.items {
 		if it.kind == KindProject && it.workspaceRoot == workspaceRoot && it.project != nil && it.project.ID == projID {
 			m.cursor = i
@@ -305,6 +357,31 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	switch msg.String() {
 	case "q":
 		return m, tui.Quit
+	case "v":
+		switch m.homeView {
+		case config.ExplorerViewRecent:
+			m.homeView = config.ExplorerViewProjects
+		case config.ExplorerViewProjects:
+			m.homeView = config.ExplorerViewLanguage
+		default:
+			m.homeView = config.ExplorerViewRecent
+		}
+		m.saveExplorerPreferences()
+		m.rebuildItems()
+		m.cursor, m.scroll = 0, 0
+	case "o":
+		if m.homeView == config.ExplorerViewRecent {
+			if m.recentOrder == config.RecentOrderDesc {
+				m.recentOrder = config.RecentOrderAsc
+			} else {
+				m.recentOrder = config.RecentOrderDesc
+			}
+			m.saveExplorerPreferences()
+			m.rebuildItems()
+		}
+	case "A":
+		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
+		return m, nil
 	case "j", "down":
 		if m.cursor+1 < len(m.items) {
 			m.cursor++
@@ -322,11 +399,17 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		switch item.kind {
 		case KindGroup:
-			m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
+			if item.languageGroup {
+				m.toggleExpand(item.expandKey)
+			} else {
+				m.sheet = newGroupSheet(m, item.workspaceRoot, item.group)
+			}
 			return m, nil
 		case KindProject:
 			m.sheet = newProjectSheet(m, item.project, nil)
 			return m, nil
+		case KindWorktree:
+			return m.launch(item.workspaceRoot, item.path)
 		}
 
 	case "w":
@@ -373,13 +456,12 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "h", "left":
 		if item != nil {
 			switch {
-			case item.kind == KindProject && item.project.Group != "":
-				key := groupKey(item.workspaceRoot, item.project.Group)
-				m.expanded[key] = false
+			case item.kind == KindProject && item.expandKey != "":
+				m.expanded[item.expandKey] = false
 				m.rebuildItems()
-				m.jumpToGroup(item.workspaceRoot, item.project.Group)
-			case item.kind == KindGroup && m.expanded[groupKey(item.workspaceRoot, item.group)]:
-				m.expanded[groupKey(item.workspaceRoot, item.group)] = false
+				m.jumpToExpandKey(item.expandKey)
+			case item.kind == KindGroup && m.expanded[item.expandKey]:
+				m.expanded[item.expandKey] = false
 				m.rebuildItems()
 				m.ensureVisible()
 			}
@@ -388,7 +470,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "tab":
 
 		if item != nil && item.kind == KindGroup {
-			m.toggleExpand(groupKey(item.workspaceRoot, item.group))
+			m.toggleExpand(item.expandKey)
 		}
 
 	case "s", "/":
@@ -399,26 +481,7 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.recomputeFlash()
 
 	case "S":
-
-		m.flashGlobal = true
-		m.savedExpanded = make(map[string]bool)
-		for k, v := range m.expanded {
-			m.savedExpanded[k] = v
-		}
-
-		for _, ws := range m.workspaces {
-			for _, g := range ws.Groups {
-				m.expanded[groupKey(ws.Root, g)] = true
-			}
-			for i := range ws.Projects {
-				m.expanded["proj:"+ws.Projects[i].ID] = true
-			}
-		}
-		m.rebuildItems()
-		m.mode = viewFlash
-		m.flashQuery.SetValue("")
-		m.flashQuery.Focus()
-		m.recomputeFlash()
+		m.openGlobalSearch()
 
 	case "?", " ":
 		m.whichKeyLevel = 0
@@ -432,4 +495,13 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.scroll = 0
 	}
 	return m, nil
+}
+
+func (m *Model) saveExplorerPreferences() {
+	mc, err := config.LoadMachineConfig()
+	if err != nil {
+		return
+	}
+	mc.ExplorerView, mc.RecentOrder = m.homeView, m.recentOrder
+	_ = config.SaveMachineConfig(mc)
 }

@@ -26,22 +26,14 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 		section: "worktrees",
 	})
 
-	mainIdx := -1
+	ordered := make([]int, len(wts))
 	for i := range wts {
-		if wts[i].IsMain {
-			mainIdx = i
-			break
-		}
+		ordered[i] = i
 	}
-	ordered := make([]int, 0, len(wts))
-	if mainIdx >= 0 {
-		ordered = append(ordered, mainIdx)
-	}
-	for i := range wts {
-		if i != mainIdx {
-			ordered = append(ordered, i)
-		}
-	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := wts[ordered[i]], wts[ordered[j]]
+		return recencyLess(a.LastActiveAt, b.LastActiveAt, worktreeDisplayName(a), worktreeDisplayName(b), true)
+	})
 
 	for _, idx := range ordered {
 		wt := &wts[idx]

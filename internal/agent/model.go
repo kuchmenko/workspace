@@ -20,6 +20,7 @@ const (
 	KindWorkspace NodeKind = iota
 	KindGroup
 	KindProject
+	KindWorktree
 )
 
 type Project struct {
@@ -34,10 +35,8 @@ type Project struct {
 	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
-}
-
-func groupKey(wsRoot, group string) string {
-	return wsRoot + "\x00" + group
+	BranchActivity    map[string]time.Time
+	Language          string
 }
 
 type WorkspaceData struct {
@@ -58,76 +57,6 @@ type Chip struct {
 	Project *Project
 
 	WorkspaceRoot string
-}
-
-func (m *Model) rebuildItems() {
-	m.items = nil
-	m.headerChips = buildHeaderChips(m.workspaces)
-
-	for _, ws := range m.workspaces {
-		projects := make([]*Project, 0, len(ws.Projects))
-		groupActivity := make(map[string]time.Time, len(ws.Groups))
-		for i := range ws.Projects {
-			p := &ws.Projects[i]
-			if p.WorkspaceRoot == "" {
-				p.WorkspaceRoot = ws.Root
-			}
-			projects = append(projects, p)
-			if p.LastActiveAt.After(groupActivity[p.Group]) {
-				groupActivity[p.Group] = p.LastActiveAt
-			}
-		}
-		sort.SliceStable(projects, func(i, j int) bool {
-			if !projects[i].LastActiveAt.Equal(projects[j].LastActiveAt) {
-				return projects[i].LastActiveAt.After(projects[j].LastActiveAt)
-			}
-			return projects[i].Name < projects[j].Name
-		})
-
-		for _, p := range projects {
-			if p.Group == "" {
-				m.addProjectItem(p, 0)
-			}
-		}
-
-		groups := append([]string(nil), ws.Groups...)
-		sort.SliceStable(groups, func(i, j int) bool {
-			if !groupActivity[groups[i]].Equal(groupActivity[groups[j]]) {
-				return groupActivity[groups[i]].After(groupActivity[groups[j]])
-			}
-			return groups[i] < groups[j]
-		})
-		for _, g := range groups {
-			key := groupKey(ws.Root, g)
-			groupPath := filepath.Join(ws.Root, g)
-			m.items = append(m.items, listItem{kind: KindGroup, workspaceRoot: ws.Root, group: g, indent: 0, path: groupPath})
-			if m.expanded[key] {
-				for _, p := range projects {
-					if p.Group == g {
-						m.addProjectItem(p, 1)
-					}
-				}
-			}
-		}
-	}
-	m.clampCursor()
-}
-
-func (m *Model) clampCursor() {
-	if len(m.items) == 0 {
-		m.cursor = 0
-		return
-	}
-	if m.cursor >= len(m.items) {
-		m.cursor = len(m.items) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-}
-
-func (m *Model) addProjectItem(p *Project, indent int) {
-	m.items = append(m.items, listItem{kind: KindProject, workspaceRoot: p.WorkspaceRoot, project: p, indent: indent, path: p.Path})
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -396,6 +325,8 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 			Favorite:          p.Favorite,
 			LastActiveAt:      lastAt,
 			LastActiveMachine: lastMachine,
+			BranchActivity:    branchActivity(p.Branches),
+			Language:          languageForIcon(DetectIcon(mainPath)),
 		}
 
 		barePath := layout.BarePath(mainPath)
@@ -419,6 +350,25 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 	}
 
 	return ws, diagnostics
+}
+
+func branchActivity(branches []config.BranchMeta) map[string]time.Time {
+	result := make(map[string]time.Time, len(branches))
+	for _, branch := range branches {
+		if at, err := time.Parse(time.RFC3339, branch.LastActiveAt); err == nil {
+			result[branch.Name] = at
+		}
+	}
+	return result
+}
+
+func languageForIcon(icon string) string {
+	for _, value := range []struct{ icon, name string }{{iconGo, "Go"}, {iconRust, "Rust"}, {iconPython, "Python"}, {iconTypeScript, "TypeScript"}, {iconJavaScript, "JavaScript"}, {iconRuby, "Ruby"}, {iconJava, "Java"}, {iconCSharp, "C#"}, {iconDocker, "Docker"}, {iconShell, "Shell"}, {iconMarkdown, "Markdown"}} {
+		if value.icon == icon {
+			return value.name
+		}
+	}
+	return "Other"
 }
 
 func projectActivity(branches []config.BranchMeta) (time.Time, string) {

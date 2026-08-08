@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -15,11 +16,12 @@ import (
 )
 
 type Worktree struct {
-	Path   string
-	Branch string
-	IsMain bool
-	Dirty  bool
-	Ahead  int
+	Path         string
+	Branch       string
+	IsMain       bool
+	Dirty        bool
+	Ahead        int
+	LastActiveAt time.Time
 }
 
 func explorerMachineName() (string, error) {
@@ -103,6 +105,9 @@ func LoadWorktrees(mainPath string) ([]Worktree, error) {
 			Branch: wt.Branch,
 			IsMain: wt.Path == mainPath,
 			Dirty:  git.IsDirty(wt.Path),
+		}
+		if value, err := git.LastCommitTime(wt.Path); err == nil {
+			w.LastActiveAt = value
 		}
 		ahead, _, _ := git.AheadBehind(wt.Path, wt.Branch)
 		w.Ahead = ahead

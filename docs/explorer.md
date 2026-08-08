@@ -49,11 +49,12 @@ A project icon is rendered per ecosystem (Go, Rust, Python, Node, TS,
 Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
 `Cargo.toml`, `pyproject.toml`, etc.) in the project directory.
 
-### Tree
+### Views
 
-Group rows expand and collapse with `tab`. Press `enter` on a group or
-project row to open its sheet. Project sheets contain the project's
-worktrees and show their dirty and ahead state.
+`v` cycles Recent, Projects, and Language. Recent is the default and
+orders projects by the newest registry branch activity or worktree HEAD
+commit; `o` reverses it. Language groups are inferred locally and never
+modify canonical workspace groups. These preferences are machine-local.
 
 ## Keys
 
@@ -61,6 +62,7 @@ Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
 - `tab` — toggle expand/collapse for groups
+- `v` — cycle home views; `o` — reverse Recent order
 - `h` / `←` — collapse the selected group, or close the parent group
   from one of its project rows.
 - `1`-`9` — open a shell for the matching chip
@@ -75,9 +77,13 @@ Per-row actions:
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
 - `e` — on a project row, edit the project's group / category.
-- `d` — in a project sheet, on a non-main worktree row, prompt for delete (with
-  registry release; releases this machine from
-  `[[branches]].machines`).
+- `a` — archive a project, canonical group, or worktree. Project archive
+  leaves files untouched; worktree archive removes the checkout but preserves
+  its local and remote branches.
+- `d` — destructively delete one safe non-main worktree after typing its exact
+  branch name. Dirty, local-only, ahead, and protected branches are rejected.
+- `A` — archive projects or preview/archive old safe worktrees in the current
+  project or group when invoked there, or globally when invoked from home.
 - `f` — on a project row, toggle favorite. Equivalent to
   `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
   persisted to `workspace.toml` and reaches other machines on the next
@@ -86,7 +92,8 @@ Per-row actions:
 Search:
 
 - `s` — flash search inside the current view (jump labels per match).
-- `S` — global flash search (expands every group temporarily).
+- `S` — filtered global search across all projects and local worktrees,
+  independent of expansion and viewport.
 
 Help:
 

@@ -51,6 +51,10 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindProject:
 			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
+		case KindWorktree:
+			project := *item.parentProj
+			project.Name = item.group
+			line = m.renderProject(listItem{project: &project}, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		}
 
 		rows = append(rows, line)
@@ -73,7 +77,7 @@ func (m *Model) itemGroupKey(item listItem) string {
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
-	if m.expanded[groupKey(item.workspaceRoot, item.group)] {
+	if m.expanded[item.expandKey] {
 		arrow = "▾"
 	}
 	name := presentLabel(item.group)
@@ -430,119 +434,6 @@ var (
 	whichKeyKeyStyle    = tui.NewStyle().Foreground("215").Bold(true)
 	whichKeyDescStyle   = tui.NewStyle().Foreground("245")
 )
-
-const jumpLabels = "asdfghjklqwertyuiopzxcvbnm"
-
-func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
-	key := msg.String()
-	switch key {
-	case "ctrl+c":
-		return m, tui.Quit
-	case "esc":
-		m.exitFlash(false)
-	case "backspace":
-		if m.flashQuery.Value() != "" {
-			m.flashQuery, _ = m.flashQuery.Update(msg)
-			m.recomputeFlash()
-		} else {
-			m.exitFlash(false)
-		}
-	case "enter":
-
-		if len(m.flashMatches) > 0 {
-			m.cursor = m.flashMatches[0]
-			m.ensureVisible()
-		}
-		m.exitFlash(true)
-	default:
-		if msg.Type == tui.KeyRunes {
-			runes := msg.Runes
-
-			if m.flashQuery.Value() != "" && len(runes) == 1 {
-				ch := runes[0]
-				for i, label := range m.flashLabels {
-					if label != 0 && ch == label && i < len(m.flashMatches) {
-						m.cursor = m.flashMatches[i]
-						m.ensureVisible()
-						m.exitFlash(true)
-						return m, nil
-					}
-				}
-			}
-
-			m.flashQuery, _ = m.flashQuery.Update(msg)
-			m.recomputeFlash()
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) exitFlash(jumped bool) {
-	m.flashQuery.Blur()
-	m.mode = viewList
-	if m.flashGlobal && !jumped && m.savedExpanded != nil {
-		m.expanded = m.savedExpanded
-		m.savedExpanded = nil
-		m.rebuildItems()
-		m.ensureVisible()
-	}
-	m.flashGlobal = false
-}
-
-func (m *Model) recomputeFlash() {
-	query := strings.ToLower(m.flashQuery.Value())
-	m.flashMatches = nil
-	m.flashLabels = nil
-
-	for i, item := range m.items {
-		name := m.itemSearchName(item)
-		if query == "" || strings.Contains(strings.ToLower(name), query) {
-			m.flashMatches = append(m.flashMatches, i)
-		}
-	}
-
-	available := m.availableJumpLabels()
-	for i := 0; i < len(m.flashMatches); i++ {
-		if i < len(available) {
-			m.flashLabels = append(m.flashLabels, available[i])
-		} else {
-			m.flashLabels = append(m.flashLabels, 0)
-		}
-	}
-}
-
-func (m *Model) availableJumpLabels() []rune {
-	query := strings.ToLower(m.flashQuery.Value())
-	if query == "" {
-		return nil
-	}
-	var available []rune
-	for _, r := range jumpLabels {
-		extended := query + string(r)
-		productive := false
-		for _, item := range m.items {
-			name := strings.ToLower(m.itemSearchName(item))
-			if strings.Contains(name, extended) {
-				productive = true
-				break
-			}
-		}
-		if !productive {
-			available = append(available, r)
-		}
-	}
-	return available
-}
-
-func (m *Model) itemSearchName(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return item.group
-	case KindProject:
-		return item.project.Name
-	}
-	return ""
-}
 
 func flashInlineLabel(name, query string, label rune) string {
 	if query == "" {

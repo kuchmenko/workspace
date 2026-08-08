@@ -165,6 +165,24 @@ func TestSheet_EscPopsToParent(t *testing.T) {
 	}
 }
 
+func TestSheetUppercaseAOpensScopedMaintenance(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/alpha"}
+	m := newTestModel(p, nil)
+
+	projectSheet := newProjectSheet(m, p, nil)
+	projectSheet.update(m, rune1('A'))
+	if m.lifecycle == nil || m.lifecycle.scope.kind != lifecycleProject || m.lifecycle.scope.project != p || m.lifecycle.action != lifecycleChoose {
+		t.Fatalf("project maintenance = %#v", m.lifecycle)
+	}
+
+	m.lifecycle, m.mode = nil, viewList
+	groupSheet := newGroupSheet(m, "/ws", "org")
+	groupSheet.update(m, rune1('A'))
+	if m.lifecycle == nil || m.lifecycle.scope.kind != lifecycleGroup || m.lifecycle.scope.workspaceRoot != "/ws" || m.lifecycle.scope.group != "org" {
+		t.Fatalf("group maintenance = %#v", m.lifecycle)
+	}
+}
+
 func TestSheet_EnterShellMainLaunches(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "alpha")
