@@ -110,7 +110,10 @@ two-row keybar. The first keybar row always exposes the actions available in
 the current scope. On a non-main worktree this includes `a:archive` and
 `d:delete`; `A:maintenance` remains visible for project/group bulk operations.
 The second row contains the shared Vim navigation keys. Project management and
-search are keyboard actions rather than synthetic rows in the list.
+search are keyboard actions rather than synthetic rows in the list. Project
+worktrees show separate status and last-activity columns; activity uses the
+newer registry branch timestamp or HEAD commit time and displays `—` when no
+timestamp is available.
 
 ## Worktree creation from the TUI
 

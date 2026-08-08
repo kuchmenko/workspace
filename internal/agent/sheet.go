@@ -26,13 +26,14 @@ const (
 )
 
 type sheetRow struct {
-	kind    sheetRowKind
-	label   string
-	hint    string
-	wt      *Worktree
-	proj    *Project
-	indent  int
-	section string
+	kind     sheetRowKind
+	label    string
+	hint     string
+	activity string
+	wt       *Worktree
+	proj     *Project
+	indent   int
+	section  string
 }
 
 type sheet struct {

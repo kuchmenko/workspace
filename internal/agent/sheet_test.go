@@ -25,10 +25,11 @@ func newTestModel(p *Project, wts []Worktree) *Model {
 
 func TestBuildProjectSheetRows_WorktreesSection(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	active := time.Now().Add(-2 * time.Hour)
 	wts := []Worktree{
-		{Path: "/ws/alpha", IsMain: true},
-		{Path: "/ws/alpha-wt-x", Branch: "wt/x"},
-		{Path: "/ws/alpha-wt-y", Branch: "wt/y", Dirty: true, Ahead: 3},
+		{Path: "/ws/alpha", IsMain: true, LastActiveAt: active},
+		{Path: "/ws/alpha-wt-x", Branch: "wt/x", LastActiveAt: active},
+		{Path: "/ws/alpha-wt-y", Branch: "wt/y", Dirty: true, Ahead: 3, LastActiveAt: active},
 	}
 	m := newTestModel(p, wts)
 
@@ -44,6 +45,12 @@ func TestBuildProjectSheetRows_WorktreesSection(t *testing.T) {
 	}
 	if wtRows[2].hint != "dirty ↑3" {
 		t.Errorf("dirty+ahead hint = %q, want %q", wtRows[2].hint, "dirty ↑3")
+	}
+	if wtRows[2].activity != "2h" {
+		t.Errorf("activity = %q, want 2h", wtRows[2].activity)
+	}
+	if rows[0].hint != "status" || rows[0].activity != "activity" {
+		t.Fatalf("worktree columns = status %q activity %q", rows[0].hint, rows[0].activity)
 	}
 }
 

@@ -81,10 +81,11 @@ func (s *sheet) view(m *Model) string {
 func (s *sheet) renderRow(visIdx, width int) string {
 	r := &s.rows[s.visible[visIdx]]
 	if r.kind == rowHeader {
-		text := tui.Truncate(fmt.Sprintf(" ── %s ", presentLabel(r.label)), width)
-		if tui.Width(text) < width {
-			text += strings.Repeat("─", width-tui.Width(text))
-		}
+		left := fmt.Sprintf(" ── %s ", presentLabel(r.label))
+		right := " " + formatSheetColumns(r.hint, r.activity)
+		left = tui.Truncate(left, max(0, width-tui.Width(right)-1))
+		gap := max(1, width-tui.Width(left)-tui.Width(right))
+		text := left + strings.Repeat("─", gap) + right
 		return dimStyle.Width(width).Render(text)
 	}
 
@@ -97,13 +98,22 @@ func (s *sheet) renderRow(visIdx, width int) string {
 	if r.indent > 0 {
 		left = strings.Repeat("    ", r.indent) + presentLabel(r.label)
 	}
-	right := tui.Truncate(presentLabel(r.hint), max(0, contentWidth-1))
+	right := tui.Truncate(formatSheetColumns(r.hint, r.activity), max(0, contentWidth-1))
 	line := padPanelRight(left, right, contentWidth)
 	if selected {
 		bar := accentBarStyle.Render("▌")
 		return bar + selectedStyle.Width(contentWidth).Render(line)
 	}
 	return itemStyle.Width(width).Render(line)
+}
+
+func formatSheetColumns(status, activity string) string {
+	status = presentLabel(status)
+	activity = presentLabel(activity)
+	if status == "" {
+		return fmt.Sprintf("%8s", activity)
+	}
+	return fmt.Sprintf("%-10s %8s", status, activity)
 }
 
 func padPanelRight(left, right string, width int) string {

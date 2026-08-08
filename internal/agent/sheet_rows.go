@@ -20,9 +20,11 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	}
 
 	rows = append(rows, sheetRow{
-		kind:    rowHeader,
-		label:   fmt.Sprintf("worktrees (%d)", len(wts)),
-		section: "worktrees",
+		kind:     rowHeader,
+		label:    fmt.Sprintf("worktrees (%d)", len(wts)),
+		hint:     "status",
+		activity: "activity",
+		section:  "worktrees",
 	})
 
 	ordered := make([]int, len(wts))
@@ -38,12 +40,17 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 		wt := &wts[idx]
 		label := worktreeDisplayName(*wt)
 		hint := wtHint(wt)
+		activity := humanizeAge(wt.LastActiveAt)
+		if activity == "" {
+			activity = "—"
+		}
 		rows = append(rows, sheetRow{
-			kind:    rowWorktree,
-			label:   label,
-			hint:    hint,
-			wt:      wt,
-			section: "worktrees",
+			kind:     rowWorktree,
+			label:    label,
+			hint:     hint,
+			activity: activity,
+			wt:       wt,
+			section:  "worktrees",
 		})
 	}
 
@@ -75,17 +82,22 @@ func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []she
 	})
 
 	rows = append(rows, sheetRow{
-		kind:    rowHeader,
-		label:   fmt.Sprintf("projects (%d)", len(projects)),
-		section: "projects",
+		kind:     rowHeader,
+		label:    fmt.Sprintf("projects (%d)", len(projects)),
+		activity: "activity",
+		section:  "projects",
 	})
 	for _, p := range projects {
+		activity := humanizeAge(p.LastActiveAt)
+		if activity == "" {
+			activity = "—"
+		}
 		rows = append(rows, sheetRow{
-			kind:    rowProject,
-			label:   p.Name,
-			hint:    humanizeAge(p.LastActiveAt),
-			proj:    p,
-			section: "projects",
+			kind:     rowProject,
+			label:    p.Name,
+			activity: activity,
+			proj:     p,
+			section:  "projects",
 		})
 	}
 
