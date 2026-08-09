@@ -120,8 +120,20 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 	}
 
 	m.openWorktreeDelete(project, worktree)
-	if m.lifecycle.phase != lifecycleTypedConfirm || !strings.Contains(m.lifecycle.message, "uncommitted changes will be discarded") {
+	if m.lifecycle.phase != lifecycleReview || !strings.Contains(m.lifecycle.message, "uncommitted changes will be discarded") {
 		t.Fatalf("dirty delete confirmation = phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+	}
+	m.updateLifecycle(rune1('n'))
+	if m.lifecycle != nil {
+		t.Fatal("n did not cancel delete confirmation")
+	}
+	m.openWorktreeDelete(project, worktree)
+	m.updateLifecycle(rune1('y'))
+	if m.lifecycle.phase != lifecycleResult || !strings.Contains(m.lifecycle.message, "Deleted checkout") {
+		t.Fatalf("y did not execute delete: phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+	}
+	if _, err := os.Stat(worktree.Path); !os.IsNotExist(err) {
+		t.Fatalf("confirmed dirty checkout still exists: %v", err)
 	}
 }
 

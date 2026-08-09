@@ -56,8 +56,6 @@ func (m *Model) lifecycleBody() []string {
 		if lm.action == lifecycleArchiveOldWorktrees {
 			lines = append(lines, fmt.Sprintf("eligible %d · recent %d · main %d · dirty %d · protected %d · unpushed %d", len(lm.plan.Eligible), lm.plan.Recent, lm.plan.Main, lm.plan.Dirty, lm.plan.Protected, lm.plan.Unpushed))
 		}
-	case lifecycleTypedConfirm:
-		lines = append(lines, "", lm.message, lm.input+"█")
 	case lifecycleResult:
 		lines = append(lines, "", lm.message)
 	}
@@ -74,9 +72,7 @@ func (m *Model) lifecycleFooterHints() (actions, nav string) {
 	case lifecycleThreshold:
 		actions = "type age threshold  enter:review"
 	case lifecycleReview:
-		actions = "y/enter:confirm"
-	case lifecycleTypedConfirm:
-		actions = "type exact branch  enter:confirm"
+		actions = "y:confirm  n:cancel"
 	case lifecycleResult:
 		actions = "esc:close"
 	}
@@ -111,8 +107,6 @@ func (m *Model) lifecyclePhaseLabel() string {
 		return "threshold"
 	case lifecycleReview:
 		return "review"
-	case lifecycleTypedConfirm:
-		return "confirm"
 	case lifecycleResult:
 		return "result"
 	default:

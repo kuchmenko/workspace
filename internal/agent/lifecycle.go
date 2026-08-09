@@ -37,7 +37,6 @@ const (
 	lifecycleSelect lifecyclePhase = iota
 	lifecycleThreshold
 	lifecycleReview
-	lifecycleTypedConfirm
 	lifecycleResult
 )
 
@@ -103,10 +102,10 @@ func (m *Model) prepareLifecycle() {
 		if err := validateDeleteWorktree(lm.scope.project, lm.scope.worktree); err != nil {
 			lm.phase, lm.errorText = lifecycleResult, err.Error()
 		} else {
-			lm.phase = lifecycleTypedConfirm
-			lm.message = "Type the exact branch name:"
+			lm.phase = lifecycleReview
+			lm.message = "Delete checkout and local/remote branches?"
 			if worktreeDirty(lm.scope.worktree) {
-				lm.message = "WARNING: uncommitted changes will be discarded. Type the exact branch name:"
+				lm.message = "WARNING: uncommitted changes will be discarded. Delete checkout and local/remote branches?"
 			}
 		}
 	}
@@ -399,11 +398,12 @@ func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.updateLifecycleSelect(key)
 	case lifecycleThreshold:
 		m.updateLifecycleThreshold(msg)
-	case lifecycleTypedConfirm:
-		m.updateLifecycleTypedConfirm(msg)
 	case lifecycleReview:
-		if key == "y" || key == "enter" {
+		switch key {
+		case "y":
 			m.executeLifecycle()
+		case "n":
+			m.closeLifecycle()
 		}
 	}
 	return m, nil
@@ -451,19 +451,6 @@ func (m *Model) updateLifecycleThreshold(msg tui.KeyMsg) {
 	}
 }
 
-func (m *Model) updateLifecycleTypedConfirm(msg tui.KeyMsg) {
-	lm := m.lifecycle
-	key := msg.String()
-	if key == "backspace" && len(lm.input) > 0 {
-		lm.input = lm.input[:len(lm.input)-1]
-	} else if key == "enter" && lm.input != lm.scope.worktree.Branch {
-		lm.errorText = "confirmation must exactly match " + lm.scope.worktree.Branch
-	} else if key == "enter" {
-		m.executeLifecycle()
-	} else if len(msg.Runes) > 0 {
-		lm.input += string(msg.Runes)
-	}
-}
 func (m *Model) executeLifecycle() {
 	lm := m.lifecycle
 	switch lm.action {
