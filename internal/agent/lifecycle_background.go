@@ -95,19 +95,6 @@ func (m *Model) lifecycleJobTotal(lm *lifecycleModel) int {
 	}
 }
 
-func (m *Model) runLifecycleJob(lm *lifecycleModel) tui.Cmd {
-	projects := append([]worktreeCandidate(nil), m.lifecycleProjects(lm.scope)...)
-	logger := m.debugLog
-	return func() tui.Msg {
-		emit := func(label, detail string, started bool) {
-			lm.messages <- lifecycleProgressMsg{job: lm, label: label, detail: detail, started: started}
-		}
-		result := runLifecycle(lm, projects, logger, emit)
-		lm.messages <- lifecycleDoneMsg{job: lm, result: result}
-		return nil
-	}
-}
-
 func waitLifecycleMessage(lm *lifecycleModel) tui.Cmd {
 	return func() tui.Msg { return <-lm.messages }
 }
@@ -573,13 +560,6 @@ func runLifecycleTargetMutation(lm *lifecycleModel, target worktreeCandidate, lo
 	return result
 }
 
-func outcomeErrorFrom(err error) string {
-	if err != nil {
-		return err.Error()
-	}
-	return ""
-}
-
 func lifecycleTargetOutcome(action lifecycleAction, result lifecycleRunResult) (targetOutcomeKind, string) {
 	if result.targetKind != "" {
 		return result.targetKind, result.errorText
@@ -646,28 +626,6 @@ func lifecycleActionLabel(action lifecycleAction) string {
 		return "delete-worktrees"
 	default:
 		return "choose"
-	}
-}
-
-func (m *Model) lifecycleJobRunning() bool {
-	return m.jobsRunning()
-}
-
-func (m *Model) lifecycleJobStatus() string {
-	if m.lifecycleJob == nil {
-		return ""
-	}
-	switch m.lifecycleJob.phase {
-	case lifecyclePlanning:
-		return "background archive planning · A:progress"
-	case lifecycleReview:
-		return "background archive plan ready · A:review"
-	case lifecycleRunning:
-		return fmt.Sprintf("background %s · %d/%d · A:progress", lifecycleActionLabel(m.lifecycleJob.action), m.lifecycleJob.completed, m.lifecycleJob.total)
-	case lifecycleRefreshing:
-		return "background lifecycle refresh · A:progress"
-	default:
-		return "background lifecycle job finished · A:results"
 	}
 }
 

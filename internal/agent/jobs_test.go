@@ -31,6 +31,7 @@ type jobTestPump struct {
 }
 
 func newJobTestPump(t *testing.T) *jobTestPump {
+	t.Helper()
 	return &jobTestPump{t: t, msgs: make(chan tui.Msg, 32)}
 }
 
