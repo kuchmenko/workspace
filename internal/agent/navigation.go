@@ -50,16 +50,6 @@ func (m *Model) toggleExpand(key string) {
 	m.ensureVisible()
 }
 
-func (m *Model) jumpToGroup(workspaceRoot, group string) {
-	for i, it := range m.items {
-		if it.kind == KindGroup && it.workspaceRoot == workspaceRoot && it.group == group {
-			m.cursor = i
-			break
-		}
-	}
-	m.ensureVisible()
-}
-
 func (m *Model) jumpToExpandKey(key string) {
 	for i, it := range m.items {
 		if it.kind == KindGroup && it.expandKey == key {

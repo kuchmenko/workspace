@@ -149,7 +149,6 @@ func TestBuildGroupSheetRows_SortsProjectsByActivityDescThenName(t *testing.T) {
 			t.Errorf("[%d] = %q, want %q", i, projectNames[i], w)
 		}
 	}
-
 }
 
 func TestSheet_EscPopsToParent(t *testing.T) {

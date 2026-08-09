@@ -237,16 +237,6 @@ func worktreeDirty(wt *Worktree) bool {
 	return wt != nil && (wt.Dirty || git.IsDirty(wt.Path))
 }
 
-func validateArchiveWorktree(p *Project, wt *Worktree) error {
-	if err := validateWorktreeTarget(p, wt); err != nil {
-		return err
-	}
-	if worktreeDirty(wt) {
-		return fmt.Errorf("cannot archive dirty worktree")
-	}
-	return nil
-}
-
 type WorktreeArchiveResult struct {
 	CheckoutRemoved, MetadataReleased bool
 	ProjectPath                       string

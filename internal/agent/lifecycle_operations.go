@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/layout"
 )
 
 func ParseArchiveThreshold(value string) (time.Duration, error) {
@@ -21,7 +19,7 @@ func ParseArchiveThreshold(value string) (time.Duration, error) {
 	}{{"month", 30 * 24 * time.Hour}, {"w", 7 * 24 * time.Hour}, {"d", 24 * time.Hour}, {"h", time.Hour}} {
 		if strings.HasSuffix(v, unit.s) {
 			n, err := strconv.Atoi(strings.TrimSuffix(v, unit.s))
-			if err != nil || n <= 0 || uint64(n) > uint64(math.MaxInt64)/uint64(unit.d) {
+			if err != nil || n <= 0 || int64(n) > math.MaxInt64/int64(unit.d) {
 				return 0, fmt.Errorf("threshold must be a positive integer followed by h, d, w, or month")
 			}
 			return time.Duration(n) * unit.d, nil
@@ -32,16 +30,6 @@ func ParseArchiveThreshold(value string) (time.Duration, error) {
 
 func protectedBranch(p *Project, branch string) bool {
 	return branch == "main" || branch == "master" || branch == "dev" || branch == "live" || branch == p.DefaultBranch
-}
-
-func validateDeleteWorktree(p *Project, wt *Worktree) error {
-	if err := validateWorktreeTarget(p, wt); err != nil {
-		return err
-	}
-	if git.RevParse(layout.BarePath(p.Path), "refs/heads/"+wt.Branch) == "" {
-		return fmt.Errorf("local branch %s is unavailable", wt.Branch)
-	}
-	return nil
 }
 
 type ProjectIdentity struct{ WorkspaceRoot, ProjectID string }
