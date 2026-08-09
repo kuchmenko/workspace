@@ -128,17 +128,18 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 		t.Fatal("n did not cancel delete confirmation")
 	}
 	m.openWorktreeDelete(project, worktree)
+	lm := m.lifecycle
 	_, cmd := m.updateLifecycle(enter())
-	if cmd == nil || m.lifecycle.phase != lifecycleRunning {
-		t.Fatalf("enter did not start background delete: phase %v cmd %v", m.lifecycle.phase, cmd)
+	if cmd == nil || m.lifecycle != nil || m.lifecycleJob != lm || lm.phase != lifecycleRunning {
+		t.Fatalf("enter did not detach background delete: active %#v job %#v phase %v cmd %v", m.lifecycle, m.lifecycleJob, lm.phase, cmd)
 	}
-	result := runLifecycle(m.lifecycle, nil, nil, func(string, string, bool) {})
-	_, refresh := m.finishLifecycleJob(lifecycleDoneMsg{job: m.lifecycle, result: result})
+	result := runLifecycle(lm, nil, nil, func(string, string, bool) {})
+	_, refresh := m.finishLifecycleJob(lifecycleDoneMsg{job: lm, result: result})
 	if refresh != nil {
 		m.Update(refresh())
 	}
-	if m.lifecycle.phase != lifecycleResult || !strings.Contains(m.lifecycle.message, "Deleted checkout") {
-		t.Fatalf("enter did not execute delete: phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+	if lm.phase != lifecycleResult || !strings.Contains(lm.message, "Deleted checkout") {
+		t.Fatalf("enter did not execute delete: phase %v message %q error %q", lm.phase, lm.message, lm.errorText)
 	}
 	if _, err := os.Stat(worktree.Path); !os.IsNotExist(err) {
 		t.Fatalf("confirmed dirty checkout still exists: %v", err)
@@ -279,6 +280,24 @@ func TestLifecycleJobDetachesAndReopensWithProgress(t *testing.T) {
 	m.updateList(rune1('A'))
 	if m.lifecycle != lm || m.mode != viewLifecycle {
 		t.Fatalf("reopened lifecycle = active %#v mode %v", m.lifecycle, m.mode)
+	}
+}
+
+func TestLifecycleConfirmationReturnsToOriginSheet(t *testing.T) {
+	project := &Project{ID: "project", WorkspaceRoot: "/ws", Path: "/ws/project"}
+	worktree := &Worktree{Path: "/ws/project-feature", Branch: "feat/background"}
+	parent := &sheet{mode: sheetProject, target: project}
+	lm := &lifecycleModel{
+		scope:       lifecycleScope{kind: lifecycleWorktree, project: project, worktree: worktree, worktrees: []*Worktree{worktree}},
+		action:      lifecycleArchiveWorktree,
+		phase:       lifecycleReview,
+		parentSheet: parent,
+	}
+	m := &Model{lifecycle: lm, mode: viewLifecycle, wtCache: NewWorktreeCache()}
+
+	_, cmd := m.updateLifecycle(enter())
+	if cmd == nil || m.lifecycle != nil || m.sheet != parent || m.mode != viewList || m.lifecycleJob != lm {
+		t.Fatalf("confirmation did not return to sheet: active %#v sheet %#v mode %v job %#v", m.lifecycle, m.sheet, m.mode, m.lifecycleJob)
 	}
 }
 

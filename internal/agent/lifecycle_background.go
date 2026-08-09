@@ -54,6 +54,9 @@ func (m *Model) startLifecycleJob() tui.Cmd {
 	lm.messages = make(chan tui.Msg, 1)
 	m.lifecycleJob = lm
 	m.logLifecycle("job started action=%s total=%d", lifecycleActionLabel(lm.action), lm.total)
+	m.lifecycle = nil
+	m.mode = viewList
+	m.sheet = lm.parentSheet
 	return tui.Batch(m.runLifecycleJob(lm), waitLifecycleMessage(lm))
 }
 

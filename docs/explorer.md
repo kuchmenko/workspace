@@ -120,8 +120,8 @@ timestamp is available.
 
 Lifecycle planning, archive, delete, and post-operation refresh run in the
 background. The lifecycle panel shows the current target and completed/total
-progress. Press `Esc` to return to Explorer while work continues and `A` to
-reopen progress or results. Debug logs are appended to
+progress. Confirming an operation returns immediately to the originating
+Explorer panel; press `A` to reopen progress or results. Debug logs are appended to
 `$XDG_STATE_HOME/ws/explorer.log` (default `~/.local/state/ws/explorer.log`).
 
 ## Worktree creation from the TUI
