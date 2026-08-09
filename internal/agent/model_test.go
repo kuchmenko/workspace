@@ -241,6 +241,15 @@ func TestHomeVimMotionsClampAndRightOpensSheet(t *testing.T) {
 	}
 }
 
+func TestListHeightReservesJobsStrip(t *testing.T) {
+	m := &Model{height: 20}
+	withoutJobs := m.listHeight()
+	m.jobs = []*explorerJob{{ID: "J1", State: jobRunning}}
+	if got := m.listHeight(); got != withoutJobs-1 {
+		t.Fatalf("list height with jobs strip = %d, want %d", got, withoutJobs-1)
+	}
+}
+
 func TestRecentProjectionDefaultsExpandedAndCollapsesFromChild(t *testing.T) {
 	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws"}
 	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Projects: []Project{p}}}, expanded: map[string]bool{}, homeView: config.ExplorerViewRecent}

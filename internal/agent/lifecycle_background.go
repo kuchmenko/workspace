@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -37,27 +38,48 @@ type lifecycleRefreshDoneMsg struct {
 type lifecycleRunResult struct {
 	message          string
 	errorText        string
+	targetKind       targetOutcomeKind
 	affectedProjects []ProjectIdentity
 	archivedProjects []ProjectIdentity
 }
 
+type lifecycleChildResult struct {
+	outcome targetOutcome
+	result  lifecycleRunResult
+}
+
+type ownershipRelease struct {
+	id, branch string
+}
+
 func (m *Model) startLifecycleJob() tui.Cmd {
 	lm := m.lifecycle
-	lm.phase = lifecycleRunning
-	lm.completed = 0
-	lm.total = m.lifecycleJobTotal(lm)
-	lm.current = ""
-	lm.details = nil
-	lm.errorText = ""
-	lm.scroll = 0
-	lm.startedAt = time.Now()
-	lm.messages = make(chan tui.Msg, 1)
-	m.lifecycleJob = lm
-	m.logLifecycle("job started action=%s total=%d", lifecycleActionLabel(lm.action), lm.total)
+	total := m.lifecycleJobTotal(lm)
+	projects := cloneLifecycleProjects(m.lifecycleProjects(lm.scope))
+	copyModel := cloneLifecycleModel(lm)
 	m.lifecycle = nil
 	m.mode = viewList
 	m.sheet = lm.parentSheet
-	return tui.Batch(m.runLifecycleJob(lm), waitLifecycleMessage(lm))
+	return m.submitJob(lifecycleActionLabel(lm.action), total, func(ctx *jobContext) jobResult {
+		return runLifecycleAsync(copyModel, projects, m.debugLog, ctx)
+	})
+}
+
+func cloneLifecycleModel(lm *lifecycleModel) *lifecycleModel {
+	copyModel := *lm
+	copyModel.scope.worktrees = make([]*Worktree, len(lm.scope.worktrees))
+	for i, worktree := range lm.scope.worktrees {
+		if worktree != nil {
+			copied := *worktree
+			copyModel.scope.worktrees[i] = &copied
+		}
+	}
+	if lm.scope.project != nil {
+		project := cloneLifecycleProjects([]worktreeCandidate{{Project: lm.scope.project}})[0].Project
+		copyModel.scope.project = project
+	}
+	copyModel.plan.Eligible = cloneLifecycleProjects(lm.plan.Eligible)
+	return &copyModel
 }
 
 func (m *Model) lifecycleJobTotal(lm *lifecycleModel) int {
@@ -207,7 +229,9 @@ func (m *Model) finishLifecycleRefresh(msg lifecycleRefreshDoneMsg) (tui.Model, 
 
 func (m *Model) reconcileLifecycleUI(lm *lifecycleModel) {
 	m.sheet = m.reconcileLifecycleSheet(m.sheet)
-	lm.parentSheet = m.reconcileLifecycleSheet(lm.parentSheet)
+	if lm != nil {
+		lm.parentSheet = m.reconcileLifecycleSheet(lm.parentSheet)
+	}
 	if m.popupProj != nil {
 		m.popupProj = m.findLifecycleProject(m.popupProj.WorkspaceRoot, m.popupProj.ID)
 		if m.popupProj == nil && (m.mode == viewEditProject || m.mode == viewNewWorktree) {
@@ -388,6 +412,228 @@ func runLifecycle(lm *lifecycleModel, projects []worktreeCandidate, logger *log.
 	}
 }
 
+func runLifecycleAsync(lm *lifecycleModel, projects []worktreeCandidate, logger *log.Logger, ctx *jobContext) jobResult {
+	targets := lifecycleTargets(lm, projects)
+	results := make(chan lifecycleChildResult, len(targets))
+	grouped := map[string][]worktreeCandidate{}
+	for _, target := range targets {
+		key := target.WorkspaceRoot + "\x00" + target.ProjectID
+		grouped[key] = append(grouped[key], target)
+	}
+	var workers sync.WaitGroup
+	for _, projectTargets := range grouped {
+		projectTargets := projectTargets
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			first := projectTargets[0]
+			ctx.withProject(first.WorkspaceRoot, first.ProjectID, first.projectPath(), func() {
+				runLifecycleProject(lm, projectTargets, logger, ctx, results)
+			})
+		}()
+	}
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	job := jobResult{}
+	for child := range results {
+		job.Outcomes = append(job.Outcomes, child.outcome)
+		job.AffectedProjects = append(job.AffectedProjects, child.result.affectedProjects...)
+		job.ArchivedProjects = append(job.ArchivedProjects, child.result.archivedProjects...)
+		if child.result.errorText != "" {
+			job.Details = append(job.Details, child.result.errorText)
+		}
+	}
+	job.Summary = summarizeOutcomes(job.Outcomes)
+	return job
+}
+
+func lifecycleTargets(lm *lifecycleModel, projects []worktreeCandidate) []worktreeCandidate {
+	switch lm.action {
+	case lifecycleArchiveProjects:
+		return projects
+	case lifecycleArchiveOldWorktrees:
+		return lm.plan.Eligible
+	default:
+		targets := make([]worktreeCandidate, 0, len(lm.scope.worktrees))
+		for _, worktree := range lm.scope.worktrees {
+			targets = append(targets, worktreeCandidate{WorkspaceRoot: lm.scope.project.WorkspaceRoot, ProjectID: lm.scope.project.ID, Project: lm.scope.project, Worktree: *worktree})
+		}
+		return targets
+	}
+}
+
+func (c worktreeCandidate) projectPath() string {
+	if c.Project == nil {
+		return ""
+	}
+	return c.Project.Path
+}
+
+func runLifecycleProject(lm *lifecycleModel, targets []worktreeCandidate, logger *log.Logger, ctx *jobContext, results chan<- lifecycleChildResult) {
+	children := make([]lifecycleChildResult, 0, len(targets))
+	releases := make([]ownershipRelease, 0, len(targets))
+	if lm.action != lifecycleArchiveProjects {
+		for _, target := range targets {
+			ctx.progress(lifecycleTargetLabel(lm.action, target))
+			children = append(children, runLifecycleTarget(lm, target, logger, func(id, branch string) error {
+				releases = append(releases, ownershipRelease{id, branch})
+				return nil
+			}))
+		}
+	}
+	root := targets[0].WorkspaceRoot
+	ctx.withRegistry(root, func() {
+		if lm.action == lifecycleArchiveProjects {
+			for _, target := range targets {
+				ctx.progress(lifecycleTargetLabel(lm.action, target))
+				children = append(children, runLifecycleTarget(lm, target, logger, nil))
+			}
+		} else if err := releaseWorktreeOwnershipBatch(root, releases); err != nil {
+			for i := range children {
+				if len(children[i].result.affectedProjects) > 0 {
+					children[i].result.errorText = strings.Trim(strings.Join([]string{children[i].result.errorText, err.Error()}, "; "), "; ")
+					children[i].outcome.Kind, children[i].outcome.Detail = lifecycleTargetOutcome(lm.action, children[i].result)
+				}
+			}
+		}
+		childJob := jobResult{}
+		for _, child := range children {
+			childJob.Outcomes = append(childJob.Outcomes, child.outcome)
+			childJob.AffectedProjects = append(childJob.AffectedProjects, child.result.affectedProjects...)
+			childJob.ArchivedProjects = append(childJob.ArchivedProjects, child.result.archivedProjects...)
+		}
+		ctx.finishChild(childJob, len(childJob.AffectedProjects)+len(childJob.ArchivedProjects) > 0)
+	})
+	for _, child := range children {
+		results <- child
+	}
+}
+
+func runLifecycleTarget(lm *lifecycleModel, target worktreeCandidate, logger *log.Logger, release func(string, string) error) lifecycleChildResult {
+	copyModel := cloneLifecycleModel(lm)
+	copyModel.scope.project = target.Project
+	copyModel.scope.worktree = &target.Worktree
+	copyModel.scope.worktrees = []*Worktree{&target.Worktree}
+	copyModel.plan.Eligible = []worktreeCandidate{target}
+	var result lifecycleRunResult
+	if lm.action == lifecycleArchiveProjects {
+		result = runLifecycle(copyModel, []worktreeCandidate{target}, logger, func(string, string, bool) {})
+	} else {
+		result = runLifecycleTargetMutation(copyModel, target, logger, release)
+	}
+	kind, detail := lifecycleTargetOutcome(lm.action, result)
+	outcome := targetOutcome{Target: lifecycleTargetLabel(lm.action, target), Kind: kind, Detail: detail}
+	return lifecycleChildResult{outcome: outcome, result: result}
+}
+
+func runLifecycleTargetMutation(lm *lifecycleModel, target worktreeCandidate, logger *log.Logger, release func(string, string) error) lifecycleRunResult {
+	result := lifecycleRunResult{}
+	switch lm.action {
+	case lifecycleArchiveOldWorktrees:
+		fresh, reason, err := revalidateWorktreeArchiveCandidate(target, lm.plan.Threshold, time.Now())
+		if err != nil {
+			result.errorText = err.Error()
+			result.targetKind = targetFailed
+			return result
+		}
+		if reason != "" {
+			result.errorText = reason
+			result.targetKind = targetSkipped
+			return result
+		}
+		archived := archiveWorktree(target.Project, fresh, target.WorkspaceRoot, false, release)
+		if archived.CheckoutRemoved {
+			result.affectedProjects = []ProjectIdentity{{target.WorkspaceRoot, target.ProjectID}}
+		}
+		if archived.Err != nil {
+			result.errorText = archived.Err.Error()
+		}
+		result.message = "Archived worktree; branch preserved."
+	case lifecycleArchiveWorktree:
+		archived := archiveWorktree(target.Project, &target.Worktree, target.WorkspaceRoot, true, release)
+		if archived.CheckoutRemoved {
+			result.affectedProjects = []ProjectIdentity{{target.WorkspaceRoot, target.ProjectID}}
+		}
+		if archived.Err != nil {
+			result.errorText = archived.Err.Error()
+		}
+		result.message = "Archived worktree; branch preserved."
+	case lifecycleDeleteWorktree:
+		deleted := deleteWorktreeDestructive(target.Project, &target.Worktree, target.WorkspaceRoot, release)
+		if deleted.CheckoutRemoved {
+			result.affectedProjects = []ProjectIdentity{{target.WorkspaceRoot, target.ProjectID}}
+		}
+		result.message, result.errorText = deleted.Message, deleted.Detail
+	}
+	if logger != nil {
+		logger.Printf("lifecycle action=%s target=%q outcome=%q", lifecycleActionLabel(lm.action), lifecycleTargetLabel(lm.action, target), result.message)
+	}
+	return result
+}
+
+func outcomeErrorFrom(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func lifecycleTargetOutcome(action lifecycleAction, result lifecycleRunResult) (targetOutcomeKind, string) {
+	if result.targetKind != "" {
+		return result.targetKind, result.errorText
+	}
+	switch action {
+	case lifecycleArchiveProjects:
+		if len(result.archivedProjects) > 0 {
+			return targetSuccess, "archived"
+		}
+		if result.errorText == "" {
+			return targetSkipped, "unchanged: already archived"
+		}
+		return targetFailed, result.errorText
+	case lifecycleArchiveOldWorktrees:
+		if len(result.affectedProjects) > 0 && result.errorText != "" {
+			return targetPartial, result.errorText
+		}
+		if len(result.affectedProjects) > 0 {
+			return targetSuccess, "archived"
+		}
+		if result.errorText != "" {
+			return targetSkipped, result.errorText
+		}
+		return targetSkipped, "unchanged"
+	default:
+		if len(result.affectedProjects) > 0 && result.errorText != "" {
+			return targetPartial, result.errorText
+		}
+		if len(result.affectedProjects) > 0 {
+			return targetSuccess, result.message
+		}
+		return targetFailed, result.errorText
+	}
+}
+
+func lifecycleTargetLabel(action lifecycleAction, target worktreeCandidate) string {
+	if action == lifecycleArchiveProjects {
+		return target.ProjectID
+	}
+	name := target.ProjectID
+	if target.Project != nil && target.Project.Name != "" {
+		name = target.Project.Name
+	}
+	return name + "/" + target.Worktree.Branch
+}
+
+func summarizeOutcomes(outcomes []targetOutcome) string {
+	counts := map[targetOutcomeKind]int{}
+	for _, outcome := range outcomes {
+		counts[outcome.Kind]++
+	}
+	return fmt.Sprintf("%d succeeded, %d partial, %d failed, %d skipped.", counts[targetSuccess], counts[targetPartial], counts[targetFailed], counts[targetSkipped])
+}
+
 func lifecycleActionLabel(action lifecycleAction) string {
 	switch action {
 	case lifecycleArchiveProjects:
@@ -404,15 +650,7 @@ func lifecycleActionLabel(action lifecycleAction) string {
 }
 
 func (m *Model) lifecycleJobRunning() bool {
-	if m.lifecycleJob == nil {
-		return false
-	}
-	switch m.lifecycleJob.phase {
-	case lifecyclePlanning, lifecycleReview, lifecycleRunning, lifecycleRefreshing:
-		return true
-	default:
-		return false
-	}
+	return m.jobsRunning()
 }
 
 func (m *Model) lifecycleJobStatus() string {

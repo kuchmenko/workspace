@@ -220,44 +220,60 @@ func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
-	if m.lifecycleJobRunning() {
-		m.statusMsg = "worktree creation unavailable while lifecycle job runs · A:progress"
-		m.wtBranch.Blur()
-		m.mode = viewList
-		return m, nil
-	}
 	branch := strings.TrimSpace(m.wtBranch.Value())
 	if branch == "" {
 		return m, nil
 	}
 
 	wsRoot := m.workspaceRootFor(m.popupProj)
-	machine, err := explorerMachineName()
-	var result *repo.WorktreeAddResult
-	if err == nil {
-		result, err = repo.AddWorktree(repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: m.popupProj.ID, Branch: branch, Machine: machine})
-	}
-	if result != nil {
-		m.wtCache.Invalidate(m.popupProj.Path)
-		refreshErr := m.reloadProjectMetadata(wsRoot, m.popupProj.ID)
-		m.rebuildItems()
-		m.ensureVisible()
-		if refreshErr != nil && err == nil {
-			err = fmt.Errorf("metadata refresh failed: %w", refreshErr)
-		}
-	}
-	if err != nil {
-		m.statusMsg = err.Error()
-		m.wtBranch.Blur()
-		m.mode = viewList
-		return m, nil
-	}
-
+	projectID, projectName := m.popupProj.ID, m.popupProj.Name
 	m.wtBranch.Blur()
 	m.mode = viewList
-	m.statusMsg = "worktree created"
-	metrics.RecordExplorerWorktreeCreated()
-	return m, nil
+	projectPath := m.popupProj.Path
+	cmd := m.submitJob("create "+projectName+"/"+branch, 1, func(ctx *jobContext) jobResult {
+		var outcome targetOutcome
+		var options repo.WorktreeAddOptions
+		var addResult *repo.WorktreeAddResult
+		ctx.withProject(wsRoot, projectID, projectPath, func() {
+			ctx.progress(branch)
+			machine, err := explorerMachineName()
+			if err == nil {
+				options = repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: projectID, Branch: branch, Machine: machine}
+				addResult, err = repo.AddWorktreeCheckout(options)
+			}
+			if err != nil {
+				if addResult != nil {
+					outcome = targetOutcome{Target: branch, Kind: targetPartial, Detail: err.Error()}
+				} else {
+					outcome = targetOutcome{Target: branch, Kind: targetFailed, Detail: err.Error()}
+				}
+			} else {
+				outcome = targetOutcome{Target: branch, Kind: targetSuccess, Detail: "created"}
+			}
+			ctx.withRegistry(wsRoot, func() {
+				if outcome.Kind == targetSuccess {
+					if err := repo.RegisterWorktree(options, addResult); err != nil {
+						outcome = targetOutcome{Target: branch, Kind: targetPartial, Detail: err.Error()}
+					}
+				}
+				child := jobResult{Outcomes: []targetOutcome{outcome}}
+				if addResult != nil {
+					child.AffectedProjects = []ProjectIdentity{{wsRoot, projectID}}
+				}
+				ctx.finishChild(child, addResult != nil)
+			})
+		})
+		metrics.RecordExplorerWorktreeCreated()
+		result := jobResult{Summary: "worktree created", Outcomes: []targetOutcome{outcome}}
+		if outcome.Kind == targetSuccess || outcome.Kind == targetPartial {
+			result.AffectedProjects = []ProjectIdentity{{wsRoot, projectID}}
+		}
+		if outcome.Kind != targetSuccess {
+			result.Error = outcome.Detail
+		}
+		return result
+	})
+	return m, cmd
 }
 
 func (m *Model) viewNewWorktree() string {

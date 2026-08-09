@@ -20,6 +20,7 @@ const (
 	viewWhichKey
 	viewEditProject
 	viewLifecycle
+	viewJobs
 )
 
 const (
@@ -82,12 +83,16 @@ type Model struct {
 	flashGlobal   bool
 	savedExpanded map[string]bool
 
-	whichKeyLevel int
-	lifecycle     *lifecycleModel
-	lifecycleJob  *lifecycleModel
-	debugLog      *log.Logger
-	debugLogFile  *os.File
-	debugLogPath  string
+	whichKeyLevel   int
+	lifecycle       *lifecycleModel
+	lifecycleJob    *lifecycleModel
+	jobsRunner      *operationRunner
+	jobs            []*explorerJob
+	jobsCursor      int
+	jobsReturnSheet *sheet
+	debugLog        *log.Logger
+	debugLogFile    *os.File
+	debugLogPath    string
 
 	Launch *LaunchRequest
 
@@ -109,6 +114,7 @@ func NewModel(workspaces []WorkspaceData) *Model {
 		wtBranch:    wtBranch,
 		editGroup:   editGroup,
 		flashQuery:  flashQuery,
+		jobsRunner:  newOperationRunner(),
 		homeView:    config.ExplorerViewRecent,
 		recentOrder: config.RecentOrderDesc,
 	}
@@ -147,12 +153,20 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		return m.finishLifecyclePlan(msg)
 	case lifecycleRefreshDoneMsg:
 		return m.finishLifecycleRefresh(msg)
+	case jobStreamMsg:
+		return m, waitJobStream(msg)
+	case waitJobStreamMsg:
+		cmd := waitJobStream(jobStreamMsg{msg.runner, msg.id, msg.events})
+		if event, ok := msg.event.(jobEvent); ok {
+			m.applyJobEvent(event)
+		}
+		return m, cmd
 
 	case tui.KeyMsg:
 
 		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
-			if m.lifecycleJobRunning() {
-				m.statusMsg = "background lifecycle job is still running · A:progress"
+			if m.jobsRunning() {
+				m.statusMsg = "background jobs are still running · A:jobs"
 				return m, nil
 			}
 			return m, tui.Quit
@@ -182,6 +196,9 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		if m.mode == viewLifecycle {
 			return m.updateLifecycle(msg)
 		}
+		if m.mode == viewJobs {
+			return m.updateJobs(msg)
+		}
 		if m.sheet != nil {
 			return m.sheet.update(m, msg)
 		}
@@ -202,6 +219,9 @@ func (m *Model) View() string {
 	}
 	if m.mode == viewLifecycle {
 		return m.viewLifecycle()
+	}
+	if m.mode == viewJobs {
+		return m.viewJobs()
 	}
 	if m.sheet != nil {
 		return m.sheet.view(m)
@@ -234,8 +254,8 @@ func (m *Model) workspaceRootFor(proj *Project) string {
 }
 
 func (m *Model) launch(workspaceRoot, path string) (tui.Model, tui.Cmd) {
-	if m.lifecycleJobRunning() {
-		m.statusMsg = "background lifecycle job is still running · A:progress"
+	if m.jobsRunning() {
+		m.statusMsg = "background jobs are still running · A:jobs"
 		return m, nil
 	}
 	root, err := filepath.EvalSymlinks(workspaceRoot)
@@ -276,6 +296,9 @@ func (m *Model) listHeight() int {
 	if len(m.headerChips) > 0 {
 		chrome += 3
 	}
+	if len(m.jobs) > 0 {
+		chrome++
+	}
 	h := m.height - chrome
 	if h < 3 {
 		h = 3
@@ -294,10 +317,10 @@ func (m *Model) footerHints() (actions, nav string) {
 		if item.projectionGroup {
 			actions = "⏎/l:open  h:back  tab:expand"
 		} else {
-			actions = "⏎/l:open  h:back  f:favorite  tab:expand  A:maintenance  S:search"
+			actions = "⏎/l:open  h:back  f:favorite  tab:expand  A:jobs  M:maintenance  S:search"
 		}
 	case KindProject:
-		actions = "⏎/l:open  h:back  w:new  e:edit  f:favorite  A:maintenance  S:search"
+		actions = "⏎/l:open  h:back  w:new  e:edit  f:favorite  A:jobs  M:maintenance  S:search"
 	default:
 		actions = "⏎:open"
 	}
@@ -335,8 +358,8 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	switch msg.String() {
 	case "q":
-		if m.lifecycleJobRunning() {
-			m.statusMsg = "background lifecycle job is still running · A:progress"
+		if m.jobsRunning() {
+			m.statusMsg = "background jobs are still running · A:jobs"
 			return m, nil
 		}
 		return m, tui.Quit
@@ -363,11 +386,10 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.rebuildItems()
 		}
 	case "A":
-		if m.lifecycleJob != nil {
-			m.lifecycle = m.lifecycleJob
-			m.mode = viewLifecycle
-			return m, nil
-		}
+		m.jobsCursor = max(0, len(m.jobs)-1)
+		m.mode = viewJobs
+		return m, nil
+	case "M":
 		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
 		return m, nil
 	case "j", "down":
@@ -415,10 +437,10 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "f":
 
 		if item != nil && item.kind == KindProject && item.project != nil {
-			m.toggleFavoriteFor(item.project)
+			return m, m.toggleFavoriteFor(item.project)
 		}
 		if item != nil && item.kind == KindGroup && item.group != "" && !item.projectionGroup {
-			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
+			return m, m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 
 	case "h", "left":

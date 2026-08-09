@@ -18,7 +18,10 @@ func (s *sheet) pageRows(m *Model) int {
 	if s.filterMode || s.filter.Value() != "" {
 		chrome++
 	}
-	if s.statusMsg != "" || m.lifecycleJobStatus() != "" {
+	if s.statusMsg != "" {
+		chrome++
+	}
+	if len(m.jobs) > 0 {
 		chrome++
 	}
 	return max(1, m.height-chrome)
@@ -51,10 +54,10 @@ func (s *sheet) view(m *Model) string {
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+actions, panelW)),
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+nav, panelW)),
 	}
-	status := s.statusMsg
-	if jobStatus := m.lifecycleJobStatus(); jobStatus != "" {
-		status = jobStatus
+	if strip := m.jobsStrip(); strip != "" {
+		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(strip, panelW))}, bottom...)
 	}
+	status := s.statusMsg
 	if status != "" {
 		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(" "+presentLabel(status), panelW))}, bottom...)
 	}
@@ -187,9 +190,9 @@ func (s *sheet) footerHints() (actions, nav string) {
 		return "type to filter  enter:apply  esc:clear", "text editing keys remain active"
 	}
 	if s.mode == sheetGroup {
-		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:maint  /:filter"
+		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:jobs  M:maint  /:filter"
 	} else {
-		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:maint  /:filter"
+		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:jobs  M:maint  /:filter"
 		if selected := len(s.visualWorktrees()); selected > 0 {
 			actions = fmt.Sprintf("VISUAL %d  a:archive  d:delete  v/esc:cancel", selected)
 			return actions, "j/k:extend  g/G:first/last  ^d/^u:half  ^f/^b:page"

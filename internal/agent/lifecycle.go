@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -215,6 +216,8 @@ func BuildWorktreeArchivePlan(projects []worktreeCandidate, threshold time.Durat
 
 type branchPublication struct{ LocalOID, RemoteOID string }
 
+var errWorktreeUnpublished = errors.New("worktree branch is unpublished")
+
 func refreshWorktreePublication(p *Project, wt *Worktree) (branchPublication, error) {
 	if p == nil || wt == nil || wt.Branch == "" {
 		return branchPublication{}, fmt.Errorf("worktree branch is unavailable")
@@ -222,12 +225,15 @@ func refreshWorktreePublication(p *Project, wt *Worktree) (branchPublication, er
 	bare := layout.BarePath(p.Path)
 	remote, err := git.FetchRemoteBranch(bare, "origin", wt.Branch)
 	if err != nil {
+		if errors.Is(err, git.ErrRemoteRefNotFound) {
+			return branchPublication{}, fmt.Errorf("%w: branch is local-only", errWorktreeUnpublished)
+		}
 		return branchPublication{}, err
 	}
 	local := git.RevParse(bare, "refs/heads/"+wt.Branch)
 	ahead, _, exists := git.AheadBehindRemote(bare, wt.Branch, "origin")
 	if local == "" || !exists || ahead != 0 {
-		return branchPublication{}, fmt.Errorf("branch is local-only or has %d unpushed commit(s)", ahead)
+		return branchPublication{}, fmt.Errorf("%w: branch is local-only or has %d unpushed commit(s)", errWorktreeUnpublished, ahead)
 	}
 	return branchPublication{local, remote}, nil
 }
@@ -253,6 +259,12 @@ type WorktreeArchiveResult struct {
 }
 
 func ArchiveWorktree(p *Project, wt *Worktree, root string, force bool) WorktreeArchiveResult {
+	return archiveWorktree(p, wt, root, force, func(id, branch string) error {
+		return releaseWorktreeOwnership(root, id, branch)
+	})
+}
+
+func archiveWorktree(p *Project, wt *Worktree, root string, force bool, release func(string, string) error) WorktreeArchiveResult {
 	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, p, wt)
 	if err != nil {
 		return WorktreeArchiveResult{Err: err}
@@ -267,7 +279,7 @@ func ArchiveWorktree(p *Project, wt *Worktree, root string, force bool) Worktree
 		return WorktreeArchiveResult{Err: err}
 	}
 	r := WorktreeArchiveResult{CheckoutRemoved: true, ProjectPath: liveProject.Path}
-	r.Err = releaseWorktreeOwnership(root, liveProject.ID, liveWorktree.Branch)
+	r.Err = release(liveProject.ID, liveWorktree.Branch)
 	r.MetadataReleased = r.Err == nil
 	return r
 }
@@ -285,7 +297,15 @@ func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan, progress ...func(workt
 		if len(progress) > 0 {
 			progress[0](c, true, "")
 		}
-		fresh, reason := revalidateWorktreeArchiveCandidate(c, plan.Threshold, time.Now())
+		fresh, reason, err := revalidateWorktreeArchiveCandidate(c, plan.Threshold, time.Now())
+		if err != nil {
+			r.Failed++
+			r.Details = append(r.Details, c.Project.Name+"/"+c.Worktree.Branch+": "+err.Error())
+			if len(progress) > 0 {
+				progress[0](c, false, "failed: "+err.Error())
+			}
+			continue
+		}
 		if reason != "" {
 			r.Skipped++
 			r.Details = append(r.Details, c.Project.Name+"/"+c.Worktree.Branch+": "+reason)
@@ -318,10 +338,10 @@ func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan, progress ...func(workt
 	}
 	return r
 }
-func revalidateWorktreeArchiveCandidate(c worktreeCandidate, threshold time.Duration, now time.Time) (*Worktree, string) {
+func revalidateWorktreeArchiveCandidate(c worktreeCandidate, threshold time.Duration, now time.Time) (*Worktree, string, error) {
 	wts, err := LoadWorktrees(c.Project.Path)
 	if err != nil {
-		return nil, err.Error()
+		return nil, "", err
 	}
 	var fresh *Worktree
 	for i := range wts {
@@ -331,36 +351,39 @@ func revalidateWorktreeArchiveCandidate(c worktreeCandidate, threshold time.Dura
 		}
 	}
 	if fresh == nil {
-		return nil, "worktree is missing"
+		return nil, "worktree is missing", nil
 	}
 	if fresh.Branch != c.Worktree.Branch {
-		return nil, "checkout branch changed after review"
+		return nil, "checkout branch changed after review", nil
 	}
 	if fresh.Dirty {
-		return nil, "worktree became dirty"
+		return nil, "worktree became dirty", nil
 	}
 	ws, err := config.Load(c.WorkspaceRoot)
 	if err != nil {
-		return nil, "registry reload failed: " + err.Error()
+		return nil, "", fmt.Errorf("registry reload failed: %w", err)
 	}
 	p, ok := ws.Projects[c.ProjectID]
 	if !ok {
-		return nil, "project missing"
+		return nil, "project missing", nil
 	}
 	if protectedBranch(&Project{DefaultBranch: p.DefaultBranch}, fresh.Branch) {
-		return nil, "worktree branch is protected"
+		return nil, "worktree branch is protected", nil
 	}
 	recent := fresh.LastActiveAt
 	if a := branchActivity(p.Branches)[fresh.Branch]; a.After(recent) {
 		recent = a
 	}
 	if recent.IsZero() || !recent.Before(now.Add(-threshold)) {
-		return nil, "worktree is now recent"
+		return nil, "worktree is now recent", nil
 	}
 	if _, err := refreshWorktreePublication(c.Project, fresh); err != nil {
-		return nil, err.Error()
+		if errors.Is(err, errWorktreeUnpublished) {
+			return nil, err.Error(), nil
+		}
+		return nil, "", err
 	}
-	return fresh, ""
+	return fresh, "", nil
 }
 
 type WorktreeDeleteResult struct {
@@ -369,6 +392,12 @@ type WorktreeDeleteResult struct {
 }
 
 func DeleteWorktreeDestructive(p *Project, wt *Worktree, root string) WorktreeDeleteResult {
+	return deleteWorktreeDestructive(p, wt, root, func(id, branch string) error {
+		return releaseWorktreeOwnership(root, id, branch)
+	})
+}
+
+func deleteWorktreeDestructive(p *Project, wt *Worktree, root string, release func(string, string) error) WorktreeDeleteResult {
 	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, p, wt)
 	if err != nil {
 		return WorktreeDeleteResult{Message: "Checkout unchanged.", Detail: err.Error()}
@@ -388,7 +417,13 @@ func DeleteWorktreeDestructive(p *Project, wt *Worktree, root string) WorktreeDe
 	result := WorktreeDeleteResult{CheckoutRemoved: true}
 	if git.RevParse(bare, "refs/heads/"+liveWorktree.Branch) != localOID {
 		result.Message = "Checkout removed; local and remote branches remain."
-		result.Detail = "local branch changed after verification"
+		result.Detail = "local branch changed after verification; branches preserved"
+		if err := release(liveProject.ID, liveWorktree.Branch); err != nil {
+			result.Detail += "; ownership metadata remains: " + err.Error()
+		} else {
+			result.MetadataReleased = true
+			result.Detail += "; ownership metadata released"
+		}
 		return result
 	}
 	var details []string
@@ -406,7 +441,7 @@ func DeleteWorktreeDestructive(p *Project, wt *Worktree, root string) WorktreeDe
 	} else {
 		localDeleted = true
 	}
-	if err := releaseWorktreeOwnership(root, liveProject.ID, liveWorktree.Branch); err != nil {
+	if err := release(liveProject.ID, liveWorktree.Branch); err != nil {
 		details = append(details, "ownership metadata remains: "+err.Error())
 	} else {
 		result.MetadataReleased = true
@@ -504,9 +539,6 @@ func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 func (m *Model) closeLifecycle() {
 	parent := m.lifecycle.parentSheet
-	if parent != nil {
-		parent.pendingDel = nil
-	}
 	if m.lifecycleJob == m.lifecycle && m.lifecycle.phase != lifecyclePlanning && m.lifecycle.phase != lifecycleRunning && m.lifecycle.phase != lifecycleRefreshing {
 		m.lifecycleJob = nil
 	}

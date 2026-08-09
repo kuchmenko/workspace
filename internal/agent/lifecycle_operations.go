@@ -72,8 +72,10 @@ func ArchiveProjects(projects []worktreeCandidate, progress ...func(ProjectIdent
 			}
 			p, ok := ws.Projects[id]
 			if !ok {
+				result.Failed++
+				result.Failures = append(result.Failures, id+": project missing")
 				if len(progress) > 0 {
-					progress[0](ProjectIdentity{root, id}, false, "unchanged: project missing")
+					progress[0](ProjectIdentity{root, id}, false, "failed: project missing")
 				}
 				continue
 			}
@@ -109,6 +111,13 @@ func ArchiveProjects(projects []worktreeCandidate, progress ...func(ProjectIdent
 }
 
 func releaseWorktreeOwnership(root, id, branch string) error {
+	return releaseWorktreeOwnershipBatch(root, []ownershipRelease{{id, branch}})
+}
+
+func releaseWorktreeOwnershipBatch(root string, releases []ownershipRelease) error {
+	if len(releases) == 0 {
+		return nil
+	}
 	mc, err := config.LoadMachineConfig()
 	if err != nil {
 		return err
@@ -117,12 +126,18 @@ func releaseWorktreeOwnership(root, id, branch string) error {
 	if err != nil {
 		return err
 	}
-	p, ok := ws.Projects[id]
-	if !ok {
-		return fmt.Errorf("project missing")
+	changed := false
+	for _, release := range releases {
+		p, ok := ws.Projects[release.id]
+		if !ok {
+			return fmt.Errorf("project missing")
+		}
+		if released, _ := p.ReleaseBranch(release.branch, mc.MachineName); released {
+			ws.Projects[release.id] = p
+			changed = true
+		}
 	}
-	if changed, _ := p.ReleaseBranch(branch, mc.MachineName); changed {
-		ws.Projects[id] = p
+	if changed {
 		return config.Save(root, ws)
 	}
 	return nil

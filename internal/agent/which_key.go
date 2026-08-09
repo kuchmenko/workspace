@@ -44,6 +44,8 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"⏎/l", "open sheet"},
 			{"f", m.favoriteToggleLabelGroup(item.workspaceRoot, item.group)},
+			{"A", "jobs"},
+			{"M", "maintenance"},
 			{"tab", "expand"},
 			{"g/G", "first/last"},
 			{"^d/^u", "half-page"},
@@ -55,6 +57,8 @@ func (m *Model) whichKeyActions() []whichKeyAction {
 		return []whichKeyAction{
 			{"⏎/l", "open sheet"},
 			{"f", m.favoriteToggleLabel(item)},
+			{"A", "jobs"},
+			{"M", "maintenance"},
 			{"w", "worktree ›"},
 			{"e", "edit"},
 			{"g/G", "first/last"},
@@ -140,12 +144,15 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 		m.mode = viewList
 		if item != nil && item.kind == KindProject && item.project != nil {
-			m.toggleFavoriteFor(item.project)
+			return m, m.toggleFavoriteFor(item.project)
 		}
 		if item != nil && item.kind == KindGroup && item.group != "" && !item.projectionGroup {
-			m.toggleFavoriteGroup(item.workspaceRoot, item.group)
+			return m, m.toggleFavoriteGroup(item.workspaceRoot, item.group)
 		}
 		return m, nil
+	case "A", "M":
+		m.mode = viewList
+		return m.updateList(msg)
 	case "tab":
 		m.mode = viewList
 		return m.updateList(msg)
@@ -153,85 +160,81 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-func (m *Model) toggleFavoriteGroup(root, group string) {
-	if m.lifecycleJobRunning() {
-		m.statusMsg = "favorite unavailable while lifecycle job runs · A:progress"
-		return
-	}
+func (m *Model) toggleFavoriteGroup(root, group string) tui.Cmd {
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for group"
-		return
+		return nil
 	}
-	current := false
-	for i := range m.workspaces {
-		if m.workspaces[i].Root == root {
-			current = m.workspaces[i].FavoriteGroups[group]
-			break
-		}
-	}
-	target := !current
-	err := MutateAndSave(root, func(ws *config.Workspace) bool {
-		return ws.SetGroupFavorite(group, target)
+	return m.submitJob("favorite @"+group, 1, func(ctx *jobContext) jobResult {
+		var outcome targetOutcome
+		ctx.withRegistry(root, func() {
+			ws, err := config.Load(root)
+			if err != nil {
+				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: err.Error()}
+				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
+				return
+			}
+			current, ok := ws.Groups[group]
+			if !ok {
+				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: "group is not declared in workspace.toml"}
+				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
+				return
+			}
+			current.Favorite = !current.Favorite
+			ws.Groups[group] = current
+			if err := config.Save(root, ws); err != nil {
+				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: err.Error()}
+			} else {
+				outcome = targetOutcome{Target: group, Kind: targetSuccess, Detail: "saved"}
+			}
+			ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{WorkspaceRoot: root}}}, outcome.Kind == targetSuccess)
+		})
+		metrics.RecordExplorerFavoriteChanged()
+		return jobResult{Summary: "favorite updated", Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{WorkspaceRoot: root}}}
 	})
-	if err != nil {
-		m.statusMsg = "favorite: " + err.Error()
-		return
-	}
-	for i := range m.workspaces {
-		if m.workspaces[i].Root != root {
-			continue
-		}
-		if m.workspaces[i].FavoriteGroups == nil {
-			m.workspaces[i].FavoriteGroups = map[string]bool{}
-		}
-		if target {
-			m.workspaces[i].FavoriteGroups[group] = true
-			m.statusMsg = "* favorited @" + group
-		} else {
-			delete(m.workspaces[i].FavoriteGroups, group)
-			m.statusMsg = "unfavorited @" + group
-		}
-		break
-	}
-	m.rebuildItems()
-	m.clampCursor()
-	m.ensureVisible()
-	metrics.RecordExplorerFavoriteChanged()
 }
 
-func (m *Model) toggleFavoriteFor(proj *Project) {
-	if m.lifecycleJobRunning() {
-		m.statusMsg = "favorite unavailable while lifecycle job runs · A:progress"
-		return
-	}
+func (m *Model) toggleFavoriteFor(proj *Project) tui.Cmd {
 	root := m.workspaceRootFor(proj)
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for project"
-		return
+		return nil
 	}
-	target := !proj.Favorite
-	err := MutateAndSave(root, func(ws *config.Workspace) bool {
-		p := ws.Projects[proj.ID]
-		if !p.SetFavorite(target) {
-			return false
-		}
-		ws.Projects[proj.ID] = p
-		return true
+	projectID, name := proj.ID, proj.Name
+	return m.submitJob("favorite "+name, 1, func(ctx *jobContext) jobResult {
+		var outcome targetOutcome
+		ctx.withRegistry(root, func() {
+			ws, err := config.Load(root)
+			if err != nil {
+				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
+				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
+				return
+			}
+			p := ws.Projects[projectID]
+			if _, ok := ws.Projects[projectID]; !ok {
+				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: "project is missing from workspace.toml"}
+				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
+				return
+			}
+			p.SetFavorite(!p.Favorite)
+			ws.Projects[projectID] = p
+			if err := config.Save(root, ws); err != nil {
+				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
+			} else {
+				outcome = targetOutcome{Target: name, Kind: targetSuccess, Detail: "saved"}
+			}
+			ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{root, projectID}}}, outcome.Kind == targetSuccess)
+		})
+		metrics.RecordExplorerFavoriteChanged()
+		return jobResult{Summary: "favorite updated", Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{root, projectID}}}
 	})
-	if err != nil {
-		m.statusMsg = "favorite: " + err.Error()
-		return
+}
+
+func outcomeError(outcome targetOutcome) string {
+	if outcome.Kind == targetFailed || outcome.Kind == targetPartial {
+		return outcome.Detail
 	}
-	proj.Favorite = target
-	if target {
-		m.statusMsg = "* favorited " + proj.Name
-	} else {
-		m.statusMsg = "unfavorited " + proj.Name
-	}
-	m.rebuildItems()
-	m.clampCursor()
-	m.ensureVisible()
-	metrics.RecordExplorerFavoriteChanged()
+	return ""
 }
 
 func (m *Model) whichKeyTitle() string {

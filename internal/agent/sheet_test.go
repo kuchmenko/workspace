@@ -250,7 +250,7 @@ func TestProjectSheetFooterAlwaysShowsLifecycleAndProjectActions(t *testing.T) {
 		}
 	}
 	actions, nav := s.footerHints()
-	for _, hint := range []string{"a:archive", "d:delete", "A:maint", "w:new", "e:edit", "f:fav", "/:filter"} {
+	for _, hint := range []string{"a:archive", "d:delete", "A:jobs", "M:maint", "w:new", "e:edit", "f:fav", "/:filter"} {
 		if !strings.Contains(actions, hint) {
 			t.Errorf("actions missing %q: %q", hint, actions)
 		}
@@ -269,14 +269,14 @@ func TestSheetUppercaseAOpensScopedMaintenance(t *testing.T) {
 	m := newTestModel(p, nil)
 
 	projectSheet := newProjectSheet(m, p, nil)
-	projectSheet.update(m, rune1('A'))
+	projectSheet.update(m, rune1('M'))
 	if m.lifecycle == nil || m.lifecycle.scope.kind != lifecycleProject || m.lifecycle.scope.project != p || m.lifecycle.action != lifecycleChoose {
 		t.Fatalf("project maintenance = %#v", m.lifecycle)
 	}
 
 	m.lifecycle, m.mode = nil, viewList
 	groupSheet := newGroupSheet(m, "/ws", "org")
-	groupSheet.update(m, rune1('A'))
+	groupSheet.update(m, rune1('M'))
 	if m.lifecycle == nil || m.lifecycle.scope.kind != lifecycleGroup || m.lifecycle.scope.workspaceRoot != "/ws" || m.lifecycle.scope.group != "org" {
 		t.Fatalf("group maintenance = %#v", m.lifecycle)
 	}
@@ -324,13 +324,8 @@ func TestSheet_WtDeleteRequiresConfirm(t *testing.T) {
 	s.cursor = wtVisIdx
 
 	s.update(m, rune1('d'))
-	if s.pendingDel == nil {
-		t.Fatalf("expected pending delete after 'd'")
-	}
-	// Cancel: any non-y key clears.
-	s.update(m, rune1('n'))
-	if s.pendingDel != nil {
-		t.Errorf("non-y should cancel pending delete")
+	if m.mode != viewLifecycle || m.lifecycle == nil || m.lifecycle.action != lifecycleDeleteWorktree {
+		t.Fatalf("delete did not open lifecycle confirmation: mode=%v lifecycle=%#v", m.mode, m.lifecycle)
 	}
 }
 

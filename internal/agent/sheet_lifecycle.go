@@ -3,17 +3,11 @@ package agent
 import "github.com/kuchmenko/workspace/internal/tui"
 
 func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
-	if m.lifecycleJob != nil {
-		if key == "A" {
-			m.lifecycle = m.lifecycleJob
-			m.mode = viewLifecycle
-			m.sheet = nil
-			return true, m, nil
-		}
-		if key == "a" || key == "d" {
-			s.statusMsg = "background lifecycle job already exists · A:progress"
-			return true, m, nil
-		}
+	if key == "A" {
+		m.jobsCursor = max(0, len(m.jobs)-1)
+		m.mode = viewJobs
+		m.jobsReturnSheet = s
+		return true, m, nil
 	}
 	switch key {
 	case "a":
@@ -44,7 +38,7 @@ func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.C
 		m.lifecycle.parentSheet = s
 		m.prepareLifecycle()
 		return true, m, nil
-	case "A":
+	case "M":
 		m.sheet = nil
 		if s.mode == sheetProject {
 			m.openLifecycle(lifecycleScope{kind: lifecycleProject, project: s.target})
@@ -62,7 +56,6 @@ func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.C
 			return true, m, nil
 		}
 		if row := s.focused(); row != nil && row.kind == rowWorktree && !row.wt.IsMain {
-			s.pendingDel = row.wt
 			m.sheet = nil
 			m.openWorktreeDelete(s.target, row.wt)
 			m.lifecycle.parentSheet = s

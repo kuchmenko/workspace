@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -128,19 +130,11 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 		t.Fatal("n did not cancel delete confirmation")
 	}
 	m.openWorktreeDelete(project, worktree)
-	lm := m.lifecycle
 	_, cmd := m.updateLifecycle(enter())
-	if cmd == nil || m.lifecycle != nil || m.lifecycleJob != lm || lm.phase != lifecycleRunning {
-		t.Fatalf("enter did not detach background delete: active %#v job %#v phase %v cmd %v", m.lifecycle, m.lifecycleJob, lm.phase, cmd)
+	if cmd == nil || m.lifecycle != nil || len(m.jobs) != 1 {
+		t.Fatalf("enter did not submit background delete: active %#v jobs %d cmd %v", m.lifecycle, len(m.jobs), cmd)
 	}
-	result := runLifecycle(lm, nil, nil, func(string, string, bool) {})
-	_, refresh := m.finishLifecycleJob(lifecycleDoneMsg{job: lm, result: result})
-	if refresh != nil {
-		m.Update(refresh())
-	}
-	if lm.phase != lifecycleResult || !strings.Contains(lm.message, "Deleted checkout") {
-		t.Fatalf("enter did not execute delete: phase %v message %q error %q", lm.phase, lm.message, lm.errorText)
-	}
+	runExplorerJob(t, m, cmd)
 	if _, err := os.Stat(worktree.Path); !os.IsNotExist(err) {
 		t.Fatalf("confirmed dirty checkout still exists: %v", err)
 	}
@@ -184,22 +178,115 @@ func TestDeleteDoesNotBlockAheadOrLocalOnlyWorktrees(t *testing.T) {
 	}
 }
 
+func TestDeleteReleasesOwnershipWhenLocalRefChangesAfterCheckoutRemoval(t *testing.T) {
+	root, project, worktree, bare := lifecycleGitFixture(t)
+	if err := os.WriteFile(filepath.Join(project.Path, "new-main.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.RunGit(t, project.Path, "add", "new-main.txt")
+	testutil.RunGit(t, project.Path, "commit", "-m", "new main")
+	changedOID := testutil.RunGit(t, bare, "rev-parse", "main")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	wrapper := filepath.Join(binDir, "git")
+	script := fmt.Sprintf("#!/bin/sh\n%s \"$@\"\nstatus=$?\ncase \" $* \" in *\" worktree remove \"*) if [ $status -eq 0 ]; then %s -C %s update-ref refs/heads/feat/lifecycle %s; fi;; esac\nexit $status\n", realGit, realGit, bare, changedOID)
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	released := false
+	result := deleteWorktreeDestructive(project, worktree, root, func(id, branch string) error {
+		released = id == project.ID && branch == worktree.Branch
+		return nil
+	})
+	if !released || !result.CheckoutRemoved || !result.MetadataReleased || result.BranchesDeleted {
+		t.Fatalf("result = %+v, released = %t", result, released)
+	}
+	if !strings.Contains(result.Message, "branches remain") || !strings.Contains(result.Detail, "branches preserved") || !strings.Contains(result.Detail, "ownership metadata released") {
+		t.Fatalf("result text = %+v", result)
+	}
+	if !gitRefExists(t, bare, "refs/heads/feat/lifecycle") || !gitRefExists(t, bare, "refs/remotes/origin/feat/lifecycle") {
+		t.Fatal("branches were not preserved")
+	}
+}
+
 func TestBulkArchiveRejectsCheckoutBranchChangeAfterReview(t *testing.T) {
 	root, project, worktree, _ := lifecycleGitFixture(t)
 	reviewed := *worktree
 	testutil.RunGit(t, worktree.Path, "checkout", "-b", "feat/changed")
 
-	_, reason := revalidateWorktreeArchiveCandidate(worktreeCandidate{
+	_, reason, err := revalidateWorktreeArchiveCandidate(worktreeCandidate{
 		WorkspaceRoot: root,
 		ProjectID:     project.ID,
 		Project:       project,
 		Worktree:      reviewed,
 	}, -time.Hour, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(reason, "branch changed") {
 		t.Fatalf("revalidation reason = %q", reason)
 	}
 	if _, err := os.Stat(worktree.Path); err != nil {
 		t.Fatalf("checkout was mutated: %v", err)
+	}
+}
+
+func TestWorktreeArchiveRevalidationClassifiesUnpublishedAsSkipped(t *testing.T) {
+	root, project, worktree, _ := lifecycleGitFixture(t)
+	testutil.RunGit(t, worktree.Path, "push", "origin", "--delete", worktree.Branch)
+	result := ExecuteWorktreeArchivePlan(WorktreeArchivePlan{
+		Threshold: -time.Hour,
+		Eligible:  []worktreeCandidate{{WorkspaceRoot: root, ProjectID: project.ID, Project: project, Worktree: *worktree}},
+	})
+	if result.Skipped != 1 || result.Failed != 0 || !strings.Contains(strings.Join(result.Details, " "), "local-only") {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestWorktreeArchiveRevalidationClassifiesOperationalFailures(t *testing.T) {
+	root, project, worktree, bare := lifecycleGitFixture(t)
+	t.Run("registry", func(t *testing.T) {
+		candidate := worktreeCandidate{WorkspaceRoot: filepath.Join(root, "missing"), ProjectID: project.ID, Project: project, Worktree: *worktree}
+		result := ExecuteWorktreeArchivePlan(WorktreeArchivePlan{Threshold: -time.Hour, Eligible: []worktreeCandidate{candidate}})
+		if result.Failed != 1 || result.Skipped != 0 || !strings.Contains(strings.Join(result.Details, " "), "registry reload failed") {
+			t.Fatalf("result = %+v", result)
+		}
+	})
+	t.Run("transport", func(t *testing.T) {
+		testutil.RunGit(t, bare, "remote", "set-url", "origin", filepath.Join(root, "unreachable.git"))
+		candidate := worktreeCandidate{WorkspaceRoot: root, ProjectID: project.ID, Project: project, Worktree: *worktree}
+		result := ExecuteWorktreeArchivePlan(WorktreeArchivePlan{Threshold: -time.Hour, Eligible: []worktreeCandidate{candidate}})
+		if result.Failed != 1 || result.Skipped != 0 {
+			t.Fatalf("result = %+v", result)
+		}
+	})
+}
+
+func TestAlreadyArchivedProjectOutcomeIsSkipped(t *testing.T) {
+	kind, detail := lifecycleTargetOutcome(lifecycleArchiveProjects, lifecycleRunResult{})
+	if kind != targetSkipped || !strings.Contains(detail, "already archived") {
+		t.Fatalf("outcome = %s %q", kind, detail)
+	}
+}
+
+func TestAsyncArchiveOldPreservesRevalidationClassification(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		kind targetOutcomeKind
+	}{
+		{name: "skip", kind: targetSkipped},
+		{name: "failure", kind: targetFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			kind, _ := lifecycleTargetOutcome(lifecycleArchiveOldWorktrees, lifecycleRunResult{errorText: test.name, targetKind: test.kind})
+			if kind != test.kind {
+				t.Fatalf("outcome = %s, want %s", kind, test.kind)
+			}
+		})
 	}
 }
 
@@ -260,26 +347,12 @@ func TestLifecycleUsesFullScreenFrameAndPersistentHints(t *testing.T) {
 }
 
 func TestLifecycleJobDetachesAndReopensWithProgress(t *testing.T) {
-	lm := &lifecycleModel{
-		action:    lifecycleArchiveWorktree,
-		phase:     lifecycleRunning,
-		total:     3,
-		startedAt: time.Now(),
-		messages:  make(chan tui.Msg, 1),
-	}
-	m := &Model{lifecycle: lm, lifecycleJob: lm, mode: viewLifecycle, width: 90, height: 18}
-
-	m.updateLifecycle(esc())
-	if m.lifecycle != nil || m.lifecycleJob != lm || m.mode != viewList {
-		t.Fatalf("detached lifecycle = active %#v job %#v mode %v", m.lifecycle, m.lifecycleJob, m.mode)
-	}
-	m.updateLifecycleProgress(lifecycleProgressMsg{job: lm, label: "feat/one", detail: "archived"})
-	if lm.completed != 1 || !strings.Contains(m.lifecycleJobStatus(), "1/3") {
-		t.Fatalf("detached progress = completed %d status %q", lm.completed, m.lifecycleJobStatus())
-	}
+	m := NewModel(nil)
+	m.width, m.height = 90, 18
+	m.submitJob("archive", 3, func(*jobContext) jobResult { return jobResult{} })
 	m.updateList(rune1('A'))
-	if m.lifecycle != lm || m.mode != viewLifecycle {
-		t.Fatalf("reopened lifecycle = active %#v mode %v", m.lifecycle, m.mode)
+	if m.mode != viewJobs {
+		t.Fatalf("A opened mode %v", m.mode)
 	}
 }
 
@@ -296,8 +369,26 @@ func TestLifecycleConfirmationReturnsToOriginSheet(t *testing.T) {
 	m := &Model{lifecycle: lm, mode: viewLifecycle, wtCache: NewWorktreeCache()}
 
 	_, cmd := m.updateLifecycle(enter())
-	if cmd == nil || m.lifecycle != nil || m.sheet != parent || m.mode != viewList || m.lifecycleJob != lm {
-		t.Fatalf("confirmation did not return to sheet: active %#v sheet %#v mode %v job %#v", m.lifecycle, m.sheet, m.mode, m.lifecycleJob)
+	if cmd == nil || m.lifecycle != nil || m.sheet != parent || m.mode != viewList || len(m.jobs) != 1 {
+		t.Fatalf("confirmation did not return to sheet: active %#v sheet %#v mode %v jobs %d", m.lifecycle, m.sheet, m.mode, len(m.jobs))
+	}
+}
+
+func TestLifecycleDeleteConfirmationSubmitsOnce(t *testing.T) {
+	project := &Project{ID: "project", WorkspaceRoot: "/ws", Path: "/ws/project"}
+	worktree := &Worktree{Path: "/ws/project-feature", Branch: "feat/delete"}
+	m := &Model{mode: viewLifecycle, lifecycle: &lifecycleModel{
+		scope:  lifecycleScope{kind: lifecycleWorktree, project: project, worktree: worktree, worktrees: []*Worktree{worktree}},
+		action: lifecycleDeleteWorktree,
+		phase:  lifecycleReview,
+	}, wtCache: NewWorktreeCache()}
+	_, cmd := m.updateLifecycle(enter())
+	if cmd == nil || len(m.jobs) != 1 || m.lifecycle != nil {
+		t.Fatalf("delete submission = cmd %v jobs %d lifecycle %#v", cmd, len(m.jobs), m.lifecycle)
+	}
+	m.Update(enter())
+	if len(m.jobs) != 1 || m.mode == viewLifecycle {
+		t.Fatalf("delete requested a second confirmation: jobs %d mode %v", len(m.jobs), m.mode)
 	}
 }
 
@@ -351,13 +442,10 @@ func TestArchiveProjectsReportsEveryTargetProgress(t *testing.T) {
 }
 
 func TestLifecycleJobBlocksForegroundRegistryMutation(t *testing.T) {
-	lm := &lifecycleModel{phase: lifecycleRunning}
-	project := &Project{Favorite: false}
-	m := &Model{lifecycleJob: lm}
-
-	m.toggleFavoriteFor(project)
-	if project.Favorite || !strings.Contains(m.statusMsg, "unavailable") {
-		t.Fatalf("favorite during lifecycle = favorite %v status %q", project.Favorite, m.statusMsg)
+	m := NewModel(nil)
+	m.submitJob("lifecycle", 1, func(*jobContext) jobResult { return jobResult{} })
+	if cmd := m.toggleFavoriteFor(&Project{}); cmd != nil {
+		t.Fatal("unresolvable favorite submitted")
 	}
 }
 

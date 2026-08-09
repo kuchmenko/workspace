@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -50,7 +48,6 @@ type sheet struct {
 	visual        bool
 	visualAnchor  int
 	parent        *sheet
-	pendingDel    *Worktree
 	statusMsg     string
 }
 
@@ -210,16 +207,6 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	key := msg.String()
 
-	// Pending wt delete confirmation lives inside the sheet.
-	if s.pendingDel != nil {
-		s.statusMsg = ""
-		wt := s.pendingDel
-		s.pendingDel = nil
-		if key == "y" {
-			return s.dispatchWtDelete(m, wt)
-		}
-		return m, nil
-	}
 	if s.visual {
 		switch key {
 		case "v", "esc":
@@ -260,6 +247,10 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case "h", "left":
 		return s.close(m)
 	case "ctrl+c", "ctrl+q":
+		if m.jobsRunning() {
+			m.statusMsg = "background jobs are still running · A:jobs"
+			return m, nil
+		}
 		return m, tui.Quit
 	case "j", "down":
 		s.moveCursor(+1)
@@ -428,9 +419,9 @@ func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd
 		}
 	case "f":
 		if s.target != nil {
-			m.toggleFavoriteFor(s.target)
+			return true, m, m.toggleFavoriteFor(s.target)
 		} else if s.group != "" {
-			m.toggleFavoriteGroup(s.workspaceRoot, s.group)
+			return true, m, m.toggleFavoriteGroup(s.workspaceRoot, s.group)
 		}
 		s.rebuild(m)
 		return true, m, nil
@@ -445,13 +436,6 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 	switch key {
 	case "enter", "c", "s", "l":
 		return m.launch(m.workspaceRootFor(s.target), wt.Path)
-	case "d":
-		if wt.IsMain {
-			return m, nil
-		}
-		s.pendingDel = wt
-		s.statusMsg = fmt.Sprintf("delete %s? y to confirm", worktreeDisplayName(*wt))
-		return m, nil
 	}
 	return m, nil
 }
@@ -470,40 +454,4 @@ func (s *sheet) workspaceRootForTarget() string {
 		return s.target.WorkspaceRoot
 	}
 	return ""
-}
-
-func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
-	p := s.target
-	projID := ""
-	if p != nil {
-		projID = p.ID
-	}
-	wsRoot := m.workspaceRootFor(p)
-	machine, err := explorerMachineName()
-	result := repo.WorktreeRemoveResult{}
-	if err == nil {
-		result, err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
-	}
-	metadataRefreshError := ""
-	if result.Removed || result.MetadataReleased {
-		m.wtCache.Invalidate(p.Path)
-		if refreshErr := m.reloadProjectMetadata(wsRoot, projID); refreshErr != nil {
-			metadataRefreshError = refreshErr.Error()
-		}
-		s.rebuild(m)
-		m.rebuildItems()
-	}
-	if err != nil {
-		s.statusMsg = err.Error()
-		return m, nil
-	}
-	if result.Removed {
-		s.statusMsg = "worktree deleted"
-	} else if result.MetadataReleased {
-		s.statusMsg = "worktree ownership released"
-	}
-	if metadataRefreshError != "" {
-		s.statusMsg += "; metadata refresh failed: " + metadataRefreshError
-	}
-	return m, nil
 }

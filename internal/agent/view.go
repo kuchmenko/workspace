@@ -160,11 +160,11 @@ func (m *Model) viewList() string {
 	}
 
 	rows = append(rows, m.renderListRows(listW, false)...)
+	if strip := m.jobsStrip(); strip != "" && !inFlash {
+		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(strip, listW)))
+	}
 
 	status := m.statusMsg
-	if jobStatus := m.lifecycleJobStatus(); jobStatus != "" {
-		status = jobStatus
-	}
 	if status != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(status), listW)))
 	} else if inFlash {

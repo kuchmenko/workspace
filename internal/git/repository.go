@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 )
+
+var ErrRemoteRefNotFound = errors.New("remote ref not found")
 
 const standardFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
 
@@ -31,6 +34,9 @@ func FetchRefspec(repoPath, source, refspec string) error {
 	cmd := exec.Command("git", "-C", repoPath, "fetch", source, refspec)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(string(out), "couldn't find remote ref") {
+			return fmt.Errorf("%w: %s", ErrRemoteRefNotFound, strings.TrimSpace(RedactDiagnostic(string(out), source)))
+		}
 		return fmt.Errorf("git fetch %s %s in %s: %s", RedactRemote(source), refspec, repoPath, strings.TrimSpace(RedactDiagnostic(string(out), source)))
 	}
 	return nil
