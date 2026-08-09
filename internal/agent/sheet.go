@@ -47,6 +47,8 @@ type sheet struct {
 	cursor        int
 	filter        tui.TextInput
 	filterMode    bool
+	visual        bool
+	visualAnchor  int
 	parent        *sheet
 	pendingDel    *Worktree
 	statusMsg     string
@@ -218,15 +220,44 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		}
 		return m, nil
 	}
+	if s.visual {
+		switch key {
+		case "v", "esc":
+			s.clearVisual()
+			return m, nil
+		case "a", "d":
+			if len(s.visualWorktrees()) == 0 {
+				s.clearVisual()
+				s.statusMsg = "no worktrees selected"
+				return m, nil
+			}
+		case "j", "down", "k", "up", "g", "home", "G", "end", "ctrl+d", "ctrl+u", "ctrl+f", "pgdn", "ctrl+b", "pgup", "ctrl+c", "ctrl+q":
+		default:
+			return m, nil
+		}
+	}
 	if handled, model, cmd := s.updateLifecycleKey(m, key); handled {
 		return model, cmd
 	}
 	if handled, model, cmd := s.updateContextKey(m, key); handled {
 		return model, cmd
 	}
+	if key == "v" && s.mode == sheetProject {
+		if row := s.focused(); row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			s.visual = true
+			s.visualAnchor = s.cursor
+		}
+		return m, nil
+	}
 
 	switch key {
-	case "esc", "h", "left":
+	case "esc":
+		if s.visual {
+			s.clearVisual()
+			return m, nil
+		}
+		return s.close(m)
+	case "h", "left":
 		return s.close(m)
 	case "ctrl+c", "ctrl+q":
 		return m, tui.Quit
@@ -320,6 +351,29 @@ func (s *sheet) moveCursor(delta int) {
 		}
 		s.cursor = next
 	}
+}
+
+func (s *sheet) clearVisual() {
+	s.visual = false
+	s.visualAnchor = 0
+}
+
+func (s *sheet) visualWorktrees() []*Worktree {
+	if !s.visual || s.mode != sheetProject {
+		return nil
+	}
+	start, end := s.visualAnchor, s.cursor
+	if start > end {
+		start, end = end, start
+	}
+	worktrees := make([]*Worktree, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		row := s.rowAt(i)
+		if row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			worktrees = append(worktrees, row.wt)
+		}
+	}
+	return worktrees
 }
 
 func abs(n int) int {

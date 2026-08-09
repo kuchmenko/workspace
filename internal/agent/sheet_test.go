@@ -335,6 +335,88 @@ func TestSheet_WtDeleteRequiresConfirm(t *testing.T) {
 	}
 }
 
+func TestSheetVisualSelectsWorktreeRangeForBulkDelete(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	wts := []Worktree{
+		{Path: "/ws/alpha", IsMain: true},
+		{Path: "/ws/alpha-wt-one", Branch: "wt/one"},
+		{Path: "/ws/alpha-wt-two", Branch: "wt/two"},
+		{Path: "/ws/alpha-wt-three", Branch: "wt/three"},
+	}
+	m := newTestModel(p, wts)
+	s := newProjectSheet(m, p, nil)
+	m.sheet = s
+
+	for i := range s.visible {
+		row := s.rowAt(i)
+		if row != nil && row.wt != nil && row.wt.Branch == "wt/one" {
+			s.cursor = i
+			break
+		}
+	}
+	s.update(m, rune1('v'))
+	s.update(m, rune1('/'))
+	if s.filterMode {
+		t.Fatal("filter opened during visual selection")
+	}
+	s.update(m, rune1('j'))
+	s.update(m, rune1('d'))
+
+	if m.lifecycle == nil || m.lifecycle.phase != lifecycleReview || m.lifecycle.action != lifecycleDeleteWorktree {
+		t.Fatalf("bulk delete lifecycle = %#v", m.lifecycle)
+	}
+	if got := len(m.lifecycle.scope.worktrees); got != 2 {
+		t.Fatalf("selected worktrees = %d, want 2", got)
+	}
+	if !strings.Contains(m.lifecycle.message, "Delete 2 checkouts") {
+		t.Fatalf("review message = %q", m.lifecycle.message)
+	}
+	body := strings.Join(m.lifecycleBody(), "\n")
+	for _, wt := range m.lifecycle.scope.worktrees {
+		if !strings.Contains(body, worktreeDisplayName(*wt)) {
+			t.Fatalf("review omitted %q: %q", worktreeDisplayName(*wt), body)
+		}
+	}
+}
+
+func TestSheetVisualEscapeCancelsSelectionBeforeClosing(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	m := newTestModel(p, []Worktree{{Path: "/ws/alpha-wt-one", Branch: "wt/one"}})
+	s := newProjectSheet(m, p, nil)
+	m.sheet = s
+
+	s.update(m, rune1('v'))
+	s.update(m, esc())
+
+	if s.visual {
+		t.Fatal("visual selection remained active")
+	}
+	if m.sheet != s {
+		t.Fatal("escape closed sheet instead of visual selection")
+	}
+}
+
+func TestLifecycleBulkReviewScrollsToLastSelectedWorktree(t *testing.T) {
+	worktrees := make([]*Worktree, 12)
+	for i := range worktrees {
+		worktrees[i] = &Worktree{Path: fmt.Sprintf("/ws/alpha-wt-%02d", i), Branch: fmt.Sprintf("wt/%02d", i)}
+	}
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	m := newTestModel(p, nil)
+	m.width, m.height = 100, 10
+	m.openWorktreeDeleteMany(p, worktrees)
+
+	initial := m.viewLifecycle()
+	if strings.Contains(initial, "wt/11") {
+		t.Fatal("last worktree unexpectedly visible before scrolling")
+	}
+	m.updateLifecycle(rune1('G'))
+	scrolled := m.viewLifecycle()
+	if !strings.Contains(scrolled, "wt/11") {
+		t.Fatalf("last worktree not reachable after G: %q", scrolled)
+	}
+}
+
 func filterByKind(rows []sheetRow, k sheetRowKind) []sheetRow {
 	var out []sheetRow
 	for _, r := range rows {

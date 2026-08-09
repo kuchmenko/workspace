@@ -73,9 +73,9 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 			root, project, worktree, bare := lifecycleGitFixture(t)
 			testutil.AddDirty(t, worktree.Path)
 			if destructive {
-				message, detail := DeleteWorktreeDestructive(project, worktree, root)
-				if detail != "" || !strings.Contains(message, "Deleted checkout") {
-					t.Fatalf("delete = %q, %q", message, detail)
+				result := DeleteWorktreeDestructive(project, worktree, root)
+				if result.Detail != "" || !strings.Contains(result.Message, "Deleted checkout") {
+					t.Fatalf("delete = %+v", result)
 				}
 				if gitRefExists(t, bare, "refs/heads/feat/lifecycle") || gitRefExists(t, bare, "refs/remotes/origin/feat/lifecycle") {
 					t.Fatal("destructive delete preserved a branch")
@@ -128,9 +128,9 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 		t.Fatal("n did not cancel delete confirmation")
 	}
 	m.openWorktreeDelete(project, worktree)
-	m.updateLifecycle(rune1('y'))
+	m.updateLifecycle(enter())
 	if m.lifecycle.phase != lifecycleResult || !strings.Contains(m.lifecycle.message, "Deleted checkout") {
-		t.Fatalf("y did not execute delete: phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
+		t.Fatalf("enter did not execute delete: phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
 	}
 	if _, err := os.Stat(worktree.Path); !os.IsNotExist(err) {
 		t.Fatalf("confirmed dirty checkout still exists: %v", err)
@@ -164,9 +164,9 @@ func TestDeleteDoesNotBlockAheadOrLocalOnlyWorktrees(t *testing.T) {
 				testutil.RunGit(t, worktree.Path, "push", "origin", "--delete", worktree.Branch)
 			}
 
-			message, detail := DeleteWorktreeDestructive(project, worktree, root)
-			if detail != "" || !strings.Contains(message, "Deleted checkout") {
-				t.Fatalf("delete %s = %q, %q", state, message, detail)
+			result := DeleteWorktreeDestructive(project, worktree, root)
+			if result.Detail != "" || !strings.Contains(result.Message, "Deleted checkout") {
+				t.Fatalf("delete %s = %+v", state, result)
 			}
 			if gitRefExists(t, bare, "refs/heads/"+worktree.Branch) {
 				t.Fatalf("delete %s preserved local branch", state)

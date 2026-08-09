@@ -90,6 +90,14 @@ func (s *sheet) renderRow(visIdx, width int) string {
 	}
 
 	selected := visIdx == s.cursor
+	visual := false
+	if s.visual {
+		start, end := s.visualAnchor, s.cursor
+		if start > end {
+			start, end = end, start
+		}
+		visual = visIdx >= start && visIdx <= end && r.kind == rowWorktree && r.wt != nil && !r.wt.IsMain
+	}
 	contentWidth := width
 	if selected {
 		contentWidth--
@@ -103,6 +111,9 @@ func (s *sheet) renderRow(visIdx, width int) string {
 	if selected {
 		bar := accentBarStyle.Render("▌")
 		return bar + selectedStyle.Width(contentWidth).Render(line)
+	}
+	if visual {
+		return " " + selectedStyle.Width(width-1).Render(tui.Truncate(line, width-1))
 	}
 	return itemStyle.Width(width).Render(line)
 }
@@ -175,8 +186,12 @@ func (s *sheet) footerHints() (actions, nav string) {
 		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:maint  /:filter"
 	} else {
 		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:maint  /:filter"
+		if selected := len(s.visualWorktrees()); selected > 0 {
+			actions = fmt.Sprintf("VISUAL %d  a:archive  d:delete  v/esc:cancel", selected)
+			return actions, "j/k:extend  g/G:first/last  ^d/^u:half  ^f/^b:page"
+		}
 		if row := s.focused(); row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
-			actions = "⏎/l:open  a:archive  d:delete  " + actions[len("⏎/l:open  "):]
+			actions = "⏎/l:open  v:select  a:archive  d:delete  " + actions[len("⏎/l:open  "):]
 		}
 	}
 	return actions, "j/k:move  g/G:first/last  ^d/^u:half  ^f/^b:page  h:back  S:global"

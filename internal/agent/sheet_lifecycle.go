@@ -5,6 +5,13 @@ import "github.com/kuchmenko/workspace/internal/tui"
 func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
 	switch key {
 	case "a":
+		if worktrees := s.visualWorktrees(); len(worktrees) > 0 {
+			s.clearVisual()
+			m.sheet = nil
+			m.openWorktreeArchiveMany(s.target, worktrees)
+			m.lifecycle.parentSheet = s
+			return true, m, nil
+		}
 		if row := s.focused(); row != nil && row.kind == rowWorktree && !row.wt.IsMain {
 			m.sheet = nil
 			m.openWorktreeArchive(s.target, row.wt)
@@ -35,6 +42,13 @@ func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.C
 		m.lifecycle.parentSheet = s
 		return true, m, nil
 	case "d":
+		if worktrees := s.visualWorktrees(); len(worktrees) > 0 {
+			s.clearVisual()
+			m.sheet = nil
+			m.openWorktreeDeleteMany(s.target, worktrees)
+			m.lifecycle.parentSheet = s
+			return true, m, nil
+		}
 		if row := s.focused(); row != nil && row.kind == rowWorktree && !row.wt.IsMain {
 			s.pendingDel = row.wt
 			m.sheet = nil

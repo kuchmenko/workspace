@@ -26,12 +26,13 @@ func (m *Model) viewLifecycle() string {
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+actions, panelW)),
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+nav, panelW)),
 	}
-	bodyRows := max(0, m.height-len(top)-len(bottom))
+	bodyRows := m.lifecycleBodyRows()
+	start := min(m.lifecycle.scroll, max(0, len(body)-bodyRows))
 	rows := append([]string(nil), top...)
 	for i := 0; i < bodyRows; i++ {
 		line := ""
-		if i < len(body) {
-			line = body[i]
+		if start+i < len(body) {
+			line = body[start+i]
 		}
 		style := itemStyle
 		if strings.HasPrefix(line, "Error: ") {
@@ -41,6 +42,16 @@ func (m *Model) viewLifecycle() string {
 	}
 	rows = append(rows, bottom...)
 	return tui.Place(m.width, m.height, tui.Center, tui.Center, tui.JoinVertical(tui.Left, rows...))
+}
+
+func (m *Model) lifecycleBodyRows() int {
+	panelW := explorerPanelWidth(m.width)
+	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
+	topRows := len(styleHeaderLines(chipLines)) + 2
+	if len(chipLines) > 0 {
+		topRows++
+	}
+	return max(0, m.height-topRows-2)
 }
 
 func (m *Model) lifecycleBody() []string {
@@ -53,11 +64,25 @@ func (m *Model) lifecycleBody() []string {
 		lines = append(lines, "", "Age threshold (h/d/w/month)", lm.input+"█")
 	case lifecycleReview:
 		lines = append(lines, "", lm.message)
+		if lm.scope.kind == lifecycleWorktree && len(lm.scope.worktrees) > 1 {
+			lines = append(lines, "")
+			for _, wt := range lm.scope.worktrees {
+				state := ""
+				if worktreeDirty(wt) {
+					state = " · dirty"
+				}
+				lines = append(lines, "• "+worktreeDisplayName(*wt)+state)
+			}
+		}
 		if lm.action == lifecycleArchiveOldWorktrees {
 			lines = append(lines, fmt.Sprintf("eligible %d · recent %d · main %d · dirty %d · protected %d · unpushed %d", len(lm.plan.Eligible), lm.plan.Recent, lm.plan.Main, lm.plan.Dirty, lm.plan.Protected, lm.plan.Unpushed))
 		}
 	case lifecycleResult:
 		lines = append(lines, "", lm.message)
+		if len(lm.details) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, lm.details...)
+		}
 	}
 	if lm.errorText != "" {
 		lines = append(lines, "", "Error: "+lm.errorText)
@@ -72,11 +97,15 @@ func (m *Model) lifecycleFooterHints() (actions, nav string) {
 	case lifecycleThreshold:
 		actions = "type age threshold  enter:review"
 	case lifecycleReview:
-		actions = "y:confirm  n:cancel"
+		actions = "enter/y:confirm  n:cancel"
 	case lifecycleResult:
 		actions = "esc:close"
 	}
-	return actions, "esc:back"
+	nav = "esc:back"
+	if m.lifecycle.phase == lifecycleReview || m.lifecycle.phase == lifecycleResult {
+		nav = "j/k:scroll  g/G:first/last  ^d/^u:half  esc:back"
+	}
+	return actions, nav
 }
 
 func (m *Model) lifecycleScopeLabel() string {
@@ -90,6 +119,9 @@ func (m *Model) lifecycleScopeLabel() string {
 	case lifecycleGroup:
 		return "@" + presentLabel(lm.scope.group)
 	case lifecycleWorktree:
+		if len(lm.scope.worktrees) > 1 {
+			return fmt.Sprintf("%d selected worktrees", len(lm.scope.worktrees))
+		}
 		if lm.scope.worktree != nil {
 			return worktreeDisplayName(*lm.scope.worktree)
 		}
