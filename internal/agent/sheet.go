@@ -1,12 +1,10 @@
 package agent
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -21,32 +19,19 @@ type sheetRowKind int
 
 const (
 	rowHeader sheetRowKind = iota
-	rowAction
 	rowWorktree
 	rowProject
 )
 
-type sheetAction int
-
-const (
-	actNone sheetAction = iota
-	actShellMain
-	actNewWorktree
-	actSearch
-	actEdit
-	actFavorite
-)
-
 type sheetRow struct {
-	kind    sheetRowKind
-	label   string
-	hint    string
-	keyHint string
-	action  sheetAction
-	wt      *Worktree
-	proj    *Project
-	indent  int
-	section string
+	kind     sheetRowKind
+	label    string
+	hint     string
+	activity string
+	wt       *Worktree
+	proj     *Project
+	indent   int
+	section  string
 }
 
 type sheet struct {
@@ -60,8 +45,9 @@ type sheet struct {
 	cursor        int
 	filter        tui.TextInput
 	filterMode    bool
+	visual        bool
+	visualAnchor  int
 	parent        *sheet
-	pendingDel    *Worktree
 	statusMsg     string
 }
 
@@ -221,21 +207,50 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	key := msg.String()
 
-	// Pending wt delete confirmation lives inside the sheet.
-	if s.pendingDel != nil {
-		s.statusMsg = ""
-		wt := s.pendingDel
-		s.pendingDel = nil
-		if key == "y" {
-			return s.dispatchWtDelete(m, wt)
+	if s.visual {
+		switch key {
+		case "v", "esc":
+			s.clearVisual()
+			return m, nil
+		case "a", "d":
+			if len(s.visualWorktrees()) == 0 {
+				s.clearVisual()
+				s.statusMsg = "no worktrees selected"
+				return m, nil
+			}
+		case "j", "down", "k", "up", "g", "home", "G", "end", "ctrl+d", "ctrl+u", "ctrl+f", "pgdn", "ctrl+b", "pgup", "ctrl+c", "ctrl+q":
+		default:
+			return m, nil
+		}
+	}
+	if handled, model, cmd := s.updateLifecycleKey(m, key); handled {
+		return model, cmd
+	}
+	if handled, model, cmd := s.updateContextKey(m, key); handled {
+		return model, cmd
+	}
+	if key == "v" && s.mode == sheetProject {
+		if row := s.focused(); row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			s.visual = true
+			s.visualAnchor = s.cursor
 		}
 		return m, nil
 	}
 
 	switch key {
 	case "esc":
+		if s.visual {
+			s.clearVisual()
+			return m, nil
+		}
+		return s.close(m)
+	case "h", "left":
 		return s.close(m)
 	case "ctrl+c", "ctrl+q":
+		if m.jobsRunning() {
+			m.statusMsg = "background jobs are still running · A:jobs"
+			return m, nil
+		}
 		return m, tui.Quit
 	case "j", "down":
 		s.moveCursor(+1)
@@ -251,19 +266,32 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		s.cursor = len(s.visible) - 1
 		s.clampCursor()
 		return m, nil
+	case "ctrl+d":
+		s.moveCursor(max(1, s.pageRows(m)/2))
+		return m, nil
+	case "ctrl+u":
+		s.moveCursor(-max(1, s.pageRows(m)/2))
+		return m, nil
+	case "ctrl+f", "pgdn":
+		s.moveCursor(s.pageRows(m))
+		return m, nil
+	case "ctrl+b", "pgup":
+		s.moveCursor(-s.pageRows(m))
+		return m, nil
 	case "/":
 		s.filterMode = true
 		return m, s.filter.Focus()
 	}
 
+	if key == "l" || key == "right" {
+		key = "enter"
+	}
 	row := s.focused()
 	if row == nil {
 		return m, nil
 	}
 
 	switch row.kind {
-	case rowAction:
-		return s.dispatchAction(m, row.action, key)
 	case rowWorktree:
 		return s.dispatchWorktree(m, row.wt, key)
 	case rowProject:
@@ -316,6 +344,29 @@ func (s *sheet) moveCursor(delta int) {
 	}
 }
 
+func (s *sheet) clearVisual() {
+	s.visual = false
+	s.visualAnchor = 0
+}
+
+func (s *sheet) visualWorktrees() []*Worktree {
+	if !s.visual || s.mode != sheetProject {
+		return nil
+	}
+	start, end := s.visualAnchor, s.cursor
+	if start > end {
+		start, end = end, start
+	}
+	worktrees := make([]*Worktree, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		row := s.rowAt(i)
+		if row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {
+			worktrees = append(worktrees, row.wt)
+		}
+	}
+	return worktrees
+}
+
 func abs(n int) int {
 	if n < 0 {
 		return -n
@@ -332,31 +383,26 @@ func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 	return m, nil
 }
 
-// ---------- dispatch ----------
-
-func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model, tui.Cmd) {
-	path := s.primaryPath()
-	switch act {
-	case actShellMain:
-		if key == "enter" || key == "s" || key == "l" {
-			return m.launch(s.workspaceRootForTarget(), path)
-		}
-	case actNewWorktree:
-		if (key == "enter" || key == "w") && s.target != nil {
+func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
+	switch key {
+	case "s":
+		model, cmd := m.launch(s.workspaceRootForTarget(), s.primaryPath())
+		return true, model, cmd
+	case "S":
+		model, cmd := s.openGlobalSearch(m)
+		return true, model, cmd
+	case "w":
+		if s.target != nil {
 			m.popupProj = s.target
 			m.wtBranch.SetValue("")
 			m.wtBranch.Focus()
 			m.wtField = 0
 			m.sheet = nil
 			m.mode = viewNewWorktree
-			return m, nil
+			return true, m, nil
 		}
-	case actSearch:
-		if key == "enter" || key == "/" {
-			return s.openGlobalSearch(m)
-		}
-	case actEdit:
-		if (key == "enter" || key == "e") && s.target != nil {
+	case "e":
+		if s.target != nil {
 			p := s.target
 			m.popupProj = p
 			m.editGroup.SetValue(p.Group)
@@ -369,20 +415,18 @@ func (s *sheet) dispatchAction(m *Model, act sheetAction, key string) (tui.Model
 			m.editErr = ""
 			m.sheet = nil
 			m.mode = viewEditProject
-			return m, nil
+			return true, m, nil
 		}
-	case actFavorite:
-		if key == "enter" || key == "f" {
-			if s.target != nil {
-				m.toggleFavoriteFor(s.target)
-			} else if s.group != "" {
-				m.toggleFavoriteGroup(s.workspaceRoot, s.group)
-			}
-			s.rebuild(m)
-			return m, nil
+	case "f":
+		if s.target != nil {
+			return true, m, m.toggleFavoriteFor(s.target)
+		} else if s.group != "" {
+			return true, m, m.toggleFavoriteGroup(s.workspaceRoot, s.group)
 		}
+		s.rebuild(m)
+		return true, m, nil
 	}
-	return m, nil
+	return false, m, nil
 }
 
 func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model, tui.Cmd) {
@@ -392,34 +436,13 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 	switch key {
 	case "enter", "c", "s", "l":
 		return m.launch(m.workspaceRootFor(s.target), wt.Path)
-	case "d":
-		if wt.IsMain {
-			return m, nil
-		}
-		s.pendingDel = wt
-		s.statusMsg = fmt.Sprintf("delete %s? y to confirm", worktreeDisplayName(*wt))
-		return m, nil
 	}
 	return m, nil
 }
 
 func (s *sheet) openGlobalSearch(m *Model) (tui.Model, tui.Cmd) {
 	m.sheet = nil
-	m.mode = viewFlash
-	m.flashGlobal = true
-	m.flashQuery.SetValue("")
-	m.flashQuery.Focus()
-	m.savedExpanded = make(map[string]bool)
-	for k, v := range m.expanded {
-		m.savedExpanded[k] = v
-	}
-	for _, ws := range m.workspaces {
-		for _, g := range ws.Groups {
-			m.expanded[groupKey(ws.Root, g)] = true
-		}
-	}
-	m.rebuildItems()
-	m.recomputeFlash()
+	m.openGlobalSearch()
 	return m, nil
 }
 
@@ -431,187 +454,4 @@ func (s *sheet) workspaceRootForTarget() string {
 		return s.target.WorkspaceRoot
 	}
 	return ""
-}
-
-func (s *sheet) dispatchWtDelete(m *Model, wt *Worktree) (tui.Model, tui.Cmd) {
-	p := s.target
-	projID := ""
-	if p != nil {
-		projID = p.ID
-	}
-	wsRoot := m.workspaceRootFor(p)
-	machine, err := explorerMachineName()
-	result := repo.WorktreeRemoveResult{}
-	if err == nil {
-		result, err = repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projID, Branch: wt.Branch, Machine: machine})
-	}
-	if result.Removed {
-		m.wtCache.Invalidate(p.Path)
-		s.rebuild(m)
-	}
-	if err != nil {
-		s.statusMsg = err.Error()
-		return m, nil
-	}
-	s.statusMsg = "worktree deleted"
-	return m, nil
-}
-
-// ---------- view ----------
-
-func (s *sheet) view(width, height int) string {
-	popupW := 60
-	if width < 66 {
-		popupW = width - 6
-	}
-	if popupW < 30 {
-		popupW = 30
-	}
-	innerW := popupW - 6
-
-	var lines []string
-	lines = append(lines, popupTitleStyle.Width(innerW).Render(s.title()))
-	if sub := s.subtitle(); sub != "" {
-		lines = append(lines, popupDimStyle.Width(innerW).Render(sub))
-	}
-
-	// Filter prompt sits below the title.
-	if s.filterMode || s.filter.Value() != "" {
-		prompt := "/" + s.filter.Value()
-		if s.filterMode {
-			prompt = "/" + s.filter.View()
-		}
-		lines = append(lines, popupSelectedStyle.Width(innerW).Render(" "+prompt))
-	}
-	lines = append(lines, "")
-
-	if len(s.visible) == 0 {
-		empty := "(no matches)"
-		if s.filter.Value() == "" {
-			empty = "(empty)"
-		}
-		lines = append(lines, popupDimStyle.Width(innerW).Render(empty))
-	} else {
-		// Window the visible rows around the cursor so the popup stays bounded.
-		const maxRows = 18
-		start, end := tui.WindowAround(s.cursor, len(s.visible), maxRows)
-		for i := start; i < end; i++ {
-			lines = append(lines, s.renderRow(i, innerW))
-		}
-		if start > 0 {
-			lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("  …%d above", start)))
-		}
-		if end < len(s.visible) {
-			lines = append(lines, popupDimStyle.Width(innerW).Render(fmt.Sprintf("  …%d below", len(s.visible)-end)))
-		}
-	}
-
-	if s.statusMsg != "" {
-		lines = append(lines, "")
-		lines = append(lines, statusMsgStyle.Width(innerW).Render(" "+presentLabel(s.statusMsg)))
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render(s.footerHint()))
-
-	content := strings.Join(lines, "\n")
-	popup := popupBorderStyle.Render(content)
-	return tui.Place(width, height, tui.Center, tui.Center, popup,
-		tui.WithWhitespaceBackground(tui.Color("234")))
-}
-
-func (s *sheet) renderRow(visIdx, innerW int) string {
-	r := &s.rows[s.visible[visIdx]]
-	selected := visIdx == s.cursor
-
-	if r.kind == rowHeader {
-		text := fmt.Sprintf("── %s ", r.label)
-		if len(text) < innerW {
-			text += strings.Repeat("─", innerW-len(text))
-		}
-		return popupDimStyle.Width(innerW).Render(text)
-	}
-
-	label := presentLabel(r.label)
-	hint := presentLabel(r.hint)
-	key := r.keyHint
-
-	left := "  " + label
-	if r.indent > 0 {
-		left = strings.Repeat("    ", r.indent) + label
-	}
-
-	right := ""
-	if hint != "" {
-		right += hint
-	}
-	if key != "" {
-		if right != "" {
-			right += "  "
-		}
-		right += key
-	}
-
-	leftW := tui.Width(left)
-	rightW := tui.Width(right)
-	gap := innerW - leftW - rightW
-	if gap < 1 {
-		gap = 1
-	}
-	line := left + strings.Repeat(" ", gap) + right
-
-	if selected {
-		return popupSelectedStyle.Width(innerW).Render(line)
-	}
-	return popupItemStyle.Width(innerW).Render(line)
-}
-
-func (s *sheet) title() string {
-	if s.mode == sheetGroup {
-		return fmt.Sprintf("@%s", presentLabel(s.group))
-	}
-	if s.target != nil {
-		return presentLabel(s.target.Name)
-	}
-	return "launch"
-}
-
-func (s *sheet) subtitle() string {
-	if s.mode == sheetGroup {
-		if s.groupPath != "" {
-			return s.groupPath
-		}
-		return "group"
-	}
-	if s.target == nil {
-		return ""
-	}
-	cat := s.target.Category
-	if cat == "" {
-		cat = "personal"
-	}
-	return fmt.Sprintf("%s · %s", cat, s.target.Path)
-}
-
-func (s *sheet) footerHint() string {
-	if s.filterMode {
-		return "  type to filter · enter:apply · esc:clear"
-	}
-	if s.mode == sheetGroup {
-		return "  ⏎:open  /:filter  esc:back"
-	}
-	r := s.focused()
-	if r == nil {
-		return "  /:filter  esc:back"
-	}
-	switch r.kind {
-	case rowWorktree:
-		if r.wt != nil && !r.wt.IsMain {
-			return "  ⏎:shell  d:delete"
-		}
-		return "  ⏎:shell"
-	case rowAction:
-		return "  ⏎:run  /:filter  esc:back"
-	}
-	return "  /:filter  esc:back"
 }

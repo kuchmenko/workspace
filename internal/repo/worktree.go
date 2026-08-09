@@ -46,6 +46,20 @@ type WorktreeRemoveResult struct {
 }
 
 func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
+	result, err := AddWorktreeCheckout(options)
+	if err != nil {
+		return result, err
+	}
+	if err := RegisterWorktree(options, result); err != nil {
+		if result.ReRegistered {
+			return result, fmt.Errorf("registry update failed: %w", err)
+		}
+		return result, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
+	}
+	return result, nil
+}
+
+func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	branch := strings.TrimSpace(options.Branch)
 	if branch == "" {
 		return nil, errors.New("branch must not be empty")
@@ -56,7 +70,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	if err := validateWorktreeBranch(branch); err != nil {
 		return nil, err
 	}
-	workspace, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
+	_, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +85,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 		return nil, err
 	}
 	if existingPath != "" {
-		result := &WorktreeAddResult{Path: existingPath, ReRegistered: true}
-		setAddMetadata(&project, branch, options.Machine, remoteExists, result)
-		workspace.Projects[options.Project] = project
-		if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
-			return nil, fmt.Errorf("registry update failed: %w", err)
-		}
-		return result, nil
+		return &WorktreeAddResult{Path: existingPath, ReRegistered: true, Source: addWorktreeSource(localExists, remoteExists)}, nil
 	}
 
 	result := &WorktreeAddResult{}
@@ -117,12 +125,27 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 	if result.Source == "fetched" {
 		_ = git.SetBranchUpstream(result.Path, branch, "origin")
 	}
-	setAddMetadata(&project, branch, options.Machine, result.Source == "fetched", result)
-	workspace.Projects[options.Project] = project
-	if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
-		return nil, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
-	}
 	return result, nil
+}
+
+func RegisterWorktree(options WorktreeAddOptions, result *WorktreeAddResult) error {
+	workspace, project, _, _, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
+	if err != nil {
+		return err
+	}
+	setAddMetadata(&project, strings.TrimSpace(options.Branch), options.Machine, result.Source == "fetched", result)
+	workspace.Projects[options.Project] = project
+	return config.Save(options.WorkspaceRoot, workspace)
+}
+
+func addWorktreeSource(localExists, remoteExists bool) string {
+	if remoteExists {
+		return "fetched"
+	}
+	if localExists {
+		return "local"
+	}
+	return ""
 }
 
 func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error) {

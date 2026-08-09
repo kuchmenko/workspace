@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type Worktree struct {
@@ -68,6 +69,30 @@ func WorktreeList(repoPath string) ([]Worktree, error) {
 		return nil, fmt.Errorf("git worktree list in %s: %w", repoPath, err)
 	}
 	return parsePorcelainWorktreeList(string(out)), nil
+}
+
+func CommitTimes(repoPath string, commits []string) (map[string]time.Time, error) {
+	result := make(map[string]time.Time, len(commits))
+	if len(commits) == 0 {
+		return result, nil
+	}
+	args := []string{"-C", repoPath, "show", "--no-patch", "--format=%H%x00%cI"}
+	args = append(args, commits...)
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show commit times in %s: %w", repoPath, err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\x00", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		value, err := time.Parse(time.RFC3339, parts[1])
+		if err == nil {
+			result[parts[0]] = value
+		}
+	}
+	return result, nil
 }
 
 func parsePorcelainWorktreeList(text string) []Worktree {

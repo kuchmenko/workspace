@@ -49,35 +49,49 @@ A project icon is rendered per ecosystem (Go, Rust, Python, Node, TS,
 Java, Ruby, C#, Shell, Docker) based on marker files (`go.mod`,
 `Cargo.toml`, `pyproject.toml`, etc.) in the project directory.
 
-### Tree
+### Views
 
-Group rows expand and collapse with `tab`. Press `enter` on a group or
-project row to open its sheet. Project sheets contain the project's
-worktrees and show their dirty and ahead state.
+`v` cycles Recent, Projects, and Language. Recent is the default and
+orders projects by the newest registry branch activity or worktree HEAD
+commit; `o` reverses it. Language groups are inferred locally and never
+modify canonical workspace groups. These preferences are machine-local.
 
 ## Keys
 
 Navigation:
 
 - `j` / `↓`, `k` / `↑` — move selection
+- `g` / `Home`, `G` / `End` — jump to the first or last row
+- `ctrl+d` / `ctrl+u` — move half a page
+- `ctrl+f` / `ctrl+b`, `PageDown` / `PageUp` — move a full page
 - `tab` — toggle expand/collapse for groups
-- `h` / `←` — collapse the selected group, or close the parent group
-  from one of its project rows.
+- `v` — cycle home views; `o` — reverse Recent order
+- `h` / `←` — collapse to the parent heading on home, or close a sheet
+- `l` / `→` — open the selected projection, group, project, or worktree
 - `1`-`9` — open a shell for the matching chip
 - `q` — quit
 
 Per-row actions:
 
-- `enter` — open the selected group or project sheet. In a project
-  sheet, a worktree row opens a shell in that worktree.
-- `l` / `→` — open a shell directly in the selected row's directory.
+- `enter` / `l` / `→` — open the selected group or project panel. In a project
+  panel, a worktree row opens a shell in that worktree.
 - `ctrl+s` — open a shell anywhere from anywhere.
 - `w` — on a project row, open the worktree-creation form (single
   "Branch name" input → confirm).
 - `e` — on a project row, edit the project's group / category.
-- `d` — in a project sheet, on a non-main worktree row, prompt for delete (with
-  registry release; releases this machine from
-  `[[branches]].machines`).
+- `a` — archive a project, canonical group, or worktree. Project archive
+  leaves files untouched; worktree archive removes the checkout but preserves
+  its local and remote branches. A dirty single worktree shows a data-loss
+  warning and can be force-archived after confirmation.
+- `v` — in a project panel, begin or end visual worktree selection. Extend the
+  range with Vim motions, then press `a` or `d` for one reviewed bulk action.
+- `d` — destructively delete selected non-main worktrees after an `enter` / `y`
+  confirmation; `n` cancels. Dirty worktrees show a data-loss warning and are
+  force-removed after confirmation. Local-only and ahead branches are also
+  deleted; remote deletion failures are reported without preventing local
+  cleanup.
+- `A` — archive projects or preview/archive old safe worktrees in the current
+  project or group when invoked there, or globally when invoked from home.
 - `f` — on a project row, toggle favorite. Equivalent to
   `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
   persisted to `workspace.toml` and reaches other machines on the next
@@ -86,11 +100,29 @@ Per-row actions:
 Search:
 
 - `s` — flash search inside the current view (jump labels per match).
-- `S` — global flash search (expands every group temporarily).
+- `S` — filtered global search across all projects and local worktrees,
+  independent of expansion and viewport.
 
 Help:
 
-- `?` or `space` — which-key panel of available actions in context.
+- `?` or `space` — which-key panel of available actions from home.
+
+Group and project panels use the same full-screen frame as home: pinned chips,
+breadcrumb header, an available-height list, optional status, and a persistent
+two-row keybar. The first keybar row always exposes the actions available in
+the current scope. On a non-main worktree this includes `a:archive` and
+`d:delete`; `A:maintenance` remains visible for project/group bulk operations.
+The second row contains the shared Vim navigation keys. Project management and
+search are keyboard actions rather than synthetic rows in the list. Project
+worktrees show separate status and last-activity columns; activity uses the
+newer registry branch timestamp or HEAD commit time and displays `—` when no
+timestamp is available.
+
+Lifecycle planning, archive, delete, and post-operation refresh run in the
+background. The lifecycle panel shows the current target and completed/total
+progress. Confirming an operation returns immediately to the originating
+Explorer panel; press `A` to reopen progress or results. Debug logs are appended to
+`$XDG_STATE_HOME/ws/explorer.log` (default `~/.local/state/ws/explorer.log`).
 
 ## Worktree creation from the TUI
 

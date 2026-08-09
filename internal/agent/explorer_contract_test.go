@@ -3,8 +3,10 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -34,7 +36,7 @@ func TestSameNamedGroupsStayIndependentAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("group sheet projects = %#v", projectRows)
 	}
 
-	m.toggleFavoriteGroup(rootB, "shared")
+	runExplorerJob(t, m, m.toggleFavoriteGroup(rootB, "shared"))
 	loadedA, err := config.Load(rootA)
 	if err != nil {
 		t.Fatal(err)
@@ -62,9 +64,15 @@ func TestExplorerLaunchContracts(t *testing.T) {
 		t.Fatalf("digit launch = %+v", m.Launch)
 	}
 	m.Launch = nil
+	m.cursor = 1
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'l'}})
+	if m.sheet == nil || m.Launch != nil {
+		t.Fatalf("project open = sheet %v launch %+v", m.sheet, m.Launch)
+	}
+	m.sheet = nil
+	m.Update(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'s'}, Ctrl: true})
 	if m.Launch == nil || m.Launch.Cwd != projectPath {
-		t.Fatalf("direct launch = %+v", m.Launch)
+		t.Fatalf("explicit shell launch = %+v", m.Launch)
 	}
 
 	outside := t.TempDir()
@@ -87,7 +95,7 @@ func TestProjectFavoritePersists(t *testing.T) {
 	}
 	p := &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: filepath.Join(root, "project")}
 	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{*p}}})
-	m.toggleFavoriteFor(p)
+	runExplorerJob(t, m, m.toggleFavoriteFor(p))
 	loaded, err := config.Load(root)
 	if err != nil {
 		t.Fatal(err)
@@ -150,4 +158,33 @@ func explorerWorkspace(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func runExplorerJob(t *testing.T, m *Model, cmd tui.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("job command is nil")
+	}
+	messages := make(chan tui.Msg, 16)
+	start := func(cmd tui.Cmd) { go func() { messages <- cmd() }() }
+	start(cmd)
+	deadline := time.After(10 * time.Second)
+	for m.jobsRunning() {
+		select {
+		case msg := <-messages:
+			value := reflect.ValueOf(msg)
+			if value.IsValid() && value.Kind() == reflect.Slice {
+				for i := 0; i < value.Len(); i++ {
+					start(value.Index(i).Interface().(tui.Cmd))
+				}
+				continue
+			}
+			_, next := m.Update(msg)
+			if next != nil {
+				start(next)
+			}
+		case <-deadline:
+			t.Fatal("job did not finish")
+		}
+	}
 }

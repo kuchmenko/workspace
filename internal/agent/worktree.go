@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -15,11 +16,12 @@ import (
 )
 
 type Worktree struct {
-	Path   string
-	Branch string
-	IsMain bool
-	Dirty  bool
-	Ahead  int
+	Path         string
+	Branch       string
+	IsMain       bool
+	Dirty        bool
+	Ahead        int
+	LastActiveAt time.Time
 }
 
 func explorerMachineName() (string, error) {
@@ -50,27 +52,91 @@ func worktreeDisplayName(wt Worktree) string {
 }
 
 type WorktreeCache struct {
-	data map[string][]Worktree
+	details   map[string][]Worktree
+	inventory map[string][]Worktree
 }
 
 func NewWorktreeCache() *WorktreeCache {
-	return &WorktreeCache{data: make(map[string][]Worktree)}
+	return &WorktreeCache{details: make(map[string][]Worktree), inventory: make(map[string][]Worktree)}
 }
 
 func (c *WorktreeCache) Get(mainPath string) ([]Worktree, error) {
-	if wts, ok := c.data[mainPath]; ok {
+	if wts, ok := c.details[mainPath]; ok {
 		return wts, nil
 	}
 	wts, err := LoadWorktrees(mainPath)
 	if err != nil {
 		return nil, err
 	}
-	c.data[mainPath] = wts
+	c.details[mainPath] = wts
+	c.inventory[mainPath] = wts
 	return wts, nil
 }
 
+func (c *WorktreeCache) SeedInventory(mainPath string, wts []Worktree) {
+	c.inventory[mainPath] = wts
+}
+
+func (c *WorktreeCache) SeedDetails(mainPath string, wts []Worktree) {
+	c.details[mainPath] = wts
+	c.inventory[mainPath] = wts
+}
+
+func (c *WorktreeCache) Inventory(mainPath string) []Worktree {
+	if wts, ok := c.inventory[mainPath]; ok {
+		return wts
+	}
+	wts, err := LoadWorktreeInventory(mainPath)
+	if err != nil {
+		return nil
+	}
+	c.inventory[mainPath] = wts
+	return wts
+}
+
 func (c *WorktreeCache) Invalidate(mainPath string) {
-	delete(c.data, mainPath)
+	delete(c.details, mainPath)
+	delete(c.inventory, mainPath)
+}
+
+func LoadWorktreeInventory(mainPath string) ([]Worktree, error) {
+	barePath := layout.BarePath(mainPath)
+	if _, err := os.Stat(barePath); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if _, err := os.Stat(mainPath); err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		lastActiveAt, _ := git.LastCommitTime(mainPath)
+		return []Worktree{{Path: mainPath, IsMain: true, LastActiveAt: lastActiveAt}}, nil
+	}
+	wts, err := git.WorktreeList(barePath)
+	if err != nil {
+		return nil, err
+	}
+	return buildWorktreeInventory(mainPath, barePath, wts)
+}
+
+func buildWorktreeInventory(mainPath, repoPath string, listed []git.Worktree) ([]Worktree, error) {
+	commits := make([]string, 0, len(listed))
+	for _, wt := range listed {
+		if !wt.Bare && wt.HEAD != "" {
+			commits = append(commits, wt.HEAD)
+		}
+	}
+	times, err := git.CommitTimes(repoPath, commits)
+	result := make([]Worktree, 0, len(listed))
+	for _, wt := range listed {
+		if wt.Bare {
+			continue
+		}
+		result = append(result, Worktree{Path: wt.Path, Branch: wt.Branch, IsMain: wt.Path == mainPath, LastActiveAt: times[wt.HEAD]})
+	}
+	return result, err
 }
 
 func LoadWorktrees(mainPath string) ([]Worktree, error) {
@@ -103,6 +169,9 @@ func LoadWorktrees(mainPath string) ([]Worktree, error) {
 			Branch: wt.Branch,
 			IsMain: wt.Path == mainPath,
 			Dirty:  git.IsDirty(wt.Path),
+		}
+		if value, err := git.LastCommitTime(wt.Path); err == nil {
+			w.LastActiveAt = value
 		}
 		ahead, _, _ := git.AheadBehind(wt.Path, wt.Branch)
 		w.Ahead = ahead
@@ -157,25 +226,54 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 	}
 
 	wsRoot := m.workspaceRootFor(m.popupProj)
-	machine, err := explorerMachineName()
-	if err == nil {
-		_, err = repo.AddWorktree(repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: m.popupProj.ID, Branch: branch, Machine: machine})
-	}
-	if err != nil {
-		m.statusMsg = err.Error()
-		m.wtBranch.Blur()
-		m.mode = viewList
-		return m, nil
-	}
-	m.wtCache.Invalidate(m.popupProj.Path)
-
+	projectID, projectName := m.popupProj.ID, m.popupProj.Name
 	m.wtBranch.Blur()
 	m.mode = viewList
-	m.rebuildItems()
-	m.ensureVisible()
-	m.statusMsg = "worktree created"
-	metrics.RecordExplorerWorktreeCreated()
-	return m, nil
+	projectPath := m.popupProj.Path
+	cmd := m.submitJob("create "+projectName+"/"+branch, 1, func(ctx *jobContext) jobResult {
+		var outcome targetOutcome
+		var options repo.WorktreeAddOptions
+		var addResult *repo.WorktreeAddResult
+		ctx.withProject(wsRoot, projectID, projectPath, func() {
+			ctx.progress(branch)
+			machine, err := explorerMachineName()
+			if err == nil {
+				options = repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: projectID, Branch: branch, Machine: machine}
+				addResult, err = repo.AddWorktreeCheckout(options)
+			}
+			if err != nil {
+				if addResult != nil {
+					outcome = targetOutcome{Target: branch, Kind: targetPartial, Detail: err.Error()}
+				} else {
+					outcome = targetOutcome{Target: branch, Kind: targetFailed, Detail: err.Error()}
+				}
+			} else {
+				outcome = targetOutcome{Target: branch, Kind: targetSuccess, Detail: "created"}
+			}
+			ctx.withRegistry(wsRoot, func() {
+				if outcome.Kind == targetSuccess {
+					if err := repo.RegisterWorktree(options, addResult); err != nil {
+						outcome = targetOutcome{Target: branch, Kind: targetPartial, Detail: err.Error()}
+					}
+				}
+				child := jobResult{Outcomes: []targetOutcome{outcome}}
+				if addResult != nil {
+					child.AffectedProjects = []ProjectIdentity{{wsRoot, projectID}}
+				}
+				ctx.finishChild(child, addResult != nil)
+			})
+		})
+		metrics.RecordExplorerWorktreeCreated()
+		result := jobResult{Summary: "worktree created", Outcomes: []targetOutcome{outcome}}
+		if outcome.Kind == targetSuccess || outcome.Kind == targetPartial {
+			result.AffectedProjects = []ProjectIdentity{{wsRoot, projectID}}
+		}
+		if outcome.Kind != targetSuccess {
+			result.Error = outcome.Detail
+		}
+		return result
+	})
+	return m, cmd
 }
 
 func (m *Model) viewNewWorktree() string {

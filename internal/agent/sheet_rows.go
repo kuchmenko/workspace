@@ -9,70 +9,56 @@ import (
 func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	var rows []sheetRow
 
-	rows = append(rows,
-		sheetRow{kind: rowAction, action: actShellMain, label: "shell", hint: "in main", keyHint: "s", section: "main"},
-		sheetRow{kind: rowAction, action: actNewWorktree, label: "+ worktree", hint: "create new", keyHint: "w", section: "main"},
-		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "main"},
-	)
-
 	wts, err := m.wtCache.Get(p.Path)
 	if err != nil {
 		m.statusMsg = "inspect worktrees: " + err.Error()
 	}
+	for i := range wts {
+		if active := p.BranchActivity[wts[i].Branch]; active.After(wts[i].LastActiveAt) {
+			wts[i].LastActiveAt = active
+		}
+	}
 
 	rows = append(rows, sheetRow{
-		kind:    rowHeader,
-		label:   fmt.Sprintf("worktrees (%d)", len(wts)),
-		section: "worktrees",
+		kind:     rowHeader,
+		label:    fmt.Sprintf("worktrees (%d)", len(wts)),
+		hint:     "status",
+		activity: "activity",
+		section:  "worktrees",
 	})
 
-	mainIdx := -1
+	ordered := make([]int, len(wts))
 	for i := range wts {
-		if wts[i].IsMain {
-			mainIdx = i
-			break
-		}
+		ordered[i] = i
 	}
-	ordered := make([]int, 0, len(wts))
-	if mainIdx >= 0 {
-		ordered = append(ordered, mainIdx)
-	}
-	for i := range wts {
-		if i != mainIdx {
-			ordered = append(ordered, i)
-		}
-	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := wts[ordered[i]], wts[ordered[j]]
+		return recencyLess(a.LastActiveAt, b.LastActiveAt, worktreeDisplayName(a), worktreeDisplayName(b), true)
+	})
 
 	for _, idx := range ordered {
 		wt := &wts[idx]
 		label := worktreeDisplayName(*wt)
 		hint := wtHint(wt)
+		activity := humanizeAge(wt.LastActiveAt)
+		if activity == "" {
+			activity = "—"
+		}
 		rows = append(rows, sheetRow{
-			kind:    rowWorktree,
-			label:   label,
-			hint:    hint,
-			wt:      wt,
-			section: "worktrees",
+			kind:     rowWorktree,
+			label:    label,
+			hint:     hint,
+			activity: activity,
+			wt:       wt,
+			section:  "worktrees",
 		})
 	}
-
-	rows = append(rows, sheetRow{kind: rowHeader, label: "manage", section: "manage"})
-	rows = append(rows,
-		sheetRow{kind: rowAction, action: actEdit, label: "edit project", keyHint: "e", section: "manage"},
-		sheetRow{kind: rowAction, action: actFavorite, label: favoriteLabel(p), keyHint: "f", section: "manage"},
-	)
 
 	return rows
 }
 
 func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []sheetRow {
 	var rows []sheetRow
-
-	inHint := "in @" + group
-	rows = append(rows,
-		sheetRow{kind: rowAction, action: actShellMain, label: "shell", hint: inHint, keyHint: "s", section: "root"},
-		sheetRow{kind: rowAction, action: actSearch, label: "search…", hint: "jump elsewhere", keyHint: "/", section: "root"},
-	)
 
 	var projects []*Project
 	for wi := range m.workspaces {
@@ -96,35 +82,26 @@ func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []she
 	})
 
 	rows = append(rows, sheetRow{
-		kind:    rowHeader,
-		label:   fmt.Sprintf("projects (%d)", len(projects)),
-		section: "projects",
+		kind:     rowHeader,
+		label:    fmt.Sprintf("projects (%d)", len(projects)),
+		activity: "activity",
+		section:  "projects",
 	})
 	for _, p := range projects {
+		activity := humanizeAge(p.LastActiveAt)
+		if activity == "" {
+			activity = "—"
+		}
 		rows = append(rows, sheetRow{
-			kind:    rowProject,
-			label:   p.Name,
-			hint:    humanizeAge(p.LastActiveAt),
-			proj:    p,
-			section: "projects",
+			kind:     rowProject,
+			label:    p.Name,
+			activity: activity,
+			proj:     p,
+			section:  "projects",
 		})
 	}
 
-	rows = append(rows,
-		sheetRow{kind: rowHeader, label: "manage", section: "manage"},
-		sheetRow{kind: rowAction, action: actFavorite, label: groupFavoriteLabel(m, workspaceRoot, group), keyHint: "f", section: "manage"},
-	)
-
 	return rows
-}
-
-func groupFavoriteLabel(m *Model, workspaceRoot, group string) string {
-	for _, ws := range m.workspaces {
-		if ws.Root == workspaceRoot && ws.FavoriteGroups[group] {
-			return "unfavorite group"
-		}
-	}
-	return "favorite group"
 }
 
 func wtHint(wt *Worktree) string {
@@ -138,11 +115,4 @@ func wtHint(wt *Worktree) string {
 		parts = append(parts, fmt.Sprintf("↑%d", wt.Ahead))
 	}
 	return strings.Join(parts, " ")
-}
-
-func favoriteLabel(p *Project) string {
-	if p != nil && p.Favorite {
-		return "unfavorite"
-	}
-	return "favorite"
 }

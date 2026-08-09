@@ -126,6 +126,9 @@ var ownToTeaKeyType = map[KeyType]tea.KeyType{
 	KeyDelete:    tea.KeyDelete,
 	KeyCtrlC:     tea.KeyCtrlC,
 	KeyCtrlD:     tea.KeyCtrlD,
+	KeyCtrlU:     tea.KeyCtrlU,
+	KeyCtrlF:     tea.KeyCtrlF,
+	KeyCtrlB:     tea.KeyCtrlB,
 }
 
 func keyMsgToBubbletea(m KeyMsg) tea.KeyMsg {

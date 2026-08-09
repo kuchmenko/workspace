@@ -78,6 +78,34 @@ func TestAddWorktreeNewBranchFromDefault(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeCheckoutDefersRegistryRegistration(t *testing.T) {
+	root, _, _ := setupWorktreeProject(t, "main")
+	options := addOptions(root, "feat/split")
+	result, err := AddWorktreeCheckout(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := workspace.Projects["app"]
+	if project.LookupBranch(options.Branch) != nil {
+		t.Fatal("checkout phase updated registry")
+	}
+	if err := RegisterWorktree(options, result); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err = config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project = workspace.Projects["app"]
+	if project.LookupBranch(options.Branch) == nil {
+		t.Fatal("registration phase did not update registry")
+	}
+}
+
 func TestAddWorktreeAttachesRemoteAndMarksPushed(t *testing.T) {
 	root, _, barePath := setupWorktreeProject(t, "main")
 	remote := testutil.RunGit(t, barePath, "config", "remote.origin.url")

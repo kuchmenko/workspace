@@ -123,41 +123,23 @@ func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 	newGroup := strings.TrimSpace(m.editGroup.Value())
 	newCat := m.editCategory
 
-	if err := EditProjectMetadata(wsRoot, proj.ID, newGroup, newCat); err != nil {
-		m.editErr = err.Error()
-		return m, nil
-	}
-
-	for wi := range m.workspaces {
-		if m.workspaces[wi].Root != wsRoot {
-			continue
-		}
-		ws := &m.workspaces[wi]
-		for pi := range ws.Projects {
-			if ws.Projects[pi].ID != proj.ID {
-				continue
-			}
-			ws.Projects[pi].Group = newGroup
-			ws.Projects[pi].Category = string(newCat)
-			break
-		}
-		ws.Groups = recomputeGroups(ws.Projects)
-		if newGroup != "" {
-			m.expanded[newGroup] = true
-		}
-		break
-	}
-
+	projectID, name := proj.ID, proj.Name
 	m.editErr = ""
 	m.editGroup.Blur()
 	m.mode = viewList
-	m.statusMsg = fmt.Sprintf("updated %s: group=%s category=%s",
-		proj.Name, displayGroup(newGroup), newCat)
-	m.rebuildItems()
-
-	m.jumpToProject(m.workspaceRootFor(proj), proj.ID)
-	m.ensureVisible()
-	return m, nil
+	cmd := m.submitJob("edit "+name, 1, func(ctx *jobContext) jobResult {
+		var outcome targetOutcome
+		ctx.withRegistry(wsRoot, func() {
+			if err := EditProjectMetadata(wsRoot, projectID, newGroup, newCat); err != nil {
+				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
+			} else {
+				outcome = targetOutcome{Target: name, Kind: targetSuccess, Detail: "saved"}
+			}
+			ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{wsRoot, projectID}}}, outcome.Kind == targetSuccess)
+		})
+		return jobResult{Summary: fmt.Sprintf("updated %s: group=%s category=%s", name, displayGroup(newGroup), newCat), Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{wsRoot, projectID}}}
+	})
+	return m, cmd
 }
 
 func displayGroup(g string) string {

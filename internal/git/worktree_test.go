@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/testutil"
@@ -191,5 +192,32 @@ func TestFetchRefspec_NonexistentBranch(t *testing.T) {
 	// Branch should not exist locally.
 	if git.HasBranch(barePath, "wt/linux/no-such-branch") {
 		t.Fatal("branch should not exist after failed fetch")
+	}
+}
+
+func TestCommitTimes_ReturnsMultipleCommitsInOneCall(t *testing.T) {
+	repo := testutil.InitFakePlainCheckout(t, t.TempDir(), "repo", nil)
+	first := testutil.RunGit(t, repo, "rev-parse", "HEAD")
+	firstTime, err := time.Parse(time.RFC3339, testutil.RunGit(t, repo, "show", "-s", "--format=%cI", first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "second.txt"), []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.RunGit(t, repo, "add", "second.txt")
+	testutil.RunGit(t, repo, "commit", "-m", "second")
+	second := testutil.RunGit(t, repo, "rev-parse", "HEAD")
+	secondTime, err := time.Parse(time.RFC3339, testutil.RunGit(t, repo, "show", "-s", "--format=%cI", second))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := git.CommitTimes(repo, []string{first, second})
+	if err != nil {
+		t.Fatalf("CommitTimes: %v", err)
+	}
+	if !got[first].Equal(firstTime) || !got[second].Equal(secondTime) {
+		t.Fatalf("CommitTimes = %v, want %s=%s and %s=%s", got, first, firstTime, second, secondTime)
 	}
 }

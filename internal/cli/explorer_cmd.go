@@ -17,10 +17,12 @@ func newExplorerCmd() *cobra.Command {
 		Long: `Launch the interactive TUI explorer over every registered workspace.
 The pinned quick-nav header shows up to nine numbered chips (favorites
 + recently-touched) — press 1-9 to launch the matching project. Below
-the header, the full project tree scrolls with j/k navigation.
+the header, cycle Recent, Projects, and Language views with v.
 
-Navigation: j/k to move, Enter to open, h/Esc to go back, q to quit.
-1-9 to launch a chip directly. Subcommands provide non-interactive
+Navigation: j/k move, g/G jump, Ctrl+D/U move half a page, and Ctrl+F/B
+or PageDown/PageUp move a page. Enter or l opens; h or Esc goes back; q quits.
+Use o to reverse Recent order, S for global project/worktree search,
+Ctrl+S opens a shell, and A opens lifecycle maintenance. 1-9 launches a chip. Subcommands provide non-interactive
 access to the same actions.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -55,6 +57,14 @@ func runExplorerTUI() error {
 	}
 
 	m := agent.NewModel(workspaces)
+	if err := m.EnableDebugLog(); err != nil {
+		fmt.Fprintf(os.Stderr, "ws explorer: debug log: %v\n", err)
+	}
+	defer func() {
+		if err := m.CloseDebugLog(); err != nil {
+			fmt.Fprintf(os.Stderr, "ws explorer: close debug log: %v\n", err)
+		}
+	}()
 	p := tui.NewProgram(m, tui.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {

@@ -20,16 +20,9 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 		end = len(m.items)
 	}
 
-	prevGroup := ""
 	for i := m.scroll; i < end; i++ {
 		item := m.items[i]
 		selected := i == m.cursor
-
-		curGroup := m.itemGroupKey(item)
-		if prevGroup != "" && curGroup != prevGroup {
-			rows = append(rows, strings.Repeat(" ", listW))
-		}
-		prevGroup = curGroup
 
 		isMatch := false
 		flashLabel := rune(0)
@@ -51,6 +44,10 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindProject:
 			line = m.renderProject(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
+		case KindWorktree:
+			project := *item.parentProj
+			project.Name = item.group
+			line = m.renderProject(listItem{project: &project}, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		}
 
 		rows = append(rows, line)
@@ -58,22 +55,9 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 	return rows
 }
 
-func (m *Model) itemGroupKey(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return "g:" + groupKey(item.workspaceRoot, item.group)
-	case KindProject:
-		if item.project.Group != "" {
-			return "g:" + groupKey(item.workspaceRoot, item.project.Group)
-		}
-		return "ungrouped:" + item.workspaceRoot
-	}
-	return ""
-}
-
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	arrow := "▸"
-	if m.expanded[groupKey(item.workspaceRoot, item.group)] {
+	if m.expanded[item.expandKey] {
 		arrow = "▾"
 	}
 	name := presentLabel(item.group)
@@ -81,6 +65,7 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 	label := fmt.Sprintf("   %s %s", arrow, name)
+	label = tui.Truncate(label, w)
 
 	if dimAll || (inFlash && !isMatch) {
 		return dimStyle.Width(w).Render(label)
@@ -108,7 +93,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
 	}
 	badges := strings.Join(badgeParts, " · ")
-
+	left = tui.Truncate(left, max(0, w-tui.Width(badges)-1))
 	line := m.padRight(left, badges, w)
 
 	if dimAll || (inFlash && !isMatch) {
@@ -119,7 +104,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 
 	if badges != "" {
-		leftPart := fmt.Sprintf(" %s%s %s", indent, icon, name)
+		leftPart := tui.Truncate(fmt.Sprintf(" %s%s %s", indent, icon, name), max(0, w-tui.Width(badges)-1))
 		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
@@ -131,11 +116,13 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
 
-	rest := selectedStyle.Width(w - 1).Render(content)
+	rest := selectedStyle.Width(w - 1).Render(tui.Truncate(content, w-1))
 	return bar + rest
 }
 
 func (m *Model) padRight(left, right string, w int) string {
+	right = tui.Truncate(right, max(0, w-1))
+	left = tui.Truncate(left, max(0, w-tui.Width(right)-1))
 	lw := tui.Width(left)
 	rw := tui.Width(right)
 	gap := w - lw - rw - 1
@@ -146,17 +133,11 @@ func (m *Model) padRight(left, right string, w int) string {
 }
 
 func (m *Model) viewList() string {
-	listW := 60
-	if m.width > 80 {
-		listW = 70
-	}
-	if m.width < 66 {
-		listW = m.width - 6
-	}
+	listW := explorerPanelWidth(m.width)
 
 	var rows []string
 
-	chipLines := renderHeaderChips(m.headerChips, listW-2, 2)
+	chipLines := renderHeaderChips(m.headerChips, max(1, listW-2), 2)
 	rows = append(rows, styleHeaderLines(chipLines)...)
 	if len(chipLines) > 0 {
 		rows = append(rows, strings.Repeat(" ", listW))
@@ -169,27 +150,32 @@ func (m *Model) viewList() string {
 			prefix = iconSearch + " all"
 		}
 		searchLine := fmt.Sprintf(" %s %s", prefix, m.flashQuery.View())
+		searchLine = tui.Truncate(searchLine, listW)
 		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
 	} else {
 		bc := m.breadcrumb()
 		pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-		hdr := m.padRight(" "+bc, pos+" ", listW)
+		hdr := m.padRight(tui.Truncate(" "+bc, max(0, listW-tui.Width(pos)-2)), pos+" ", listW)
 		rows = append(rows, headerStyle.Width(listW).Render(hdr))
 	}
 
 	rows = append(rows, m.renderListRows(listW, false)...)
+	if strip := m.jobsStrip(); strip != "" && !inFlash {
+		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(strip, listW)))
+	}
 
-	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(" "+presentLabel(m.statusMsg)))
+	status := m.statusMsg
+	if status != "" && !inFlash {
+		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(status), listW)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump · esc cancel"
-		footer := m.padRight(matchInfo, hint+" ", listW)
+		footer := m.padRight(tui.Truncate(matchInfo, max(0, listW-tui.Width(hint)-2)), tui.Truncate(hint+" ", listW), listW)
 		rows = append(rows, footerStyle.Width(listW).Render(footer))
 	} else {
 		actions, nav := m.footerHints()
-		rows = append(rows, footerStyle.Width(listW).Render(" "+actions))
-		rows = append(rows, footerStyle.Width(listW).Render(" "+nav))
+		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+actions, listW)))
+		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+nav, listW)))
 	}
 
 	panel := tui.JoinVertical(tui.Left, rows...)
@@ -199,6 +185,13 @@ func (m *Model) viewList() string {
 		tui.Center, tui.Center,
 		panel,
 	)
+}
+
+func explorerPanelWidth(width int) int {
+	if width < 102 {
+		return max(1, width-6)
+	}
+	return 96
 }
 
 const HeaderCap = 9
@@ -291,7 +284,7 @@ func renderHeaderChips(chips []Chip, w, maxLines int) []string {
 	}
 	tokens := make([]string, len(chips))
 	for i, c := range chips {
-		tokens[i] = formatChip(i+1, c)
+		tokens[i] = tui.Truncate(formatChip(i+1, c), w)
 	}
 	return packChips(tokens, w, maxLines)
 }
@@ -430,119 +423,6 @@ var (
 	whichKeyKeyStyle    = tui.NewStyle().Foreground("215").Bold(true)
 	whichKeyDescStyle   = tui.NewStyle().Foreground("245")
 )
-
-const jumpLabels = "asdfghjklqwertyuiopzxcvbnm"
-
-func (m *Model) updateFlash(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
-	key := msg.String()
-	switch key {
-	case "ctrl+c":
-		return m, tui.Quit
-	case "esc":
-		m.exitFlash(false)
-	case "backspace":
-		if m.flashQuery.Value() != "" {
-			m.flashQuery, _ = m.flashQuery.Update(msg)
-			m.recomputeFlash()
-		} else {
-			m.exitFlash(false)
-		}
-	case "enter":
-
-		if len(m.flashMatches) > 0 {
-			m.cursor = m.flashMatches[0]
-			m.ensureVisible()
-		}
-		m.exitFlash(true)
-	default:
-		if msg.Type == tui.KeyRunes {
-			runes := msg.Runes
-
-			if m.flashQuery.Value() != "" && len(runes) == 1 {
-				ch := runes[0]
-				for i, label := range m.flashLabels {
-					if label != 0 && ch == label && i < len(m.flashMatches) {
-						m.cursor = m.flashMatches[i]
-						m.ensureVisible()
-						m.exitFlash(true)
-						return m, nil
-					}
-				}
-			}
-
-			m.flashQuery, _ = m.flashQuery.Update(msg)
-			m.recomputeFlash()
-		}
-	}
-	return m, nil
-}
-
-func (m *Model) exitFlash(jumped bool) {
-	m.flashQuery.Blur()
-	m.mode = viewList
-	if m.flashGlobal && !jumped && m.savedExpanded != nil {
-		m.expanded = m.savedExpanded
-		m.savedExpanded = nil
-		m.rebuildItems()
-		m.ensureVisible()
-	}
-	m.flashGlobal = false
-}
-
-func (m *Model) recomputeFlash() {
-	query := strings.ToLower(m.flashQuery.Value())
-	m.flashMatches = nil
-	m.flashLabels = nil
-
-	for i, item := range m.items {
-		name := m.itemSearchName(item)
-		if query == "" || strings.Contains(strings.ToLower(name), query) {
-			m.flashMatches = append(m.flashMatches, i)
-		}
-	}
-
-	available := m.availableJumpLabels()
-	for i := 0; i < len(m.flashMatches); i++ {
-		if i < len(available) {
-			m.flashLabels = append(m.flashLabels, available[i])
-		} else {
-			m.flashLabels = append(m.flashLabels, 0)
-		}
-	}
-}
-
-func (m *Model) availableJumpLabels() []rune {
-	query := strings.ToLower(m.flashQuery.Value())
-	if query == "" {
-		return nil
-	}
-	var available []rune
-	for _, r := range jumpLabels {
-		extended := query + string(r)
-		productive := false
-		for _, item := range m.items {
-			name := strings.ToLower(m.itemSearchName(item))
-			if strings.Contains(name, extended) {
-				productive = true
-				break
-			}
-		}
-		if !productive {
-			available = append(available, r)
-		}
-	}
-	return available
-}
-
-func (m *Model) itemSearchName(item listItem) string {
-	switch item.kind {
-	case KindGroup:
-		return item.group
-	case KindProject:
-		return item.project.Name
-	}
-	return ""
-}
 
 func flashInlineLabel(name, query string, label rune) string {
 	if query == "" {

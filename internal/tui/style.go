@@ -1,6 +1,11 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
 
 type Color string
 
@@ -48,6 +53,18 @@ func WithWhitespaceBackground(c Color) PlaceOption {
 }
 
 func Place(width, height int, hPos, vPos Position, content string, opts ...PlaceOption) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = Truncate(lines[i], width)
+	}
+	content = strings.Join(lines, "\n")
+
 	cfg := placeConfig{}
 	for _, o := range opts {
 		o(&cfg)
@@ -61,6 +78,13 @@ func Place(width, height int, hPos, vPos Position, content string, opts ...Place
 
 func Width(s string) int  { return lipgloss.Width(s) }
 func Height(s string) int { return lipgloss.Height(s) }
+
+func Truncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(s, width, "…")
+}
 
 func JoinHorizontal(pos Position, strs ...string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Position(pos), strs...)

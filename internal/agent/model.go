@@ -20,6 +20,7 @@ const (
 	KindWorkspace NodeKind = iota
 	KindGroup
 	KindProject
+	KindWorktree
 )
 
 type Project struct {
@@ -34,10 +35,9 @@ type Project struct {
 	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
-}
-
-func groupKey(wsRoot, group string) string {
-	return wsRoot + "\x00" + group
+	BranchActivity    map[string]time.Time
+	Language          string
+	WorktreeInventory []Worktree
 }
 
 type WorkspaceData struct {
@@ -58,76 +58,6 @@ type Chip struct {
 	Project *Project
 
 	WorkspaceRoot string
-}
-
-func (m *Model) rebuildItems() {
-	m.items = nil
-	m.headerChips = buildHeaderChips(m.workspaces)
-
-	for _, ws := range m.workspaces {
-		projects := make([]*Project, 0, len(ws.Projects))
-		groupActivity := make(map[string]time.Time, len(ws.Groups))
-		for i := range ws.Projects {
-			p := &ws.Projects[i]
-			if p.WorkspaceRoot == "" {
-				p.WorkspaceRoot = ws.Root
-			}
-			projects = append(projects, p)
-			if p.LastActiveAt.After(groupActivity[p.Group]) {
-				groupActivity[p.Group] = p.LastActiveAt
-			}
-		}
-		sort.SliceStable(projects, func(i, j int) bool {
-			if !projects[i].LastActiveAt.Equal(projects[j].LastActiveAt) {
-				return projects[i].LastActiveAt.After(projects[j].LastActiveAt)
-			}
-			return projects[i].Name < projects[j].Name
-		})
-
-		for _, p := range projects {
-			if p.Group == "" {
-				m.addProjectItem(p, 0)
-			}
-		}
-
-		groups := append([]string(nil), ws.Groups...)
-		sort.SliceStable(groups, func(i, j int) bool {
-			if !groupActivity[groups[i]].Equal(groupActivity[groups[j]]) {
-				return groupActivity[groups[i]].After(groupActivity[groups[j]])
-			}
-			return groups[i] < groups[j]
-		})
-		for _, g := range groups {
-			key := groupKey(ws.Root, g)
-			groupPath := filepath.Join(ws.Root, g)
-			m.items = append(m.items, listItem{kind: KindGroup, workspaceRoot: ws.Root, group: g, indent: 0, path: groupPath})
-			if m.expanded[key] {
-				for _, p := range projects {
-					if p.Group == g {
-						m.addProjectItem(p, 1)
-					}
-				}
-			}
-		}
-	}
-	m.clampCursor()
-}
-
-func (m *Model) clampCursor() {
-	if len(m.items) == 0 {
-		m.cursor = 0
-		return
-	}
-	if m.cursor >= len(m.items) {
-		m.cursor = len(m.items) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
-}
-
-func (m *Model) addProjectItem(p *Project, indent int) {
-	m.items = append(m.items, listItem{kind: KindProject, workspaceRoot: p.WorkspaceRoot, project: p, indent: indent, path: p.Path})
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -310,6 +240,33 @@ func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
 	return nil
 }
 
+func (m *Model) reloadProjectMetadata(root, id string) error {
+	ws, err := config.Load(root)
+	if err != nil {
+		return err
+	}
+	metadata, ok := ws.Projects[id]
+	if !ok {
+		return fmt.Errorf("project %s is missing from registry", id)
+	}
+	for wi := range m.workspaces {
+		if m.workspaces[wi].Root != root {
+			continue
+		}
+		for pi := range m.workspaces[wi].Projects {
+			project := &m.workspaces[wi].Projects[pi]
+			if project.ID != id {
+				continue
+			}
+			project.DefaultBranch = metadata.DefaultBranch
+			project.BranchActivity = branchActivity(metadata.Branches)
+			project.LastActiveAt, project.LastActiveMachine = projectActivity(metadata.Branches)
+			return nil
+		}
+	}
+	return fmt.Errorf("project %s is missing from explorer", id)
+}
+
 func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 	var diagnostics []string
 	roots := workspaceRoots(fallbackRoot)
@@ -396,29 +353,50 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 			Favorite:          p.Favorite,
 			LastActiveAt:      lastAt,
 			LastActiveMachine: lastMachine,
+			BranchActivity:    branchActivity(p.Branches),
+			Language:          languageForIcon(DetectIcon(mainPath)),
 		}
 
-		barePath := layout.BarePath(mainPath)
-		if _, err := os.Stat(barePath); err == nil {
-			if wts, err := git.WorktreeList(barePath); err == nil {
-				count := 0
-				for _, wt := range wts {
-					if !wt.Bare {
-						count++
-					}
-				}
-				proj.WorktreeCount = count
-			} else {
-				diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
-			}
-		} else if !os.IsNotExist(err) {
-			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect layout: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
+		proj.WorktreeInventory, err = LoadWorktreeInventory(mainPath)
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s/%s: inspect worktrees: %s", filepath.Base(root), presentLabel(name), presentLabel(err.Error())))
 		}
+		proj.WorktreeCount = len(proj.WorktreeInventory)
+		proj.LastActiveAt = projectRecency(proj.LastActiveAt, proj.WorktreeInventory)
 
 		ws.Projects = append(ws.Projects, proj)
 	}
 
 	return ws, diagnostics
+}
+
+func projectRecency(registry time.Time, inventory []Worktree) time.Time {
+	latest := registry
+	for _, wt := range inventory {
+		if wt.LastActiveAt.After(latest) {
+			latest = wt.LastActiveAt
+		}
+	}
+	return latest
+}
+
+func branchActivity(branches []config.BranchMeta) map[string]time.Time {
+	result := make(map[string]time.Time, len(branches))
+	for _, branch := range branches {
+		if at, err := time.Parse(time.RFC3339, branch.LastActiveAt); err == nil {
+			result[branch.Name] = at
+		}
+	}
+	return result
+}
+
+func languageForIcon(icon string) string {
+	for _, value := range []struct{ icon, name string }{{iconGo, "Go"}, {iconRust, "Rust"}, {iconPython, "Python"}, {iconTypeScript, "TypeScript"}, {iconJavaScript, "JavaScript"}, {iconRuby, "Ruby"}, {iconJava, "Java"}, {iconCSharp, "C#"}, {iconDocker, "Docker"}, {iconShell, "Shell"}, {iconMarkdown, "Markdown"}} {
+		if value.icon == icon {
+			return value.name
+		}
+	}
+	return "Other"
 }
 
 func projectActivity(branches []config.BranchMeta) (time.Time, string) {
