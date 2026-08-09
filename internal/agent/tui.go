@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -82,6 +84,10 @@ type Model struct {
 
 	whichKeyLevel int
 	lifecycle     *lifecycleModel
+	lifecycleJob  *lifecycleModel
+	debugLog      *log.Logger
+	debugLogFile  *os.File
+	debugLogPath  string
 
 	Launch *LaunchRequest
 
@@ -133,10 +139,22 @@ func (m *Model) Update(msg tui.Msg) (tui.Model, tui.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+	case lifecycleProgressMsg:
+		return m.updateLifecycleProgress(msg)
+	case lifecycleDoneMsg:
+		return m.finishLifecycleJob(msg)
+	case lifecyclePlanDoneMsg:
+		return m.finishLifecyclePlan(msg)
+	case lifecycleRefreshDoneMsg:
+		return m.finishLifecycleRefresh(msg)
 
 	case tui.KeyMsg:
 
 		if msg.String() == "ctrl+c" || msg.String() == "ctrl+q" {
+			if m.lifecycleJobRunning() {
+				m.statusMsg = "background lifecycle job is still running · A:progress"
+				return m, nil
+			}
 			return m, tui.Quit
 		}
 
@@ -216,6 +234,10 @@ func (m *Model) workspaceRootFor(proj *Project) string {
 }
 
 func (m *Model) launch(workspaceRoot, path string) (tui.Model, tui.Cmd) {
+	if m.lifecycleJobRunning() {
+		m.statusMsg = "background lifecycle job is still running · A:progress"
+		return m, nil
+	}
 	root, err := filepath.EvalSymlinks(workspaceRoot)
 	if err != nil {
 		m.statusMsg = "shell: " + err.Error()
@@ -313,6 +335,10 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 	switch msg.String() {
 	case "q":
+		if m.lifecycleJobRunning() {
+			m.statusMsg = "background lifecycle job is still running · A:progress"
+			return m, nil
+		}
 		return m, tui.Quit
 	case "v":
 		switch m.homeView {
@@ -337,6 +363,11 @@ func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 			m.rebuildItems()
 		}
 	case "A":
+		if m.lifecycleJob != nil {
+			m.lifecycle = m.lifecycleJob
+			m.mode = viewLifecycle
+			return m, nil
+		}
 		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
 		return m, nil
 	case "j", "down":

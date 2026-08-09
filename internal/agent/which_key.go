@@ -154,6 +154,10 @@ func (m *Model) updateWhichKey(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) toggleFavoriteGroup(root, group string) {
+	if m.lifecycleJobRunning() {
+		m.statusMsg = "favorite unavailable while lifecycle job runs · A:progress"
+		return
+	}
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for group"
 		return
@@ -196,6 +200,10 @@ func (m *Model) toggleFavoriteGroup(root, group string) {
 }
 
 func (m *Model) toggleFavoriteFor(proj *Project) {
+	if m.lifecycleJobRunning() {
+		m.statusMsg = "favorite unavailable while lifecycle job runs · A:progress"
+		return
+	}
 	root := m.workspaceRootFor(proj)
 	if root == "" {
 		m.statusMsg = "cannot resolve workspace for project"

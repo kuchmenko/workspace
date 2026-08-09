@@ -161,8 +161,12 @@ func (m *Model) viewList() string {
 
 	rows = append(rows, m.renderListRows(listW, false)...)
 
-	if m.statusMsg != "" && !inFlash {
-		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(m.statusMsg), listW)))
+	status := m.statusMsg
+	if jobStatus := m.lifecycleJobStatus(); jobStatus != "" {
+		status = jobStatus
+	}
+	if status != "" && !inFlash {
+		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(status), listW)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
 		hint := "letter to jump · esc cancel"

@@ -36,7 +36,10 @@ type lifecyclePhase int
 const (
 	lifecycleSelect lifecyclePhase = iota
 	lifecycleThreshold
+	lifecyclePlanning
 	lifecycleReview
+	lifecycleRunning
+	lifecycleRefreshing
 	lifecycleResult
 )
 
@@ -54,8 +57,12 @@ type lifecycleModel struct {
 	input, errorText, message string
 	details                   []string
 	scroll                    int
+	completed, total          int
+	current                   string
+	startedAt                 time.Time
 	plan                      WorktreeArchivePlan
 	parentSheet               *sheet
+	messages                  chan tui.Msg
 }
 type worktreeCandidate struct {
 	WorkspaceRoot, ProjectID string
@@ -102,14 +109,15 @@ func (m *Model) prepareLifecycle() {
 			lm.phase, lm.errorText = lifecycleResult, err.Error()
 		} else {
 			lm.phase = lifecycleReview
+			dirty := dirtyWorktreeCount(lm.scope.worktrees)
 			lm.message = fmt.Sprintf("Archive %d checkouts and preserve branches?", len(lm.scope.worktrees))
 			if len(lm.scope.worktrees) == 1 {
 				lm.message = "Archive checkout and preserve branches?"
 			}
-			if dirtyWorktreeCount(lm.scope.worktrees) > 0 {
+			if dirty > 0 {
 				lm.message = "WARNING: uncommitted changes will be discarded. Archive checkout and preserve branches?"
 				if len(lm.scope.worktrees) > 1 {
-					lm.message = fmt.Sprintf("WARNING: %d selected checkouts have uncommitted changes that will be discarded. Archive %d checkouts and preserve branches?", dirtyWorktreeCount(lm.scope.worktrees), len(lm.scope.worktrees))
+					lm.message = fmt.Sprintf("WARNING: %d selected checkouts have uncommitted changes that will be discarded. Archive %d checkouts and preserve branches?", dirty, len(lm.scope.worktrees))
 				}
 			}
 		}
@@ -118,14 +126,15 @@ func (m *Model) prepareLifecycle() {
 			lm.phase, lm.errorText = lifecycleResult, err.Error()
 		} else {
 			lm.phase = lifecycleReview
+			dirty := dirtyWorktreeCount(lm.scope.worktrees)
 			lm.message = fmt.Sprintf("Delete %d checkouts and their local/remote branches?", len(lm.scope.worktrees))
 			if len(lm.scope.worktrees) == 1 {
 				lm.message = "Delete checkout and local/remote branches?"
 			}
-			if dirtyWorktreeCount(lm.scope.worktrees) > 0 {
+			if dirty > 0 {
 				lm.message = "WARNING: uncommitted changes will be discarded. Delete checkout and local/remote branches?"
 				if len(lm.scope.worktrees) > 1 {
-					lm.message = fmt.Sprintf("WARNING: %d selected checkouts have uncommitted changes that will be discarded. Delete %d checkouts and their local/remote branches?", dirtyWorktreeCount(lm.scope.worktrees), len(lm.scope.worktrees))
+					lm.message = fmt.Sprintf("WARNING: %d selected checkouts have uncommitted changes that will be discarded. Delete %d checkouts and their local/remote branches?", dirty, len(lm.scope.worktrees))
 				}
 			}
 		}
@@ -147,7 +156,7 @@ func validateWorktreeTargets(p *Project, worktrees []*Worktree) error {
 func dirtyWorktreeCount(worktrees []*Worktree) int {
 	dirty := 0
 	for _, wt := range worktrees {
-		if worktreeDirty(wt) {
+		if wt != nil && wt.Dirty {
 			dirty++
 		}
 	}
@@ -270,13 +279,19 @@ type WorktreeArchiveExecution struct {
 	AffectedProjects          []ProjectIdentity
 }
 
-func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan) WorktreeArchiveExecution {
+func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan, progress ...func(worktreeCandidate, bool, string)) WorktreeArchiveExecution {
 	var r WorktreeArchiveExecution
 	for _, c := range plan.Eligible {
+		if len(progress) > 0 {
+			progress[0](c, true, "")
+		}
 		fresh, reason := revalidateWorktreeArchiveCandidate(c, plan.Threshold, time.Now())
 		if reason != "" {
 			r.Skipped++
 			r.Details = append(r.Details, c.Project.Name+"/"+c.Worktree.Branch+": "+reason)
+			if len(progress) > 0 {
+				progress[0](c, false, "skipped: "+reason)
+			}
 			continue
 		}
 		a := ArchiveWorktree(c.Project, fresh, c.WorkspaceRoot, false)
@@ -291,8 +306,14 @@ func ExecuteWorktreeArchivePlan(plan WorktreeArchivePlan) WorktreeArchiveExecuti
 				detail = "checkout removed / ownership metadata remains: " + detail
 			}
 			r.Details = append(r.Details, detail)
+			if len(progress) > 0 {
+				progress[0](c, false, "failed: "+detail)
+			}
 		} else {
 			r.Archived++
+			if len(progress) > 0 {
+				progress[0](c, false, "archived")
+			}
 		}
 	}
 	return r
@@ -441,7 +462,7 @@ func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.closeLifecycle()
 		return m, nil
 	}
-	if lm.phase == lifecycleReview || lm.phase == lifecycleResult {
+	if lm.phase == lifecycleReview || lm.phase == lifecycleRunning || lm.phase == lifecycleResult {
 		rows := m.lifecycleBodyRows()
 		maxScroll := max(0, len(m.lifecycleBody())-rows)
 		switch key {
@@ -469,11 +490,11 @@ func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	case lifecycleSelect:
 		m.updateLifecycleSelect(key)
 	case lifecycleThreshold:
-		m.updateLifecycleThreshold(msg)
+		return m, m.updateLifecycleThreshold(msg)
 	case lifecycleReview:
 		switch key {
 		case "enter", "y":
-			m.executeLifecycle()
+			return m, m.startLifecycleJob()
 		case "n":
 			m.closeLifecycle()
 		}
@@ -485,6 +506,9 @@ func (m *Model) closeLifecycle() {
 	parent := m.lifecycle.parentSheet
 	if parent != nil {
 		parent.pendingDel = nil
+	}
+	if m.lifecycleJob == m.lifecycle && m.lifecycle.phase != lifecyclePlanning && m.lifecycle.phase != lifecycleRunning && m.lifecycle.phase != lifecycleRefreshing {
+		m.lifecycleJob = nil
 	}
 	m.lifecycle = nil
 	m.mode = viewList
@@ -505,7 +529,7 @@ func (m *Model) updateLifecycleSelect(key string) {
 	}
 }
 
-func (m *Model) updateLifecycleThreshold(msg tui.KeyMsg) {
+func (m *Model) updateLifecycleThreshold(msg tui.KeyMsg) tui.Cmd {
 	lm := m.lifecycle
 	key := msg.String()
 	if key == "backspace" && len(lm.input) > 0 {
@@ -514,117 +538,22 @@ func (m *Model) updateLifecycleThreshold(msg tui.KeyMsg) {
 		d, err := ParseArchiveThreshold(lm.input)
 		if err != nil {
 			lm.errorText = err.Error()
-			return
+			return nil
 		}
-		lm.plan = BuildWorktreeArchivePlan(m.lifecycleProjects(lm.scope), d, time.Now(), LoadWorktrees)
-		lm.phase = lifecycleReview
+		lm.phase = lifecyclePlanning
+		projects := cloneLifecycleProjects(m.lifecycleProjects(lm.scope))
+		m.lifecycleJob = lm
+		m.logLifecycle("planning started threshold=%s projects=%d", d, len(projects))
+		return func() tui.Msg {
+			plan := BuildWorktreeArchivePlan(projects, d, time.Now(), LoadWorktrees)
+			return lifecyclePlanDoneMsg{job: lm, plan: plan}
+		}
 	} else if len(msg.Runes) > 0 {
 		lm.input += string(msg.Runes)
 	}
+	return nil
 }
 
-func (m *Model) executeLifecycle() {
-	lm := m.lifecycle
-	switch lm.action {
-	case lifecycleArchiveProjects:
-		r := ArchiveProjects(m.lifecycleProjects(lm.scope))
-		m.removeArchivedProjects(r.Succeeded)
-		if len(r.Succeeded) > 0 {
-			lm.parentSheet = nil
-		}
-		lm.message = fmt.Sprintf("Archived %d project(s); %d failed.", len(r.Succeeded), len(r.Failures))
-		lm.errorText = strings.Join(r.Failures, "; ")
-	case lifecycleArchiveWorktree:
-		root := m.workspaceRootFor(lm.scope.project)
-		archived, partial, failed := 0, 0, 0
-		var details []string
-		for _, wt := range lm.scope.worktrees {
-			r := ArchiveWorktree(lm.scope.project, wt, root, true)
-			if r.CheckoutRemoved {
-				m.wtCache.Invalidate(lm.scope.project.Path)
-			}
-			if r.Err != nil {
-				if r.CheckoutRemoved {
-					partial++
-					details = append(details, worktreeDisplayName(*wt)+": partial: checkout removed; metadata remains: "+r.Err.Error())
-				} else {
-					failed++
-					details = append(details, worktreeDisplayName(*wt)+": unchanged: "+r.Err.Error())
-				}
-			} else {
-				archived++
-				details = append(details, worktreeDisplayName(*wt)+": archived")
-			}
-		}
-		if len(lm.scope.worktrees) == 1 && failed == 0 && partial == 0 {
-			lm.message = "Archived worktree; branch preserved."
-		} else {
-			lm.message = fmt.Sprintf("Archived %d worktree(s); %d partial; %d failed.", archived, partial, failed)
-		}
-		lm.details = details
-		if archived+partial > 0 {
-			m.appendMetadataRefreshError(lm, ProjectIdentity{root, lm.scope.project.ID})
-		}
-	case lifecycleArchiveOldWorktrees:
-		r := ExecuteWorktreeArchivePlan(lm.plan)
-		for _, path := range r.RemovedProjectPaths {
-			m.wtCache.Invalidate(path)
-		}
-		lm.message = fmt.Sprintf("Archived %d, skipped %d, failed %d.", r.Archived, r.Skipped, r.Failed)
-		lm.errorText = strings.Join(r.Details, "; ")
-		seen := map[ProjectIdentity]bool{}
-		for _, id := range r.AffectedProjects {
-			if !seen[id] {
-				m.appendMetadataRefreshError(lm, id)
-				seen[id] = true
-			}
-		}
-	case lifecycleDeleteWorktree:
-		root := m.workspaceRootFor(lm.scope.project)
-		checkoutRemoved := false
-		if len(lm.scope.worktrees) == 1 {
-			r := DeleteWorktreeDestructive(lm.scope.project, lm.scope.worktree, root)
-			lm.message, lm.errorText = r.Message, r.Detail
-			checkoutRemoved = r.CheckoutRemoved
-		} else {
-			deleted, partial, failed := 0, 0, 0
-			var details []string
-			for _, wt := range lm.scope.worktrees {
-				r := DeleteWorktreeDestructive(lm.scope.project, wt, root)
-				checkoutRemoved = checkoutRemoved || r.CheckoutRemoved
-				switch {
-				case r.CheckoutRemoved && r.BranchesDeleted && r.MetadataReleased:
-					deleted++
-					details = append(details, worktreeDisplayName(*wt)+": deleted")
-				case r.CheckoutRemoved:
-					partial++
-					details = append(details, worktreeDisplayName(*wt)+": partial: "+r.Detail)
-				default:
-					failed++
-					details = append(details, worktreeDisplayName(*wt)+": unchanged: "+r.Detail)
-				}
-			}
-			lm.message = fmt.Sprintf("Deleted %d worktree(s); %d partial; %d failed.", deleted, partial, failed)
-			lm.details = details
-		}
-		m.wtCache.Invalidate(lm.scope.project.Path)
-		if checkoutRemoved {
-			m.appendMetadataRefreshError(lm, ProjectIdentity{root, lm.scope.project.ID})
-		}
-	}
-	lm.phase = lifecycleResult
-	lm.scroll = 0
-	m.rebuildItems()
-}
-
-func (m *Model) appendMetadataRefreshError(lm *lifecycleModel, id ProjectIdentity) {
-	if err := m.reloadProjectMetadata(id.WorkspaceRoot, id.ProjectID); err != nil {
-		if lm.errorText != "" {
-			lm.errorText += "; "
-		}
-		lm.errorText += "metadata refresh failed: " + err.Error()
-	}
-}
 func (m *Model) removeArchivedProjects(ids []ProjectIdentity) {
 	set := map[ProjectIdentity]bool{}
 	for _, id := range ids {

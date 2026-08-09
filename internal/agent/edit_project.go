@@ -109,6 +109,10 @@ func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
+	if m.lifecycleJobRunning() {
+		m.editErr = "project editing unavailable while lifecycle job runs"
+		return m, nil
+	}
 	proj := m.popupProj
 	if proj == nil {
 		m.mode = viewList

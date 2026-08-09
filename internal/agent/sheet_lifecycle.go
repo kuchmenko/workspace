@@ -3,6 +3,18 @@ package agent
 import "github.com/kuchmenko/workspace/internal/tui"
 
 func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
+	if m.lifecycleJob != nil {
+		if key == "A" {
+			m.lifecycle = m.lifecycleJob
+			m.mode = viewLifecycle
+			m.sheet = nil
+			return true, m, nil
+		}
+		if key == "a" || key == "d" {
+			s.statusMsg = "background lifecycle job already exists · A:progress"
+			return true, m, nil
+		}
+	}
 	switch key {
 	case "a":
 		if worktrees := s.visualWorktrees(); len(worktrees) > 0 {

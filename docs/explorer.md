@@ -83,10 +83,13 @@ Per-row actions:
   leaves files untouched; worktree archive removes the checkout but preserves
   its local and remote branches. A dirty single worktree shows a data-loss
   warning and can be force-archived after confirmation.
-- `d` — destructively delete one non-main worktree after a `y` / `n`
-  confirmation. Dirty worktrees show a data-loss warning and are force-removed
-  after confirmation. Local-only and ahead branches are also deleted; remote
-  deletion failures are reported without preventing local cleanup.
+- `v` — in a project panel, begin or end visual worktree selection. Extend the
+  range with Vim motions, then press `a` or `d` for one reviewed bulk action.
+- `d` — destructively delete selected non-main worktrees after an `enter` / `y`
+  confirmation; `n` cancels. Dirty worktrees show a data-loss warning and are
+  force-removed after confirmation. Local-only and ahead branches are also
+  deleted; remote deletion failures are reported without preventing local
+  cleanup.
 - `A` — archive projects or preview/archive old safe worktrees in the current
   project or group when invoked there, or globally when invoked from home.
 - `f` — on a project row, toggle favorite. Equivalent to
@@ -114,6 +117,12 @@ search are keyboard actions rather than synthetic rows in the list. Project
 worktrees show separate status and last-activity columns; activity uses the
 newer registry branch timestamp or HEAD commit time and displays `—` when no
 timestamp is available.
+
+Lifecycle planning, archive, delete, and post-operation refresh run in the
+background. The lifecycle panel shows the current target and completed/total
+progress. Press `Esc` to return to Explorer while work continues and `A` to
+reopen progress or results. Debug logs are appended to
+`$XDG_STATE_HOME/ws/explorer.log` (default `~/.local/state/ws/explorer.log`).
 
 ## Worktree creation from the TUI
 

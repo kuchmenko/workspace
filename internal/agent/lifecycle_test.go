@@ -128,7 +128,15 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 		t.Fatal("n did not cancel delete confirmation")
 	}
 	m.openWorktreeDelete(project, worktree)
-	m.updateLifecycle(enter())
+	_, cmd := m.updateLifecycle(enter())
+	if cmd == nil || m.lifecycle.phase != lifecycleRunning {
+		t.Fatalf("enter did not start background delete: phase %v cmd %v", m.lifecycle.phase, cmd)
+	}
+	result := runLifecycle(m.lifecycle, nil, nil, func(string, string, bool) {})
+	_, refresh := m.finishLifecycleJob(lifecycleDoneMsg{job: m.lifecycle, result: result})
+	if refresh != nil {
+		m.Update(refresh())
+	}
 	if m.lifecycle.phase != lifecycleResult || !strings.Contains(m.lifecycle.message, "Deleted checkout") {
 		t.Fatalf("enter did not execute delete: phase %v message %q error %q", m.lifecycle.phase, m.lifecycle.message, m.lifecycle.errorText)
 	}
@@ -246,6 +254,155 @@ func TestLifecycleUsesFullScreenFrameAndPersistentHints(t *testing.T) {
 	for _, text := range []string{"Lifecycle › all workspaces", "1 / a  Archive projects", "2 / w  Archive old worktrees", "1/a:archive projects", "esc:back"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("lifecycle frame missing %q: %q", text, view)
+		}
+	}
+}
+
+func TestLifecycleJobDetachesAndReopensWithProgress(t *testing.T) {
+	lm := &lifecycleModel{
+		action:    lifecycleArchiveWorktree,
+		phase:     lifecycleRunning,
+		total:     3,
+		startedAt: time.Now(),
+		messages:  make(chan tui.Msg, 1),
+	}
+	m := &Model{lifecycle: lm, lifecycleJob: lm, mode: viewLifecycle, width: 90, height: 18}
+
+	m.updateLifecycle(esc())
+	if m.lifecycle != nil || m.lifecycleJob != lm || m.mode != viewList {
+		t.Fatalf("detached lifecycle = active %#v job %#v mode %v", m.lifecycle, m.lifecycleJob, m.mode)
+	}
+	m.updateLifecycleProgress(lifecycleProgressMsg{job: lm, label: "feat/one", detail: "archived"})
+	if lm.completed != 1 || !strings.Contains(m.lifecycleJobStatus(), "1/3") {
+		t.Fatalf("detached progress = completed %d status %q", lm.completed, m.lifecycleJobStatus())
+	}
+	m.updateList(rune1('A'))
+	if m.lifecycle != lm || m.mode != viewLifecycle {
+		t.Fatalf("reopened lifecycle = active %#v mode %v", m.lifecycle, m.mode)
+	}
+}
+
+func TestLifecycleAgePlanningRunsAsCommand(t *testing.T) {
+	lm := &lifecycleModel{
+		action: lifecycleArchiveOldWorktrees,
+		phase:  lifecycleThreshold,
+		input:  "72h",
+		scope:  lifecycleScope{kind: lifecycleGlobal},
+	}
+	m := &Model{lifecycle: lm, mode: viewLifecycle}
+
+	_, cmd := m.updateLifecycle(enter())
+	if cmd == nil || lm.phase != lifecyclePlanning {
+		t.Fatalf("planning = phase %v cmd %v", lm.phase, cmd)
+	}
+	m.Update(cmd())
+	if lm.phase != lifecycleReview || lm.plan.Threshold != 72*time.Hour {
+		t.Fatalf("finished planning = phase %v plan %+v", lm.phase, lm.plan)
+	}
+}
+
+func TestArchiveProjectsReportsEveryTargetProgress(t *testing.T) {
+	root := t.TempDir()
+	ws := &config.Workspace{
+		Meta: config.Meta{Version: 1},
+		Projects: map[string]config.Project{
+			"active":   {Path: "active", Status: config.StatusActive},
+			"archived": {Path: "archived", Status: config.StatusArchived},
+		},
+		Groups: map[string]config.Group{},
+	}
+	if err := config.Save(root, ws); err != nil {
+		t.Fatal(err)
+	}
+	projects := []worktreeCandidate{
+		{WorkspaceRoot: root, ProjectID: "active"},
+		{WorkspaceRoot: root, ProjectID: "archived"},
+	}
+	started, completed := 0, 0
+	ArchiveProjects(projects, func(_ ProjectIdentity, start bool, _ string) {
+		if start {
+			started++
+		} else {
+			completed++
+		}
+	})
+	if started != len(projects) || completed != len(projects) {
+		t.Fatalf("progress = started %d completed %d, want %d each", started, completed, len(projects))
+	}
+}
+
+func TestLifecycleJobBlocksForegroundRegistryMutation(t *testing.T) {
+	lm := &lifecycleModel{phase: lifecycleRunning}
+	project := &Project{Favorite: false}
+	m := &Model{lifecycleJob: lm}
+
+	m.toggleFavoriteFor(project)
+	if project.Favorite || !strings.Contains(m.statusMsg, "unavailable") {
+		t.Fatalf("favorite during lifecycle = favorite %v status %q", project.Favorite, m.statusMsg)
+	}
+}
+
+func TestLifecycleRefreshClosesRemovedProjectSheet(t *testing.T) {
+	project := Project{ID: "project", Name: "project", WorkspaceRoot: "/ws", Path: "/ws/project"}
+	lm := &lifecycleModel{phase: lifecycleRefreshing}
+	m := &Model{
+		workspaces:   []WorkspaceData{{Root: "/ws", Projects: []Project{project}}},
+		expanded:     map[string]bool{},
+		wtCache:      NewWorktreeCache(),
+		lifecycleJob: lm,
+		mode:         viewList,
+	}
+	m.sheet = newProjectSheet(m, &m.workspaces[0].Projects[0], nil)
+	lm.parentSheet = m.sheet
+
+	m.finishLifecycleRefresh(lifecycleRefreshDoneMsg{
+		job:        lm,
+		workspaces: map[string]WorkspaceData{"/ws": {Root: "/ws"}},
+	})
+	if m.sheet != nil || lm.parentSheet != nil || lm.phase != lifecycleResult {
+		t.Fatalf("refresh retained removed sheet: sheet %#v parent %#v phase %v", m.sheet, lm.parentSheet, lm.phase)
+	}
+}
+
+func TestLifecycleRefreshClosesGlobalSearch(t *testing.T) {
+	lm := &lifecycleModel{phase: lifecycleRefreshing}
+	m := &Model{
+		expanded:      map[string]bool{},
+		wtCache:       NewWorktreeCache(),
+		lifecycleJob:  lm,
+		mode:          viewFlash,
+		flashGlobal:   true,
+		flashMatches:  []int{4},
+		flashLabels:   []rune{'a'},
+		savedItems:    []listItem{{kind: KindProject}},
+		savedExpanded: map[string]bool{"old": true},
+	}
+
+	m.finishLifecycleRefresh(lifecycleRefreshDoneMsg{job: lm})
+	if m.mode != viewList || m.flashGlobal || m.flashMatches != nil || m.savedItems != nil {
+		t.Fatalf("refresh retained global search state: mode %v global %v matches %v saved %v", m.mode, m.flashGlobal, m.flashMatches, m.savedItems)
+	}
+}
+
+func TestExplorerDebugLogRecordsLifecycleEvents(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	m := &Model{}
+	if err := m.EnableDebugLog(); err != nil {
+		t.Fatal(err)
+	}
+	path := m.DebugLogPath()
+	m.logLifecycle("target=%s outcome=%s", "feat/one", "archived")
+	if err := m.CloseDebugLog(); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"explorer started", "target=feat/one outcome=archived", "explorer stopped"} {
+		if !strings.Contains(string(contents), text) {
+			t.Fatalf("debug log missing %q: %q", text, contents)
 		}
 	}
 }

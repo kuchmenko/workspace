@@ -18,7 +18,7 @@ func (s *sheet) pageRows(m *Model) int {
 	if s.filterMode || s.filter.Value() != "" {
 		chrome++
 	}
-	if s.statusMsg != "" {
+	if s.statusMsg != "" || m.lifecycleJobStatus() != "" {
 		chrome++
 	}
 	return max(1, m.height-chrome)
@@ -51,8 +51,12 @@ func (s *sheet) view(m *Model) string {
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+actions, panelW)),
 		footerStyle.Width(panelW).Render(tui.Truncate(" "+nav, panelW)),
 	}
-	if s.statusMsg != "" {
-		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(" "+presentLabel(s.statusMsg), panelW))}, bottom...)
+	status := s.statusMsg
+	if jobStatus := m.lifecycleJobStatus(); jobStatus != "" {
+		status = jobStatus
+	}
+	if status != "" {
+		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(" "+presentLabel(status), panelW))}, bottom...)
 	}
 
 	bodyRows := max(0, m.height-len(top)-len(bottom))

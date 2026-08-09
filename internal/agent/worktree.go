@@ -77,6 +77,11 @@ func (c *WorktreeCache) SeedInventory(mainPath string, wts []Worktree) {
 	c.inventory[mainPath] = wts
 }
 
+func (c *WorktreeCache) SeedDetails(mainPath string, wts []Worktree) {
+	c.details[mainPath] = wts
+	c.inventory[mainPath] = wts
+}
+
 func (c *WorktreeCache) Inventory(mainPath string) []Worktree {
 	if wts, ok := c.inventory[mainPath]; ok {
 		return wts
@@ -215,6 +220,12 @@ func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 }
 
 func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
+	if m.lifecycleJobRunning() {
+		m.statusMsg = "worktree creation unavailable while lifecycle job runs · A:progress"
+		m.wtBranch.Blur()
+		m.mode = viewList
+		return m, nil
+	}
 	branch := strings.TrimSpace(m.wtBranch.Value())
 	if branch == "" {
 		return m, nil

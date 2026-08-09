@@ -57,6 +57,14 @@ func runExplorerTUI() error {
 	}
 
 	m := agent.NewModel(workspaces)
+	if err := m.EnableDebugLog(); err != nil {
+		fmt.Fprintf(os.Stderr, "ws explorer: debug log: %v\n", err)
+	}
+	defer func() {
+		if err := m.CloseDebugLog(); err != nil {
+			fmt.Fprintf(os.Stderr, "ws explorer: close debug log: %v\n", err)
+		}
+	}()
 	p := tui.NewProgram(m, tui.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
