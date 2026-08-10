@@ -68,6 +68,9 @@ func TestControlKeyConversions(t *testing.T) {
 		{KeyCtrlU, tea.KeyCtrlU, "ctrl+u"},
 		{KeyCtrlF, tea.KeyCtrlF, "ctrl+f"},
 		{KeyCtrlB, tea.KeyCtrlB, "ctrl+b"},
+		{KeyCtrlO, tea.KeyCtrlO, "ctrl+o"},
+		{KeyCtrlQ, tea.KeyCtrlQ, "ctrl+q"},
+		{KeyCtrlS, tea.KeyCtrlS, "ctrl+s"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

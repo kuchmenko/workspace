@@ -26,6 +26,9 @@ const (
 	KeyCtrlU
 	KeyCtrlF
 	KeyCtrlB
+	KeyCtrlO
+	KeyCtrlQ
+	KeyCtrlS
 )
 
 type KeyMsg struct {
@@ -56,6 +59,9 @@ var keyNames = map[KeyType]string{
 	KeyCtrlU:     "ctrl+u",
 	KeyCtrlF:     "ctrl+f",
 	KeyCtrlB:     "ctrl+b",
+	KeyCtrlO:     "ctrl+o",
+	KeyCtrlQ:     "ctrl+q",
+	KeyCtrlS:     "ctrl+s",
 }
 
 func (k KeyMsg) String() string {
@@ -63,7 +69,7 @@ func (k KeyMsg) String() string {
 	if k.Alt {
 		b.WriteString("alt+")
 	}
-	if k.Ctrl && k.Type != KeyCtrlC && k.Type != KeyCtrlD && k.Type != KeyCtrlU && k.Type != KeyCtrlF && k.Type != KeyCtrlB {
+	if k.Ctrl && k.Type != KeyCtrlC && k.Type != KeyCtrlD && k.Type != KeyCtrlU && k.Type != KeyCtrlF && k.Type != KeyCtrlB && k.Type != KeyCtrlO && k.Type != KeyCtrlQ && k.Type != KeyCtrlS {
 		b.WriteString("ctrl+")
 	}
 	if k.Type == KeyRunes {

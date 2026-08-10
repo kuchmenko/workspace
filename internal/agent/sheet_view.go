@@ -9,12 +9,7 @@ import (
 )
 
 func (s *sheet) pageRows(m *Model) int {
-	panelW := explorerPanelWidth(m.width)
-	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
-	chrome := len(styleHeaderLines(chipLines)) + 4
-	if len(chipLines) > 0 {
-		chrome++
-	}
+	chrome := 3
 	if s.filterMode || s.filter.Value() != "" {
 		chrome++
 	}
@@ -28,19 +23,16 @@ func (s *sheet) pageRows(m *Model) int {
 }
 
 func (s *sheet) view(m *Model) string {
-	panelW := explorerPanelWidth(m.width)
+	panelW := max(1, m.width)
 	var top []string
 
-	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
-	top = append(top, styleHeaderLines(chipLines)...)
-	if len(chipLines) > 0 {
-		top = append(top, strings.Repeat(" ", panelW))
-	}
-
 	position := fmt.Sprintf("%d/%d", min(s.cursor+1, len(s.visible)), len(s.visible))
-	header := padPanelRight(" "+s.breadcrumb(), position+" ", panelW)
+	right := position
+	if attention := m.activityAttentionToken(); attention != "" {
+		right += " · " + attention
+	}
+	header := padPanelRight(" "+s.title(), right+" ", panelW)
 	top = append(top, headerStyle.Width(panelW).Render(header))
-	top = append(top, dimStyle.Width(panelW).Render(tui.Truncate(" "+s.subtitle(), panelW)))
 	if s.filterMode || s.filter.Value() != "" {
 		prompt := "/" + s.filter.Value()
 		if s.filterMode {
@@ -49,11 +41,11 @@ func (s *sheet) view(m *Model) string {
 		top = append(top, flashSearchStyle.Width(panelW).Render(tui.Truncate(" "+iconSearch+" "+prompt, panelW)))
 	}
 
-	actions, nav := s.footerHints()
-	bottom := []string{
-		footerStyle.Width(panelW).Render(tui.Truncate(" "+actions, panelW)),
-		footerStyle.Width(panelW).Render(tui.Truncate(" "+nav, panelW)),
+	footer := " Ctrl+O actions · / search · q back"
+	if s.visual {
+		footer = fmt.Sprintf(" %d selected · Ctrl+O actions · a archive · d delete · q cancel", len(s.visualWorktrees()))
 	}
+	bottom := []string{footerStyle.Width(panelW).Render(tui.Truncate(footer, panelW))}
 	if strip := m.jobsStrip(); strip != "" {
 		bottom = append([]string{statusMsgStyle.Width(panelW).Render(tui.Truncate(strip, panelW))}, bottom...)
 	}
@@ -82,7 +74,7 @@ func (s *sheet) view(m *Model) string {
 
 	rows := append(top, body...)
 	rows = append(rows, bottom...)
-	return tui.Place(m.width, m.height, tui.Center, tui.Center, tui.JoinVertical(tui.Left, rows...))
+	return tui.GradientCanvas(m.width, m.height, tui.JoinVertical(tui.Left, rows...))
 }
 
 func (s *sheet) renderRow(visIdx, width int) string {
@@ -120,7 +112,7 @@ func (s *sheet) renderRow(visIdx, width int) string {
 		return bar + selectedStyle.Width(contentWidth).Render(line)
 	}
 	if visual {
-		return " " + selectedStyle.Width(width-1).Render(tui.Truncate(line, width-1))
+		return activityAgeStyle.Render("│") + selectedStyle.Width(width-1).Render(tui.Truncate(line, width-1))
 	}
 	return itemStyle.Width(width).Render(line)
 }
@@ -187,14 +179,14 @@ func (s *sheet) subtitle() string {
 
 func (s *sheet) footerHints() (actions, nav string) {
 	if s.filterMode {
-		return "type to filter  enter:apply  esc:clear", "text editing keys remain active"
+		return "type to search  enter:results  Ctrl+C:cancel", "text editing keys remain active"
 	}
 	if s.mode == sheetGroup {
-		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:jobs  M:maint  /:filter"
+		actions = "⏎/l:open  s:shell  f:fav  a:archive-group  A:Activity  M:maint  /:search"
 	} else {
-		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:jobs  M:maint  /:filter"
+		actions = "⏎/l:open  s:main  w:new  e:edit  f:fav  A:Activity  M:maint  /:search"
 		if selected := len(s.visualWorktrees()); selected > 0 {
-			actions = fmt.Sprintf("VISUAL %d  a:archive  d:delete  v/esc:cancel", selected)
+			actions = fmt.Sprintf("VISUAL %d  a:archive  d:delete  v/q:cancel", selected)
 			return actions, "j/k:extend  g/G:first/last  ^d/^u:half  ^f/^b:page"
 		}
 		if row := s.focused(); row != nil && row.kind == rowWorktree && row.wt != nil && !row.wt.IsMain {

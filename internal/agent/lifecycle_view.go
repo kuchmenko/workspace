@@ -9,13 +9,8 @@ import (
 )
 
 func (m *Model) viewLifecycle() string {
-	panelW := explorerPanelWidth(m.width)
-	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
+	panelW := max(1, m.width)
 	var top []string
-	top = append(top, styleHeaderLines(chipLines)...)
-	if len(chipLines) > 0 {
-		top = append(top, strings.Repeat(" ", panelW))
-	}
 
 	header := padPanelRight(" Lifecycle › "+m.lifecycleScopeLabel(), m.lifecyclePhaseLabel()+" ", panelW)
 	top = append(top, headerStyle.Width(panelW).Render(header))
@@ -42,16 +37,11 @@ func (m *Model) viewLifecycle() string {
 		rows = append(rows, style.Width(panelW).Render(tui.Truncate(" "+line, panelW)))
 	}
 	rows = append(rows, bottom...)
-	return tui.Place(m.width, m.height, tui.Center, tui.Center, tui.JoinVertical(tui.Left, rows...))
+	return tui.GradientCanvas(m.width, m.height, tui.JoinVertical(tui.Left, rows...))
 }
 
 func (m *Model) lifecycleBodyRows() int {
-	panelW := explorerPanelWidth(m.width)
-	chipLines := renderHeaderChips(m.headerChips, max(1, panelW-2), 2)
-	topRows := len(styleHeaderLines(chipLines)) + 2
-	if len(chipLines) > 0 {
-		topRows++
-	}
+	topRows := 2
 	return max(0, m.height-topRows-2)
 }
 
@@ -78,13 +68,13 @@ func (m *Model) lifecycleBodyFor(lm *lifecycleModel) []string {
 			for _, wt := range lm.scope.worktrees {
 				state := ""
 				if wt.Dirty {
-					state = " · dirty"
+					state = " · modified"
 				}
 				lines = append(lines, "• "+worktreeDisplayName(*wt)+state)
 			}
 		}
 		if lm.action == lifecycleArchiveOldWorktrees {
-			lines = append(lines, fmt.Sprintf("eligible %d · recent %d · main %d · dirty %d · protected %d · unpushed %d", len(lm.plan.Eligible), lm.plan.Recent, lm.plan.Main, lm.plan.Dirty, lm.plan.Protected, lm.plan.Unpushed))
+			lines = append(lines, fmt.Sprintf("eligible %d · recent %d · main %d · modified %d · protected %d · unpushed %d", len(lm.plan.Eligible), lm.plan.Recent, lm.plan.Main, lm.plan.Dirty, lm.plan.Protected, lm.plan.Unpushed))
 		}
 	case lifecycleRunning:
 		percent := 0
@@ -135,11 +125,11 @@ func (m *Model) lifecycleFooterHints() (actions, nav string) {
 	case lifecycleRefreshing:
 		actions = "refreshing in background"
 	case lifecycleResult:
-		actions = "esc:close"
+		actions = "q:close"
 	}
-	nav = "esc:back"
+	nav = "q:back"
 	if m.lifecycle.phase == lifecycleReview || m.lifecycle.phase == lifecycleRunning || m.lifecycle.phase == lifecycleRefreshing || m.lifecycle.phase == lifecycleResult {
-		nav = "j/k:scroll  g/G:first/last  ^d/^u:half  esc:back"
+		nav = "j/k:scroll  g/G:first/last  ^d/^u:half  q:back"
 	}
 	return actions, nav
 }

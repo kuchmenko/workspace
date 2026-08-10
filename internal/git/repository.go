@@ -260,8 +260,16 @@ func aheadBehindRefs(repoPath, branch, upstream string) (ahead, behind int, exis
 }
 
 func IsDirty(repoPath string) bool {
+	dirty, err := WorktreeModified(repoPath)
+	return err != nil || dirty
+}
+
+func WorktreeModified(repoPath string) (bool, error) {
 	out, err := exec.Command("git", "-C", repoPath, "status", "--porcelain").Output()
-	return err != nil || strings.TrimSpace(string(out)) != ""
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
 
 func HasIndexLock(repoPath string) bool {

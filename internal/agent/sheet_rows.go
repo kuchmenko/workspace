@@ -33,6 +33,9 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := wts[ordered[i]], wts[ordered[j]]
+		if a.IsMain != b.IsMain {
+			return a.IsMain
+		}
 		return recencyLess(a.LastActiveAt, b.LastActiveAt, worktreeDisplayName(a), worktreeDisplayName(b), true)
 	})
 
@@ -105,14 +108,17 @@ func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []she
 }
 
 func wtHint(wt *Worktree) string {
-	parts := make([]string, 0, 2)
-	if wt.Dirty {
-		parts = append(parts, "dirty")
-	} else {
-		parts = append(parts, "clean")
+	parts := make([]string, 0, 3)
+	if wt.Unknown {
+		parts = append(parts, "unknown")
+	} else if wt.Dirty {
+		parts = append(parts, "modified")
 	}
 	if wt.Ahead > 0 {
 		parts = append(parts, fmt.Sprintf("↑%d", wt.Ahead))
+	}
+	if wt.Behind > 0 {
+		parts = append(parts, fmt.Sprintf("↓%d", wt.Behind))
 	}
 	return strings.Join(parts, " ")
 }

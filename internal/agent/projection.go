@@ -36,23 +36,13 @@ func (m *Model) rebuildItems() {
 }
 
 func (m *Model) rebuildRecentItems() {
-	key := recentKey()
-	if _, ok := m.expanded[key]; !ok {
-		m.expanded[key] = true
-	}
-	m.items = append(m.items, listItem{kind: KindGroup, group: "Recent", expandKey: key, projectionGroup: true})
-	if !m.expanded[key] {
-		return
-	}
 	for wi := range m.workspaces {
 		for pi := range m.workspaces[wi].Projects {
-			m.addProjectItem(&m.workspaces[wi].Projects[pi], 1)
-			m.items[len(m.items)-1].expandKey = key
+			m.addProjectItem(&m.workspaces[wi].Projects[pi], 0)
 		}
 	}
-	projects := m.items[1:]
-	sort.SliceStable(projects, func(i, j int) bool {
-		return recencyLess(projects[i].project.LastActiveAt, projects[j].project.LastActiveAt, projects[i].project.Name, projects[j].project.Name, m.recentOrder == config.RecentOrderDesc)
+	sort.SliceStable(m.items, func(i, j int) bool {
+		return recencyLess(m.items[i].project.LastActiveAt, m.items[j].project.LastActiveAt, m.items[i].project.Name, m.items[j].project.Name, m.recentOrder == config.RecentOrderDesc)
 	})
 }
 

@@ -39,7 +39,7 @@ func (m *Model) openCurrentItem() (tui.Model, tui.Cmd) {
 	case KindProject:
 		m.sheet = newProjectSheet(m, item.project, nil)
 	case KindWorktree:
-		return m.launch(item.workspaceRoot, item.path)
+		m.sheet = newProjectSheet(m, item.parentProj, nil)
 	}
 	return m, nil
 }

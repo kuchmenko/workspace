@@ -58,10 +58,17 @@ func existingGroups(workspaces []WorkspaceData) []string {
 func (m *Model) updateEditProject(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
+	case "q":
+		if m.editField == 0 {
+			var cmd tui.Cmd
+			m.editGroup, cmd = m.editGroup.Update(msg)
+			return m, cmd
+		}
+		fallthrough
 	case "esc":
 		m.editGroup.Blur()
-		m.mode = viewList
 		m.editErr = ""
+		m.restoreFormOrigin()
 		return m, nil
 	case "tab", "down":
 		m.editField = (m.editField + 1) % 3
@@ -139,6 +146,7 @@ func (m *Model) executeEditProject() (tui.Model, tui.Cmd) {
 		})
 		return jobResult{Summary: fmt.Sprintf("updated %s: group=%s category=%s", name, displayGroup(newGroup), newCat), Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{wsRoot, projectID}}}
 	})
+	m.restoreFormOrigin()
 	return m, cmd
 }
 
@@ -224,7 +232,7 @@ func (m *Model) viewEditProject() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  space:toggle  enter:save  esc:back"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  space:toggle  enter:save  q:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)

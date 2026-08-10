@@ -35,20 +35,22 @@ type sheetRow struct {
 }
 
 type sheet struct {
-	mode          sheetMode
-	target        *Project
-	group         string
-	workspaceRoot string
-	groupPath     string
-	rows          []sheetRow
-	visible       []int
-	cursor        int
-	filter        tui.TextInput
-	filterMode    bool
-	visual        bool
-	visualAnchor  int
-	parent        *sheet
-	statusMsg     string
+	mode               sheetMode
+	target             *Project
+	group              string
+	workspaceRoot      string
+	groupPath          string
+	rows               []sheetRow
+	visible            []int
+	cursor             int
+	filter             tui.TextInput
+	filterMode         bool
+	searchWorktreePath string
+	searchProjectID    string
+	visual             bool
+	visualAnchor       int
+	parent             *sheet
+	statusMsg          string
 }
 
 func newProjectSheet(m *Model, p *Project, parent *sheet) *sheet {
@@ -198,6 +200,17 @@ func (s *sheet) rowAt(visIdx int) *sheetRow {
 
 func (s *sheet) focused() *sheetRow { return s.rowAt(s.cursor) }
 
+func (s *sheet) focusWorktreePath(path string) bool {
+	for i, rowIndex := range s.visible {
+		row := s.rows[rowIndex]
+		if row.wt != nil && row.wt.Path == path {
+			s.cursor = i
+			return true
+		}
+	}
+	return false
+}
+
 // ---------- update ----------
 
 func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
@@ -206,6 +219,10 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	}
 
 	key := msg.String()
+	if !s.filterMode && s.filter.Value() != "" && (key == "q" || key == "esc") {
+		s.clearSearch()
+		return m, nil
+	}
 
 	if s.visual {
 		switch key {
@@ -238,7 +255,7 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	}
 
 	switch key {
-	case "esc":
+	case "q", "esc":
 		if s.visual {
 			s.clearVisual()
 			return m, nil
@@ -248,7 +265,7 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		return s.close(m)
 	case "ctrl+c", "ctrl+q":
 		if m.jobsRunning() {
-			m.statusMsg = "background jobs are still running · A:jobs"
+			m.statusMsg = "actions are still queued or running · A Open Activity"
 			return m, nil
 		}
 		return m, tui.Quit
@@ -279,6 +296,7 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		s.moveCursor(-s.pageRows(m))
 		return m, nil
 	case "/":
+		s.captureSearchOrigin()
 		s.filterMode = true
 		return m, s.filter.Focus()
 	}
@@ -306,11 +324,8 @@ func (s *sheet) update(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 func (s *sheet) updateFilterMode(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 	switch key {
-	case "esc":
-		s.filterMode = false
-		s.filter.SetValue("")
-		s.filter.Blur()
-		s.applyFilter()
+	case "esc", "ctrl+c":
+		s.clearSearch()
 	case "enter":
 		s.filterMode = false
 		s.filter.Blur()
@@ -321,6 +336,37 @@ func (s *sheet) updateFilterMode(m *Model, msg tui.KeyMsg) (tui.Model, tui.Cmd) 
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (s *sheet) captureSearchOrigin() {
+	s.searchWorktreePath = ""
+	s.searchProjectID = ""
+	if row := s.focused(); row != nil {
+		if row.wt != nil {
+			s.searchWorktreePath = row.wt.Path
+		} else if row.proj != nil {
+			s.searchProjectID = row.proj.ID
+		}
+	}
+}
+
+func (s *sheet) clearSearch() {
+	s.filterMode = false
+	s.filter.SetValue("")
+	s.filter.Blur()
+	s.applyFilter()
+	if s.searchWorktreePath != "" {
+		s.focusWorktreePath(s.searchWorktreePath)
+	} else if s.searchProjectID != "" {
+		for i, rowIndex := range s.visible {
+			if project := s.rows[rowIndex].proj; project != nil && project.ID == s.searchProjectID {
+				s.cursor = i
+				break
+			}
+		}
+	}
+	s.searchWorktreePath = ""
+	s.searchProjectID = ""
 }
 
 func (s *sheet) moveCursor(delta int) {
@@ -393,6 +439,8 @@ func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd
 		return true, model, cmd
 	case "w":
 		if s.target != nil {
+			m.formReturnSheet = s
+			m.formReturnFlash = nil
 			m.popupProj = s.target
 			m.wtBranch.SetValue("")
 			m.wtBranch.Focus()
@@ -403,6 +451,8 @@ func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd
 		}
 	case "e":
 		if s.target != nil {
+			m.formReturnSheet = s
+			m.formReturnFlash = nil
 			p := s.target
 			m.popupProj = p
 			m.editGroup.SetValue(p.Group)
@@ -441,6 +491,7 @@ func (s *sheet) dispatchWorktree(m *Model, wt *Worktree, key string) (tui.Model,
 }
 
 func (s *sheet) openGlobalSearch(m *Model) (tui.Model, tui.Cmd) {
+	m.flashReturnSheet = s
 	m.sheet = nil
 	m.openGlobalSearch()
 	return m, nil

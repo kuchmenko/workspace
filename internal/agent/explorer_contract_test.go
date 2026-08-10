@@ -60,11 +60,11 @@ func TestExplorerLaunchContracts(t *testing.T) {
 	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{p}}})
 
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'1'}})
-	if m.Launch == nil || m.Launch.Cwd != projectPath {
-		t.Fatalf("digit launch = %+v", m.Launch)
+	if m.sheet == nil || m.sheet.target == nil || m.sheet.target.ID != p.ID || m.Launch != nil {
+		t.Fatalf("digit picker = sheet %#v launch %+v", m.sheet, m.Launch)
 	}
-	m.Launch = nil
-	m.cursor = 1
+	m.sheet = nil
+	m.cursor = 0
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'l'}})
 	if m.sheet == nil || m.Launch != nil {
 		t.Fatalf("project open = sheet %v launch %+v", m.sheet, m.Launch)

@@ -353,17 +353,66 @@ func TestJobsViewReturnsToSheetAndWindowsHistoryBeyondTerminal(t *testing.T) {
 	m.width, m.height = 100, 10
 	m.jobsReturnSheet = &sheet{mode: sheetGroup}
 	for i := 0; i < 20; i++ {
-		m.jobs = append(m.jobs, &explorerJob{ID: string(rune('A' + i)), Label: "history", State: jobComplete, Total: 1, Completed: 1, Summary: "terminal"})
+		m.jobs = append(m.jobs, &explorerJob{ID: string(rune('A' + i)), Label: fmt.Sprintf("history-%02d", i), State: jobComplete, Total: 1, Completed: 1, Summary: "terminal"})
 	}
 	m.mode = viewJobs
-	m.jobsCursor = len(m.jobs) - 1
+	m.jobsSelectedID = m.jobs[len(m.jobs)-1].ID
 	view := m.viewJobs()
-	if !strings.Contains(view, m.jobs[len(m.jobs)-1].ID) || strings.Contains(view, m.jobs[0].ID+"  history") {
+	if !strings.Contains(view, "history-19") || strings.Contains(view, "history-00") {
 		t.Fatalf("history window did not follow cursor: %q", view)
 	}
 	m.updateJobs(tui.KeyMsg{Type: tui.KeyEsc})
 	if m.mode != viewList || m.sheet == nil || m.sheet.mode != sheetGroup {
 		t.Fatalf("jobs return mode=%v sheet=%#v", m.mode, m.sheet)
+	}
+}
+
+func TestActivityAttentionFeedDetailsAndIDStableSelection(t *testing.T) {
+	now := time.Now()
+	m := NewModel(nil)
+	m.width, m.height = 100, 12
+	m.jobs = []*explorerJob{
+		{ID: "old", Label: "older", State: jobPartial, QueuedAt: now.Add(-time.Minute), Outcomes: []targetOutcome{{Target: "feat/x", Kind: targetPartial, Detail: "remote branch remains"}}},
+		{ID: "new", Label: "newest", State: jobRunning, QueuedAt: now},
+	}
+	m.openActivity(nil)
+	if token := m.activityAttentionToken(); token != "A:1▶" {
+		t.Fatalf("attention token = %q", token)
+	}
+	view := m.viewJobs()
+	if strings.Index(view, "newest") > strings.Index(view, "older") || strings.Contains(view, "remote branch remains") {
+		t.Fatalf("feed order or inline details = %q", view)
+	}
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyDown})
+	if m.jobsSelectedID != "old" {
+		t.Fatalf("selected ID = %q", m.jobsSelectedID)
+	}
+	m.jobs = append(m.jobs, &explorerJob{ID: "append", Label: "appended", State: jobQueued, QueuedAt: now.Add(time.Second)})
+	if m.activityCursor(m.activityJobs()) != 2 || m.jobsSelectedID != "old" {
+		t.Fatalf("selection moved after append: id=%q cursor=%d", m.jobsSelectedID, m.activityCursor(m.activityJobs()))
+	}
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyEnter})
+	detail := m.viewJobs()
+	if !strings.Contains(detail, "completed with issues") || !strings.Contains(detail, "remote branch remains") {
+		t.Fatalf("activity detail = %q", detail)
+	}
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'q'}})
+	if m.jobsDetail {
+		t.Fatal("q did not return from detail to feed")
+	}
+}
+
+func TestActivitySearchRestoresSelectedAction(t *testing.T) {
+	m := NewModel(nil)
+	m.jobs = []*explorerJob{{ID: "old", Label: "older"}, {ID: "new", Label: "newer"}}
+	m.openActivity(nil)
+	m.jobsSelectedID = "old"
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'/'}})
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune("new")})
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyEnter})
+	m.updateJobs(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'q'}})
+	if m.jobsSelectedID != "old" || m.activitySearch {
+		t.Fatalf("activity search restored id=%q active=%v", m.jobsSelectedID, m.activitySearch)
 	}
 }
 

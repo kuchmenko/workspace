@@ -18,9 +18,12 @@ import (
 type Worktree struct {
 	Path         string
 	Branch       string
+	HEAD         string
 	IsMain       bool
 	Dirty        bool
+	Unknown      bool
 	Ahead        int
+	Behind       int
 	LastActiveAt time.Time
 }
 
@@ -134,7 +137,7 @@ func buildWorktreeInventory(mainPath, repoPath string, listed []git.Worktree) ([
 		if wt.Bare {
 			continue
 		}
-		result = append(result, Worktree{Path: wt.Path, Branch: wt.Branch, IsMain: wt.Path == mainPath, LastActiveAt: times[wt.HEAD]})
+		result = append(result, Worktree{Path: wt.Path, Branch: wt.Branch, HEAD: wt.HEAD, IsMain: wt.Path == mainPath, LastActiveAt: times[wt.HEAD]})
 	}
 	return result, err
 }
@@ -151,7 +154,8 @@ func LoadWorktrees(mainPath string) ([]Worktree, error) {
 			}
 			return nil, err
 		}
-		return []Worktree{{Path: mainPath, Branch: "", IsMain: true, Dirty: git.IsDirty(mainPath)}}, nil
+		modified, err := git.WorktreeModified(mainPath)
+		return []Worktree{{Path: mainPath, Branch: "", HEAD: git.RevParse(mainPath, "HEAD"), IsMain: true, Dirty: modified, Unknown: err != nil}}, nil
 	}
 
 	wts, err := git.WorktreeList(barePath)
@@ -164,17 +168,19 @@ func LoadWorktrees(mainPath string) ([]Worktree, error) {
 		if wt.Bare {
 			continue
 		}
+		modified, statusErr := git.WorktreeModified(wt.Path)
 		w := Worktree{
-			Path:   wt.Path,
-			Branch: wt.Branch,
-			IsMain: wt.Path == mainPath,
-			Dirty:  git.IsDirty(wt.Path),
+			Path:    wt.Path,
+			Branch:  wt.Branch,
+			HEAD:    wt.HEAD,
+			IsMain:  wt.Path == mainPath,
+			Dirty:   modified,
+			Unknown: statusErr != nil,
 		}
 		if value, err := git.LastCommitTime(wt.Path); err == nil {
 			w.LastActiveAt = value
 		}
-		ahead, _, _ := git.AheadBehind(wt.Path, wt.Branch)
-		w.Ahead = ahead
+		w.Ahead, w.Behind, _ = git.AheadBehind(wt.Path, wt.Branch)
 		result = append(result, w)
 	}
 	return result, nil
@@ -184,9 +190,16 @@ func (m *Model) updateNewWorktree(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	key := msg.String()
 
 	switch key {
+	case "q":
+		if m.wtField == 0 {
+			var cmd tui.Cmd
+			m.wtBranch, cmd = m.wtBranch.Update(msg)
+			return m, cmd
+		}
+		fallthrough
 	case "esc":
 		m.wtBranch.Blur()
-		m.mode = viewList
+		m.restoreFormOrigin()
 		return m, nil
 	case "tab", "down":
 		m.wtField = (m.wtField + 1) % 2
@@ -273,6 +286,7 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 		}
 		return result
 	})
+	m.restoreFormOrigin()
 	return m, cmd
 }
 
@@ -317,7 +331,7 @@ func (m *Model) viewNewWorktree() string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  esc:back"))
+	lines = append(lines, popupDimStyle.Width(innerW).Render("tab:next  enter:confirm  q:back"))
 
 	content := strings.Join(lines, "\n")
 	popup := popupBorderStyle.Render(content)

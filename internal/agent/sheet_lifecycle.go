@@ -4,9 +4,7 @@ import "github.com/kuchmenko/workspace/internal/tui"
 
 func (s *sheet) updateLifecycleKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
 	if key == "A" {
-		m.jobsCursor = max(0, len(m.jobs)-1)
-		m.mode = viewJobs
-		m.jobsReturnSheet = s
+		m.openActivity(s)
 		return true, m, nil
 	}
 	switch key {

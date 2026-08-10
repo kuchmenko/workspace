@@ -43,14 +43,26 @@ func TestBuildProjectSheetRows_WorktreesSection(t *testing.T) {
 	if !strings.Contains(wtRows[0].label, "main") {
 		t.Errorf("first wt row label = %q, want main first", wtRows[0].label)
 	}
-	if wtRows[2].hint != "dirty ↑3" {
-		t.Errorf("dirty+ahead hint = %q, want %q", wtRows[2].hint, "dirty ↑3")
+	if wtRows[2].hint != "modified ↑3" {
+		t.Errorf("modified+ahead hint = %q, want %q", wtRows[2].hint, "modified ↑3")
 	}
 	if wtRows[2].activity != "2h" {
 		t.Errorf("activity = %q, want 2h", wtRows[2].activity)
 	}
 	if rows[0].hint != "status" || rows[0].activity != "activity" {
 		t.Fatalf("worktree columns = status %q activity %q", rows[0].hint, rows[0].activity)
+	}
+}
+
+func TestWorktreeHintsDistinguishModifiedUnknownAndBehind(t *testing.T) {
+	if got := wtHint(&Worktree{Dirty: true, Ahead: 2, Behind: 1}); got != "modified ↑2 ↓1" {
+		t.Fatalf("modified hint = %q", got)
+	}
+	if got := wtHint(&Worktree{Unknown: true, Dirty: true}); got != "unknown" {
+		t.Fatalf("unknown hint = %q", got)
+	}
+	if got := wtHint(&Worktree{}); got != "" {
+		t.Fatalf("clean hint = %q", got)
 	}
 }
 
@@ -221,7 +233,7 @@ func TestNarrowSheetKeepsChromeAndSelectionVisible(t *testing.T) {
 	if tui.Height(view) != m.height {
 		t.Fatalf("height = %d, want %d", tui.Height(view), m.height)
 	}
-	if !strings.Contains(view, "@long-group") || !strings.Contains(view, "⏎/l:open") || !strings.Contains(view, selected[:3]) {
+	if !strings.Contains(view, "@long-group") || !strings.Contains(view, "Ctrl+O actions") || !strings.Contains(view, selected[:3]) {
 		t.Fatalf("title, footer, or selected item missing: %q", view)
 	}
 }
@@ -239,6 +251,25 @@ func TestSheetFilterModeKeepsTextInputControlKeys(t *testing.T) {
 	}
 }
 
+func TestSheetSearchQRestoresOriginBeforeClosing(t *testing.T) {
+	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
+	wts := []Worktree{{Path: "/ws/alpha", IsMain: true}, {Path: "/ws/alpha-wt-query", Branch: "feat/query"}}
+	m := newTestModel(p, wts)
+	s := newProjectSheet(m, p, nil)
+	m.sheet = s
+	s.focusWorktreePath("/ws/alpha-wt-query")
+	s.update(m, rune1('/'))
+	s.updateFilterMode(m, rune1('m'))
+	s.updateFilterMode(m, tui.KeyMsg{Type: tui.KeyEnter})
+	s.update(m, rune1('q'))
+	if s.filter.Value() != "" || m.sheet != s {
+		t.Fatalf("search clear = query %q sheet %#v", s.filter.Value(), m.sheet)
+	}
+	if row := s.focused(); row == nil || row.wt == nil || row.wt.Path != "/ws/alpha-wt-query" {
+		t.Fatalf("search origin = %#v", row)
+	}
+}
+
 func TestProjectSheetFooterAlwaysShowsLifecycleAndProjectActions(t *testing.T) {
 	p := &Project{ID: "alpha", Name: "alpha", Path: "/ws/alpha"}
 	m := newTestModel(p, []Worktree{{Path: "/ws/alpha", IsMain: true}, {Path: "/ws/alpha-wt", Branch: "feat/x"}})
@@ -250,7 +281,7 @@ func TestProjectSheetFooterAlwaysShowsLifecycleAndProjectActions(t *testing.T) {
 		}
 	}
 	actions, nav := s.footerHints()
-	for _, hint := range []string{"a:archive", "d:delete", "A:jobs", "M:maint", "w:new", "e:edit", "f:fav", "/:filter"} {
+	for _, hint := range []string{"a:archive", "d:delete", "A:Activity", "M:maint", "w:new", "e:edit", "f:fav", "/:search"} {
 		if !strings.Contains(actions, hint) {
 			t.Errorf("actions missing %q: %q", hint, actions)
 		}
@@ -259,8 +290,8 @@ func TestProjectSheetFooterAlwaysShowsLifecycleAndProjectActions(t *testing.T) {
 		t.Fatalf("navigation hints = %q", nav)
 	}
 	selected := s.renderRow(s.cursor, 80)
-	if !strings.Contains(selected, "clean") || tui.Width(selected) != 80 {
-		t.Fatalf("selected row lost its right-hand status: width=%d row=%q", tui.Width(selected), selected)
+	if strings.Contains(selected, "clean") || tui.Width(selected) != 80 {
+		t.Fatalf("selected clean row should have blank status: width=%d row=%q", tui.Width(selected), selected)
 	}
 }
 

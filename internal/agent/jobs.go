@@ -74,6 +74,7 @@ type explorerJob struct {
 	QueuedAt, StartedAt, FinishedAt time.Time
 	Summary, Error                  string
 	Details                         []string
+	Outcomes                        []targetOutcome
 }
 
 type jobSnapshot struct {
@@ -282,6 +283,7 @@ func (m *Model) applyJobEvent(msg jobEvent) {
 		}
 		job.State = state
 		job.Details = append(job.Details, msg.result.Details...)
+		job.Outcomes = append([]targetOutcome(nil), msg.result.Outcomes...)
 		job.FinishedAt = time.Now()
 		m.logJob(job.ID, "finished state=%s summary=%q error=%q", job.State, job.Summary, job.Error)
 		acknowledgeJob(msg)
@@ -292,6 +294,7 @@ func (m *Model) applyJobEvent(msg jobEvent) {
 			job.Completed++
 			job.Current = outcome.Target
 			job.Details = append(job.Details, outcome.Target+": "+outcome.Detail)
+			job.Outcomes = append(job.Outcomes, outcome)
 		}
 		if msg.snapshot != nil {
 			m.applyJobSnapshot(*msg.snapshot, job)
@@ -307,6 +310,7 @@ func (m *Model) applyJobEvent(msg jobEvent) {
 }
 
 func (m *Model) applyJobSnapshot(snapshot jobSnapshot, job *explorerJob) {
+	flash := m.captureFlashRefresh()
 	refreshed := map[string]bool{}
 	for root, workspace := range snapshot.workspaces {
 		for i := range m.workspaces {
@@ -352,35 +356,59 @@ func (m *Model) applyJobSnapshot(snapshot jobSnapshot, job *explorerJob) {
 	if m.lifecycle != nil {
 		m.lifecycle.parentSheet = m.reconcileLifecycleSheet(m.lifecycle.parentSheet)
 	}
+	m.flashReturnSheet = m.reconcileLifecycleSheet(m.flashReturnSheet)
+	m.formReturnSheet = m.reconcileLifecycleSheet(m.formReturnSheet)
+	if m.formReturnFlash != nil {
+		m.formReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.formReturnFlash.returnSheet)
+	}
+	if m.lifecycleReturnFlash != nil {
+		m.lifecycleReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.lifecycleReturnFlash.returnSheet)
+	}
+	if m.activityReturnFlash != nil {
+		m.activityReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.activityReturnFlash.returnSheet)
+	}
 	if m.popupProj != nil {
 		m.popupProj = m.findLifecycleProject(m.popupProj.WorkspaceRoot, m.popupProj.ID)
 		if m.popupProj == nil && (m.mode == viewEditProject || m.mode == viewNewWorktree) {
 			m.mode = viewList
 		}
 	}
+	m.reconcilePaletteAfterRefresh()
+	m.restoreFlashRefresh(flash)
+}
+
+func (m *Model) restoreFlashSelection(workspaceRoot, projectID, worktreePath string) {
+	for _, index := range m.flashMatches {
+		item := m.items[index]
+		if worktreePath != "" && item.path == worktreePath {
+			m.cursor = index
+			return
+		}
+		if worktreePath == "" && item.project != nil && item.workspaceRoot == workspaceRoot && item.project.ID == projectID {
+			m.cursor = index
+			return
+		}
+	}
 }
 
 func (m *Model) jobsStrip() string {
-	if len(m.jobs) == 0 {
-		return ""
-	}
-	active, queued := 0, 0
+	return m.activityAttentionToken()
+}
+
+func (m *Model) activityAttentionToken() string {
+	counts := map[jobState]int{}
 	for _, job := range m.jobs {
-		if job.State == jobRunning {
-			active++
-		}
-		if job.State == jobQueued {
-			queued++
+		counts[job.State]++
+	}
+	for _, state := range []struct {
+		state  jobState
+		symbol string
+	}{{jobRunning, "▶"}, {jobQueued, "…"}, {jobFailed, "!"}, {jobPartial, "±"}} {
+		if counts[state.state] > 0 {
+			return fmt.Sprintf("A:%d%s", counts[state.state], state.symbol)
 		}
 	}
-	latest := m.jobs[len(m.jobs)-1]
-	status := latest.Summary
-	if latest.State == jobRunning {
-		status = fmt.Sprintf("%d/%d %s", latest.Completed, latest.Total, latest.Current)
-	} else if latest.Error != "" {
-		status = latest.Error
-	}
-	return fmt.Sprintf(" Jobs %d active · %d queued · %s %s · %s · A:open", active, queued, latest.ID, latest.State, status)
+	return ""
 }
 
 func (m *Model) logJob(id, format string, args ...any) {

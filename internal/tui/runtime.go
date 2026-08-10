@@ -133,6 +133,9 @@ var teaToOwnKeyType = map[tea.KeyType]KeyType{
 	tea.KeyCtrlU:     KeyCtrlU,
 	tea.KeyCtrlF:     KeyCtrlF,
 	tea.KeyCtrlB:     KeyCtrlB,
+	tea.KeyCtrlO:     KeyCtrlO,
+	tea.KeyCtrlQ:     KeyCtrlQ,
+	tea.KeyCtrlS:     KeyCtrlS,
 }
 
 func keyMsgFromBubbletea(m tea.KeyMsg) KeyMsg {
@@ -140,7 +143,7 @@ func keyMsgFromBubbletea(m tea.KeyMsg) KeyMsg {
 	if t, ok := teaToOwnKeyType[m.Type]; ok {
 		out.Type = t
 	}
-	if out.Type == KeyCtrlC || out.Type == KeyCtrlD || out.Type == KeyCtrlU || out.Type == KeyCtrlF || out.Type == KeyCtrlB {
+	if out.Type == KeyCtrlC || out.Type == KeyCtrlD || out.Type == KeyCtrlU || out.Type == KeyCtrlF || out.Type == KeyCtrlB || out.Type == KeyCtrlO || out.Type == KeyCtrlQ || out.Type == KeyCtrlS {
 		out.Ctrl = true
 	}
 	return out
