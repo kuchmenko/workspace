@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/kuchmenko/workspace/compare/v0.9.0...v0.10.0) (2026-08-11)
+
+
+### Features
+
+* **explorer:** add recency views and worktree lifecycle ([#65](https://github.com/kuchmenko/workspace/issues/65)) ([db20c2f](https://github.com/kuchmenko/workspace/commit/db20c2fb3e235e736dbc2a5fb678bdd1d8de314d))
+* **explorer:** redesign navigation and command palette ([#70](https://github.com/kuchmenko/workspace/issues/70)) ([168a232](https://github.com/kuchmenko/workspace/commit/168a2327459f9f87052ebac4c90b9421f72fd1fb))
+
 ## [0.9.0](https://github.com/kuchmenko/workspace/compare/v0.8.1...v0.9.0) (2026-08-04)
 
 
