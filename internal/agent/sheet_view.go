@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -136,20 +135,6 @@ func padPanelRight(left, right string, width int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func (s *sheet) breadcrumb() string {
-	if s.mode == sheetGroup {
-		return filepath.Base(s.workspaceRoot) + " › @" + presentLabel(s.group)
-	}
-	if s.target == nil {
-		return "ws"
-	}
-	parent := filepath.Base(s.target.WorkspaceRoot)
-	if s.target.Group != "" {
-		parent = presentLabel(s.target.Group)
-	}
-	return parent + " › " + presentLabel(s.target.Name)
-}
-
 func (s *sheet) title() string {
 	if s.mode == sheetGroup {
 		return fmt.Sprintf("@%s", presentLabel(s.group))
@@ -158,23 +143,6 @@ func (s *sheet) title() string {
 		return presentLabel(s.target.Name)
 	}
 	return "launch"
-}
-
-func (s *sheet) subtitle() string {
-	if s.mode == sheetGroup {
-		if s.groupPath != "" {
-			return s.groupPath
-		}
-		return "group"
-	}
-	if s.target == nil {
-		return ""
-	}
-	category := s.target.Category
-	if category == "" {
-		category = "personal"
-	}
-	return fmt.Sprintf("%s · %s", category, s.target.Path)
 }
 
 func (s *sheet) footerHints() (actions, nav string) {

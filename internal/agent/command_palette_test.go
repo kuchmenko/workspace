@@ -252,7 +252,7 @@ func TestCommandPaletteCloseKeysNeverInvokeOriginCommands(t *testing.T) {
 	m.openPalette()
 	m.updateWhichKey(tui.KeyMsg{Type: tui.KeyEsc})
 	if m.mode != viewNewWorktree || m.wtBranch.Value() != "feat/draft" {
-		t.Fatal("Esc cancelled the form instead of closing the palette")
+		t.Fatal("Esc canceled the form instead of closing the palette")
 	}
 }
 

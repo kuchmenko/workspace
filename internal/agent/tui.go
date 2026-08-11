@@ -103,7 +103,6 @@ type Model struct {
 	activityEditing      bool
 	activityOriginID     string
 	activityQuery        tui.TextInput
-	activityMatches      []string
 	jobsReturnSheet      *sheet
 	activityReturnFlash  *flashRefreshState
 	debugLog             *log.Logger
@@ -360,23 +359,6 @@ func (m *Model) footerHints() (actions, nav string) {
 		actions = "⏎:open"
 	}
 	return actions, nav
-}
-
-func (m *Model) breadcrumb() string {
-	item := m.currentItem()
-	if item == nil {
-		return "ws"
-	}
-	switch item.kind {
-	case KindGroup:
-		return item.group + " ›"
-	case KindProject:
-		if item.project.Group != "" {
-			return item.project.Group + " ›"
-		}
-		return "ws"
-	}
-	return "ws"
 }
 
 func (m *Model) updateList(msg tui.KeyMsg) (tui.Model, tui.Cmd) {

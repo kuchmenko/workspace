@@ -293,101 +293,6 @@ func humanizeAgeAt(t, now time.Time) string {
 	}
 }
 
-func renderHeaderChips(chips []Chip, w, maxLines int) []string {
-	if len(chips) == 0 || w <= 0 || maxLines <= 0 {
-		return nil
-	}
-	tokens := make([]string, len(chips))
-	for i, c := range chips {
-		tokens[i] = tui.Truncate(formatChip(i+1, c), w)
-	}
-	return packChips(tokens, w, maxLines)
-}
-
-func formatChip(num int, c Chip) string {
-	star := ""
-	if c.Favorite {
-		star = "*"
-	}
-	body := presentLabel(c.Name)
-	if c.Kind == KindGroup {
-		body = "@" + body
-	}
-	age := humanizeAge(c.LastActiveAt)
-	if age == "" {
-		return fmt.Sprintf("%s%d.%s", star, num, body)
-	}
-	return fmt.Sprintf("%s%d.%s %s", star, num, body, age)
-}
-
-func packChips(chips []string, w, maxLines int) []string {
-	var lines []string
-	cur := ""
-	for _, c := range chips {
-		next := c
-		if cur != "" {
-			next = cur + "  " + c
-		}
-		if tui.Width(next) > w {
-			if cur != "" {
-				lines = append(lines, cur)
-				if len(lines) >= maxLines {
-					return lines
-				}
-			}
-			cur = c
-			continue
-		}
-		cur = next
-	}
-	if cur != "" && len(lines) < maxLines {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
-func styleHeaderLines(lines []string) []string {
-	out := make([]string, len(lines))
-	for i, line := range lines {
-		out[i] = styleChipLine(line)
-	}
-	return out
-}
-
-func styleChipLine(line string) string {
-	chips := strings.Split(line, "  ")
-	for i, c := range chips {
-		chips[i] = styleChip(c)
-	}
-	return strings.Join(chips, "  ")
-}
-
-func styleChip(c string) string {
-	hasStar := strings.HasPrefix(c, "*")
-	if hasStar {
-		c = c[1:]
-	}
-	dot := strings.Index(c, ".")
-	if dot < 0 {
-		return c
-	}
-	num := c[:dot]
-	rest := c[dot+1:]
-	name, age, _ := strings.Cut(rest, " ")
-
-	var b strings.Builder
-	if hasStar {
-		b.WriteString(favoriteStarStyle.Render("*"))
-	}
-	b.WriteString(chipNumberStyle.Render(num + "."))
-	b.WriteString(chipNameStyle.Render(name))
-	if age != "" {
-		b.WriteString(" ")
-		b.WriteString(activityAgeStyle.Render(age))
-	}
-	return b.String()
-}
-
 func formatInt(n int) string {
 	if n == 0 {
 		return "0"
@@ -416,12 +321,8 @@ var (
 
 	badgeStyle = tui.NewStyle().Foreground("240")
 
-	statusMsgStyle    = tui.NewStyle().Foreground("215").Bold(true)
-	favoriteStarStyle = tui.NewStyle().Foreground("215")
-	activityAgeStyle  = tui.NewStyle().Foreground("240")
-
-	chipNumberStyle = tui.NewStyle().Foreground("245")
-	chipNameStyle   = tui.NewStyle().Foreground("254").Bold(true)
+	statusMsgStyle   = tui.NewStyle().Foreground("215").Bold(true)
+	activityAgeStyle = tui.NewStyle().Foreground("240")
 
 	flashSearchStyle = tui.NewStyle().Bold(true).Foreground("215").Background("235")
 	flashLabelStyle  = tui.NewStyle().Bold(true).Foreground("235").Background("215")
@@ -435,8 +336,6 @@ var (
 
 	whichKeyBorderStyle = tui.NewStyle().Border(tui.RoundedBorder()).BorderForeground("173").Padding(0, 1)
 	whichKeyTitleStyle  = tui.NewStyle().Foreground("215").Bold(true)
-	whichKeyKeyStyle    = tui.NewStyle().Foreground("215").Bold(true)
-	whichKeyDescStyle   = tui.NewStyle().Foreground("245")
 )
 
 func flashInlineLabel(name, query string, label rune) string {
