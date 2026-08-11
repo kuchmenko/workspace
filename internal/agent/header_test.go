@@ -2,8 +2,11 @@ package agent
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/kuchmenko/workspace/internal/tui"
 )
 
 func TestBuildHeaderChips_FavoritesFirstThenRecent(t *testing.T) {
@@ -26,7 +29,7 @@ func TestBuildHeaderChips_FavoritesFirstThenRecent(t *testing.T) {
 	}
 }
 
-func TestBuildHeaderChips_IncludesFavoriteGroups(t *testing.T) {
+func TestBuildHeaderChips_ExcludesFavoriteGroups(t *testing.T) {
 	now := time.Now().UTC()
 	ws := []WorkspaceData{{
 		Root:           "/ws",
@@ -38,18 +41,12 @@ func TestBuildHeaderChips_IncludesFavoriteGroups(t *testing.T) {
 	}}
 	chips := buildHeaderChips(ws)
 	got := chipNames(chips)
-	// fav group `work` is favorited with zero activity; sorted last
-	// among favs (none here), then non-favorite recent project.
-	want := []string{"work", "active"}
+	want := []string{"active"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("got %v, want %v (fav group first, then recent project)", got, want)
+		t.Errorf("got %v, want project-only quick slots %v", got, want)
 	}
-	// Verify the chip is marked as a group.
-	if chips[0].Kind != KindGroup {
-		t.Errorf("first chip should be KindGroup, got %v", chips[0].Kind)
-	}
-	if chips[1].Kind != KindProject {
-		t.Errorf("second chip should be KindProject, got %v", chips[1].Kind)
+	if chips[0].Kind != KindProject {
+		t.Errorf("quick slot should be KindProject, got %v", chips[0].Kind)
 	}
 }
 
@@ -89,6 +86,31 @@ func TestBuildHeaderChips_TiesByName(t *testing.T) {
 	want := []string{"a-app", "m-app", "z-app"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("equal-activity tie should sort by name asc: got %v, want %v", got, want)
+	}
+}
+
+func TestQuickSlotsLineShowsNumberedProjectTargets(t *testing.T) {
+	m := &Model{headerChips: []Chip{{Name: "expert"}, {Name: "workspace"}, {Name: "exchange-api"}}}
+	got := m.quickSlotLines(80)
+	want := []string{" Quick access · 1 expert · 2 workspace · 3 exchange-api"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("quick slots = %q, want %q", got, want)
+	}
+}
+
+func TestQuickSlotsWrapWithoutHidingTargets(t *testing.T) {
+	m := &Model{headerChips: []Chip{{Name: "expert"}, {Name: "workspace"}, {Name: "exchange-api"}}}
+	got := m.quickSlotLines(28)
+	joined := strings.Join(got, "\n")
+	for _, target := range []string{"1 expert", "2 workspace", "3 exchange-api"} {
+		if !strings.Contains(joined, target) {
+			t.Fatalf("responsive quick slots hide %q: %q", target, joined)
+		}
+	}
+	for _, line := range got {
+		if tui.Width(line) > 28 {
+			t.Fatalf("quick slot line width = %d: %q", tui.Width(line), line)
+		}
 	}
 }
 

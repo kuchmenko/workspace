@@ -54,15 +54,21 @@ type ownershipRelease struct {
 
 func (m *Model) startLifecycleJob() tui.Cmd {
 	lm := m.lifecycle
+	returnFlash := m.lifecycleReturnFlash
+	m.lifecycleReturnFlash = nil
 	total := m.lifecycleJobTotal(lm)
 	projects := cloneLifecycleProjects(m.lifecycleProjects(lm.scope))
 	copyModel := cloneLifecycleModel(lm)
 	m.lifecycle = nil
 	m.mode = viewList
 	m.sheet = lm.parentSheet
-	return m.submitJob(lifecycleActionLabel(lm.action), total, func(ctx *jobContext) jobResult {
+	cmd := m.submitJob(lifecycleActionLabel(lm.action), total, func(ctx *jobContext) jobResult {
 		return runLifecycleAsync(copyModel, projects, m.debugLog, ctx)
 	})
+	if returnFlash != nil {
+		m.restoreFlashRefresh(*returnFlash)
+	}
+	return cmd
 }
 
 func cloneLifecycleModel(lm *lifecycleModel) *lifecycleModel {
@@ -169,6 +175,7 @@ func (m *Model) finishLifecycleRefresh(msg lifecycleRefreshDoneMsg) (tui.Model, 
 	if m.lifecycleJob != msg.job || msg.job.phase != lifecycleRefreshing {
 		return m, nil
 	}
+	flash := m.captureFlashRefresh()
 	refreshedRoots := map[string]bool{}
 	for root, workspace := range msg.workspaces {
 		for i := range m.workspaces {
@@ -208,6 +215,7 @@ func (m *Model) finishLifecycleRefresh(msg lifecycleRefreshDoneMsg) (tui.Model, 
 	m.cancelFlashForLifecycleRefresh()
 	m.rebuildItems()
 	m.reconcileLifecycleUI(msg.job)
+	m.restoreFlashRefresh(flash)
 	msg.job.phase = lifecycleResult
 	msg.job.scroll = 0
 	m.logLifecycle("job finished action=%s completed=%d total=%d result=%q error=%q", lifecycleActionLabel(msg.job.action), msg.job.completed, msg.job.total, msg.job.message, msg.job.errorText)
@@ -216,6 +224,16 @@ func (m *Model) finishLifecycleRefresh(msg lifecycleRefreshDoneMsg) (tui.Model, 
 
 func (m *Model) reconcileLifecycleUI(lm *lifecycleModel) {
 	m.sheet = m.reconcileLifecycleSheet(m.sheet)
+	m.formReturnSheet = m.reconcileLifecycleSheet(m.formReturnSheet)
+	if m.formReturnFlash != nil {
+		m.formReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.formReturnFlash.returnSheet)
+	}
+	if m.lifecycleReturnFlash != nil {
+		m.lifecycleReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.lifecycleReturnFlash.returnSheet)
+	}
+	if m.activityReturnFlash != nil {
+		m.activityReturnFlash.returnSheet = m.reconcileLifecycleSheet(m.activityReturnFlash.returnSheet)
+	}
 	if lm != nil {
 		lm.parentSheet = m.reconcileLifecycleSheet(lm.parentSheet)
 	}
@@ -225,6 +243,7 @@ func (m *Model) reconcileLifecycleUI(lm *lifecycleModel) {
 			m.mode = viewList
 		}
 	}
+	m.reconcilePaletteAfterRefresh()
 }
 
 func (m *Model) cancelFlashForLifecycleRefresh() {

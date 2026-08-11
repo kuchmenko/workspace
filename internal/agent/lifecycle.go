@@ -192,6 +192,8 @@ func BuildWorktreeArchivePlan(projects []worktreeCandidate, threshold time.Durat
 			switch {
 			case wt.IsMain:
 				plan.Main++
+			case wt.Unknown:
+				plan.Dirty++
 			case wt.Dirty:
 				plan.Dirty++
 			case protectedBranch(p.Project, wt.Branch):
@@ -245,6 +247,9 @@ func validateWorktreeTarget(p *Project, wt *Worktree) error {
 	if p == nil || wt == nil || wt.IsMain {
 		return fmt.Errorf("cannot archive main worktree")
 	}
+	if wt.Unknown {
+		return fmt.Errorf("cannot operate on worktree with unknown state")
+	}
 	return nil
 }
 
@@ -273,7 +278,7 @@ func archiveWorktree(p *Project, wt *Worktree, root string, force bool, release 
 		return WorktreeArchiveResult{Err: err}
 	}
 	if !force && worktreeDirty(liveWorktree) {
-		return WorktreeArchiveResult{Err: fmt.Errorf("cannot archive dirty worktree")}
+		return WorktreeArchiveResult{Err: fmt.Errorf("cannot archive modified worktree")}
 	}
 	if err := git.WorktreeRemove(layout.BarePath(liveProject.Path), liveWorktree.Path, force); err != nil {
 		return WorktreeArchiveResult{Err: err}
@@ -353,11 +358,8 @@ func revalidateWorktreeArchiveCandidate(c worktreeCandidate, threshold time.Dura
 	if fresh == nil {
 		return nil, "worktree is missing", nil
 	}
-	if fresh.Branch != c.Worktree.Branch {
-		return nil, "checkout branch changed after review", nil
-	}
-	if fresh.Dirty {
-		return nil, "worktree became dirty", nil
+	if err := validateReviewedWorktree(&c.Worktree, fresh); err != nil {
+		return nil, "changed after review: " + err.Error(), nil
 	}
 	ws, err := config.Load(c.WorkspaceRoot)
 	if err != nil {
@@ -482,18 +484,34 @@ func revalidateLifecycleWorktree(root string, reviewedProject *Project, reviewed
 	}
 	for i := range worktrees {
 		if filepath.Clean(worktrees[i].Path) == filepath.Clean(reviewedWorktree.Path) {
-			if worktrees[i].Branch != reviewedWorktree.Branch {
-				return nil, nil, fmt.Errorf("checkout branch changed after review")
+			if err := validateReviewedWorktree(reviewedWorktree, &worktrees[i]); err != nil {
+				return nil, nil, err
 			}
 			return liveProject, &worktrees[i], nil
 		}
 	}
 	return nil, nil, fmt.Errorf("worktree is missing")
 }
+
+func validateReviewedWorktree(reviewed, live *Worktree) error {
+	if reviewed == nil || live == nil {
+		return fmt.Errorf("worktree is unavailable")
+	}
+	if live.Branch != reviewed.Branch {
+		return fmt.Errorf("checkout branch changed after review")
+	}
+	if reviewed.HEAD != "" && live.HEAD != reviewed.HEAD {
+		return fmt.Errorf("checkout HEAD changed after review")
+	}
+	if !reviewed.Dirty && live.Dirty {
+		return fmt.Errorf("checkout became modified after review")
+	}
+	return nil
+}
 func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 	lm := m.lifecycle
 	key := msg.String()
-	if key == "esc" {
+	if key == "esc" || key == "q" {
 		m.closeLifecycle()
 		return m, nil
 	}
@@ -539,6 +557,8 @@ func (m *Model) updateLifecycle(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 
 func (m *Model) closeLifecycle() {
 	parent := m.lifecycle.parentSheet
+	returnFlash := m.lifecycleReturnFlash
+	m.lifecycleReturnFlash = nil
 	if m.lifecycleJob == m.lifecycle && m.lifecycle.phase != lifecyclePlanning && m.lifecycle.phase != lifecycleRunning && m.lifecycle.phase != lifecycleRefreshing {
 		m.lifecycleJob = nil
 	}
@@ -547,6 +567,9 @@ func (m *Model) closeLifecycle() {
 	m.sheet = parent
 	if parent != nil {
 		parent.rebuild(m)
+	}
+	if returnFlash != nil {
+		m.restoreFlashRefresh(*returnFlash)
 	}
 }
 

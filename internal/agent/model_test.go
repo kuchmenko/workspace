@@ -100,8 +100,8 @@ func TestProjectSheetLoadsFullDetailsInsteadOfInventory(t *testing.T) {
 	m := NewModel([]WorkspaceData{{Projects: []Project{*p}}})
 	rows := buildProjectSheetRows(m, &m.workspaces[0].Projects[0])
 	worktrees := filterByKind(rows, rowWorktree)
-	if len(worktrees) != 1 || worktrees[0].hint != "dirty" {
-		t.Fatalf("worktree rows = %#v, want freshly inspected dirty detail", worktrees)
+	if len(worktrees) != 1 || worktrees[0].hint != "modified" {
+		t.Fatalf("worktree rows = %#v, want freshly inspected modified detail", worktrees)
 	}
 }
 
@@ -158,10 +158,10 @@ func TestRecentViewSortsZeroActivityLastInBothOrders(t *testing.T) {
 			recentOrder: order,
 		}
 		m.rebuildItems()
-		got := []string{m.items[0].group, m.items[1].project.Name, m.items[2].project.Name, m.items[3].project.Name}
-		want := []string{"Recent", "old", "new", "none"}
+		got := []string{m.items[0].project.Name, m.items[1].project.Name, m.items[2].project.Name}
+		want := []string{"old", "new", "none"}
 		if order == config.RecentOrderDesc {
-			want = []string{"Recent", "new", "old", "none"}
+			want = []string{"new", "old", "none"}
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("order %s = %v, want %v", order, got, want)
@@ -204,7 +204,7 @@ func assertRecentViewFits(t *testing.T, m *Model, selectedName string, expectHea
 	if got := tui.Height(view); got > m.height {
 		t.Fatalf("rendered height = %d, model height = %d", got, m.height)
 	}
-	expected := []string{"^d/^u:half", selectedName}
+	expected := []string{"Ctrl+O commands", selectedName}
 	if expectHeading {
 		expected = append(expected, "Recent")
 	}
@@ -250,17 +250,27 @@ func TestListHeightReservesJobsStrip(t *testing.T) {
 	}
 }
 
-func TestRecentProjectionDefaultsExpandedAndCollapsesFromChild(t *testing.T) {
+func TestResizeKeepsHomeCursorVisible(t *testing.T) {
+	projects := make([]Project, 20)
+	for i := range projects {
+		projects[i] = Project{Name: fmt.Sprintf("project-%02d", i)}
+	}
+	m := NewModel([]WorkspaceData{{Projects: projects}})
+	m.width, m.height = 80, 30
+	m.cursor = 18
+	m.ensureVisible()
+	m.Update(tui.WindowSizeMsg{Width: 80, Height: 8})
+	if m.cursor < m.scroll || m.cursor >= m.scroll+m.listHeight() {
+		t.Fatalf("cursor %d is outside resized window [%d,%d)", m.cursor, m.scroll, m.scroll+m.listHeight())
+	}
+}
+
+func TestRecentProjectionIsFlat(t *testing.T) {
 	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws"}
 	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Projects: []Project{p}}}, expanded: map[string]bool{}, homeView: config.ExplorerViewRecent}
 	m.rebuildItems()
-	if !m.expanded[recentKey()] || len(m.items) != 2 || !m.items[0].projectionGroup || m.items[1].expandKey != recentKey() {
-		t.Fatalf("recent projection = %#v expanded=%v", m.items, m.expanded)
-	}
-	m.cursor = 1
-	m.updateList(tui.KeyMsg{Type: tui.KeyLeft})
-	if item := m.currentItem(); item == nil || item.kind != KindGroup || item.group != "Recent" || m.expanded[recentKey()] {
-		t.Fatalf("item=%#v expanded=%v", item, m.expanded)
+	if len(m.items) != 1 || m.items[0].projectionGroup || m.items[0].kind != KindProject || m.items[0].indent != 0 {
+		t.Fatalf("recent projection = %#v", m.items)
 	}
 }
 
@@ -338,6 +348,7 @@ func TestFlashForwardsTextInputControlKeysLocallyAndGlobally(t *testing.T) {
 			m.openGlobalSearch()
 		} else {
 			m.mode = viewFlash
+			m.flashEditing = true
 			m.flashQuery.Focus()
 		}
 		m.flashQuery.SetValue("alphabet")
@@ -379,8 +390,39 @@ func TestGlobalSearchJumpLabelLaunchesExactWorktreePath(t *testing.T) {
 		t.Fatal("worktree has no jump label")
 	}
 	m.updateFlash(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{m.flashLabels[0]}})
-	if m.Launch == nil || m.Launch.Cwd != worktreePath {
-		t.Fatalf("launch = %+v, want %s", m.Launch, worktreePath)
+	if m.sheet == nil || m.sheet.target == nil || m.sheet.target.ID != "alpha" || m.Launch != nil {
+		t.Fatalf("global worktree search should open project picker: sheet=%#v launch=%+v", m.sheet, m.Launch)
+	}
+	if row := m.sheet.focused(); row == nil || row.wt == nil || row.wt.Path != worktreePath {
+		t.Fatalf("focused worktree = %#v, want %s", row, worktreePath)
+	}
+}
+
+func TestSearchQTypesAndCtrlCCancels(t *testing.T) {
+	m := NewModel([]WorkspaceData{{Projects: []Project{{Name: "query"}}}})
+	m.flashQuery = tui.NewTextInput()
+	m.mode = viewFlash
+	m.flashEditing = true
+	m.flashQuery.Focus()
+	m.updateFlash(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'q'}})
+	if m.flashQuery.Value() != "q" || m.mode != viewFlash {
+		t.Fatalf("q in search = query %q mode %v", m.flashQuery.Value(), m.mode)
+	}
+	m.Update(tui.KeyMsg{Type: tui.KeyCtrlC, Ctrl: true})
+	if m.mode != viewList {
+		t.Fatalf("Ctrl+C did not cancel search: mode %v", m.mode)
+	}
+}
+
+func TestGlobalSearchCancelRestoresOriginSheet(t *testing.T) {
+	project := Project{ID: "query", Name: "query", WorkspaceRoot: "/ws", Path: "/ws/query"}
+	m := NewModel([]WorkspaceData{{Root: "/ws", Projects: []Project{project}}})
+	origin := newProjectSheet(m, &m.workspaces[0].Projects[0], nil)
+	m.sheet = origin
+	origin.openGlobalSearch(m)
+	m.updateFlash(tui.KeyMsg{Type: tui.KeyCtrlC, Ctrl: true})
+	if m.sheet != origin || m.mode != viewList {
+		t.Fatalf("global search returned to sheet=%p mode=%v, want %p list", m.sheet, m.mode, origin)
 	}
 }
 
@@ -423,11 +465,9 @@ func TestGlobalSearchProjectSelectionExpandsParentProjection(t *testing.T) {
 			m.flashQuery.SetValue("alpha")
 			m.recomputeFlash()
 			m.updateFlash(tui.KeyMsg{Type: tui.KeyEnter})
-			if !m.expanded[tt.key] {
-				t.Fatalf("parent projection %q remained collapsed", tt.key)
-			}
-			if item := m.currentItem(); item == nil || item.project == nil || item.workspaceRoot != "/ws" || item.project.ID != "alpha" {
-				t.Fatalf("focused item = %#v", item)
+			m.updateFlash(tui.KeyMsg{Type: tui.KeyEnter})
+			if m.sheet == nil || m.sheet.target == nil || m.sheet.target.ID != "alpha" {
+				t.Fatalf("project picker = %#v", m.sheet)
 			}
 		})
 	}

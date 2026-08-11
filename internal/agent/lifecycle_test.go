@@ -74,6 +74,7 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 		t.Run(map[bool]string{false: "archive", true: "delete"}[destructive], func(t *testing.T) {
 			root, project, worktree, bare := lifecycleGitFixture(t)
 			testutil.AddDirty(t, worktree.Path)
+			worktree.Dirty = true
 			if destructive {
 				result := DeleteWorktreeDestructive(project, worktree, root)
 				if result.Detail != "" || !strings.Contains(result.Message, "Deleted checkout") {
@@ -96,6 +97,34 @@ func TestArchiveAndDeleteWorktreeLifecycleWithRealGit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorktreeLifecycleRejectsChangesAfterReview(t *testing.T) {
+	t.Run("modified", func(t *testing.T) {
+		root, project, reviewed, _ := lifecycleGitFixture(t)
+		testutil.AddDirty(t, reviewed.Path)
+		result := ArchiveWorktree(project, reviewed, root, true)
+		if result.Err == nil || !strings.Contains(result.Err.Error(), "became modified") {
+			t.Fatalf("archive = %+v", result)
+		}
+		if _, err := os.Stat(reviewed.Path); err != nil {
+			t.Fatalf("checkout was mutated: %v", err)
+		}
+	})
+
+	t.Run("head", func(t *testing.T) {
+		root, project, reviewed, _ := lifecycleGitFixture(t)
+		testutil.AddDirty(t, reviewed.Path)
+		testutil.RunGit(t, reviewed.Path, "add", ".")
+		testutil.RunGit(t, reviewed.Path, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "advance")
+		result := DeleteWorktreeDestructive(project, reviewed, root)
+		if !strings.Contains(result.Detail, "HEAD changed") {
+			t.Fatalf("delete = %+v", result)
+		}
+		if _, err := os.Stat(reviewed.Path); err != nil {
+			t.Fatalf("checkout was mutated: %v", err)
+		}
+	})
 }
 
 func TestArchiveWorktreeRejectsCheckoutBranchMismatch(t *testing.T) {
@@ -143,12 +172,27 @@ func TestDirtySingleWorktreeActionsWarnButRemainConfirmable(t *testing.T) {
 func TestBulkArchiveStillRejectsDirtyWorktree(t *testing.T) {
 	root, project, worktree, _ := lifecycleGitFixture(t)
 	testutil.AddDirty(t, worktree.Path)
+	worktree.Dirty = true
 	result := ArchiveWorktree(project, worktree, root, false)
-	if result.Err == nil || !strings.Contains(result.Err.Error(), "dirty worktree") {
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "modified worktree") {
 		t.Fatalf("bulk-safe archive = %+v", result)
 	}
 	if _, err := os.Stat(worktree.Path); err != nil {
 		t.Fatalf("dirty checkout was removed: %v", err)
+	}
+}
+
+func TestUnknownWorktreeIsNeverEligibleOrExecutable(t *testing.T) {
+	p := &Project{ID: "p", Name: "p", Path: "/tmp/p"}
+	unknown := Worktree{Path: "/tmp/p-wt", Branch: "feat/x", Unknown: true, LastActiveAt: time.Unix(1, 0)}
+	plan := BuildWorktreeArchivePlan([]worktreeCandidate{{Project: p, Worktree: unknown}}, time.Hour, time.Unix(10000, 0), func(string) ([]Worktree, error) {
+		return []Worktree{unknown}, nil
+	})
+	if len(plan.Eligible) != 0 {
+		t.Fatalf("unknown worktree eligible: %+v", plan)
+	}
+	if err := validateWorktreeTarget(p, &unknown); err == nil {
+		t.Fatal("unknown worktree validated as clean")
 	}
 }
 
@@ -163,6 +207,7 @@ func TestDeleteDoesNotBlockAheadOrLocalOnlyWorktrees(t *testing.T) {
 				}
 				testutil.RunGit(t, worktree.Path, "add", "ahead.txt")
 				testutil.RunGit(t, worktree.Path, "commit", "-m", "ahead")
+				worktree.HEAD = testutil.RunGit(t, worktree.Path, "rev-parse", "HEAD")
 			case "local-only":
 				testutil.RunGit(t, worktree.Path, "push", "origin", "--delete", worktree.Branch)
 			}
@@ -339,7 +384,7 @@ func TestLifecycleUsesFullScreenFrameAndPersistentHints(t *testing.T) {
 	if tui.Height(view) != m.height {
 		t.Fatalf("height = %d, want %d", tui.Height(view), m.height)
 	}
-	for _, text := range []string{"Lifecycle › all workspaces", "1 / a  Archive projects", "2 / w  Archive old worktrees", "1/a:archive projects", "esc:back"} {
+	for _, text := range []string{"Lifecycle › all workspaces", "1 / a  Archive projects", "2 / w  Archive old worktrees", "1/a:archive projects", "q:back"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("lifecycle frame missing %q: %q", text, view)
 		}
@@ -471,14 +516,18 @@ func TestLifecycleRefreshClosesRemovedProjectSheet(t *testing.T) {
 	}
 }
 
-func TestLifecycleRefreshClosesGlobalSearch(t *testing.T) {
+func TestLifecycleRefreshPreservesGlobalSearch(t *testing.T) {
 	lm := &lifecycleModel{phase: lifecycleRefreshing}
+	query := tui.NewTextInput()
+	query.SetValue("query")
 	m := &Model{
 		expanded:      map[string]bool{},
 		wtCache:       NewWorktreeCache(),
 		lifecycleJob:  lm,
 		mode:          viewFlash,
 		flashGlobal:   true,
+		flashEditing:  true,
+		flashQuery:    query,
 		flashMatches:  []int{4},
 		flashLabels:   []rune{'a'},
 		savedItems:    []listItem{{kind: KindProject}},
@@ -486,8 +535,8 @@ func TestLifecycleRefreshClosesGlobalSearch(t *testing.T) {
 	}
 
 	m.finishLifecycleRefresh(lifecycleRefreshDoneMsg{job: lm})
-	if m.mode != viewList || m.flashGlobal || m.flashMatches != nil || m.savedItems != nil {
-		t.Fatalf("refresh retained global search state: mode %v global %v matches %v saved %v", m.mode, m.flashGlobal, m.flashMatches, m.savedItems)
+	if m.mode != viewFlash || !m.flashGlobal || m.flashQuery.Value() != "query" {
+		t.Fatalf("refresh lost global search state: mode %v global %v query %q saved %v", m.mode, m.flashGlobal, m.flashQuery.Value(), m.savedItems)
 	}
 }
 
@@ -531,7 +580,18 @@ func lifecycleGitFixture(t *testing.T) (string, *Project, *Worktree, string) {
 	if err := config.Save(root, ws); err != nil {
 		t.Fatal(err)
 	}
-	return root, &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: mainPath, DefaultBranch: "main"}, &Worktree{Path: worktreePath, Branch: "feat/lifecycle"}, bare
+	project := &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: mainPath, DefaultBranch: "main"}
+	worktrees, err := LoadWorktrees(mainPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range worktrees {
+		if worktrees[i].Path == worktreePath {
+			return root, project, &worktrees[i], bare
+		}
+	}
+	t.Fatal("feature worktree is missing")
+	return "", nil, nil, ""
 }
 
 func gitRefExists(t *testing.T, repo, ref string) bool {

@@ -2,11 +2,11 @@ package agent
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -56,6 +56,9 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 }
 
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
+	if item.projectionGroup && item.expandKey == recentKey() {
+		return strings.Repeat(" ", w)
+	}
 	arrow := "▸"
 	if m.expanded[item.expandKey] {
 		arrow = "▾"
@@ -78,19 +81,19 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 
 func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	p := item.project
-	indent := strings.Repeat("    ", item.indent)
-
 	name := presentLabel(p.Name)
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 
-	icon := DetectIcon(p.Path)
-	left := fmt.Sprintf(" %s%s %s", indent, icon, name)
+	left := "  " + name
 
 	var badgeParts []string
 	if p.WorktreeCount > 1 {
-		badgeParts = append(badgeParts, fmt.Sprintf("⚡%d", p.WorktreeCount))
+		badgeParts = append(badgeParts, fmt.Sprintf("%d worktrees", p.WorktreeCount))
+	}
+	if age := humanizeAge(p.LastActiveAt); age != "" {
+		badgeParts = append(badgeParts, age)
 	}
 	badges := strings.Join(badgeParts, " · ")
 	left = tui.Truncate(left, max(0, w-tui.Width(badges)-1))
@@ -104,7 +107,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 
 	if badges != "" {
-		leftPart := tui.Truncate(fmt.Sprintf(" %s%s %s", indent, icon, name), max(0, w-tui.Width(badges)-1))
+		leftPart := tui.Truncate("  "+name, max(0, w-tui.Width(badges)-1))
 		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
@@ -133,15 +136,8 @@ func (m *Model) padRight(left, right string, w int) string {
 }
 
 func (m *Model) viewList() string {
-	listW := explorerPanelWidth(m.width)
-
+	listW := max(1, m.width)
 	var rows []string
-
-	chipLines := renderHeaderChips(m.headerChips, max(1, listW-2), 2)
-	rows = append(rows, styleHeaderLines(chipLines)...)
-	if len(chipLines) > 0 {
-		rows = append(rows, strings.Repeat(" ", listW))
-	}
 
 	inFlash := m.mode == viewFlash
 	if inFlash {
@@ -153,9 +149,16 @@ func (m *Model) viewList() string {
 		searchLine = tui.Truncate(searchLine, listW)
 		rows = append(rows, flashSearchStyle.Width(listW).Render(searchLine))
 	} else {
-		bc := m.breadcrumb()
-		pos := fmt.Sprintf("%d/%d", m.cursor+1, len(m.items))
-		hdr := m.padRight(tui.Truncate(" "+bc, max(0, listW-tui.Width(pos)-2)), pos+" ", listW)
+		position := 0
+		if len(m.items) > 0 {
+			position = m.cursor + 1
+		}
+		pos := fmt.Sprintf("%d/%d", position, len(m.items))
+		right := pos
+		if attention := m.activityAttentionToken(); attention != "" {
+			right += " · " + attention
+		}
+		hdr := m.padRight(" "+m.homeTitle(), right+" ", listW)
 		rows = append(rows, headerStyle.Width(listW).Render(hdr))
 	}
 
@@ -163,35 +166,59 @@ func (m *Model) viewList() string {
 	if strip := m.jobsStrip(); strip != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(strip, listW)))
 	}
+	if !inFlash {
+		for _, slots := range m.quickSlotLines(listW) {
+			rows = append(rows, dimStyle.Width(listW).Render(slots))
+		}
+	}
 
 	status := m.statusMsg
 	if status != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(status), listW)))
 	} else if inFlash {
 		matchInfo := fmt.Sprintf(" %d matches", len(m.flashMatches))
-		hint := "letter to jump · esc cancel"
+		hint := "Enter results · Ctrl+C cancel"
 		footer := m.padRight(tui.Truncate(matchInfo, max(0, listW-tui.Width(hint)-2)), tui.Truncate(hint+" ", listW), listW)
 		rows = append(rows, footerStyle.Width(listW).Render(footer))
 	} else {
-		actions, nav := m.footerHints()
-		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+actions, listW)))
-		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(" "+nav, listW)))
+		footer := " Ctrl+O commands · / search · S search all · q quit"
+		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(footer, listW)))
 	}
-
-	panel := tui.JoinVertical(tui.Left, rows...)
-
-	return tui.Place(
-		m.width, m.height,
-		tui.Center, tui.Center,
-		panel,
-	)
+	return tui.GradientCanvas(m.width, m.height, tui.JoinVertical(tui.Left, rows...))
 }
 
-func explorerPanelWidth(width int) int {
-	if width < 102 {
-		return max(1, width-6)
+func (m *Model) quickSlotLines(width int) []string {
+	if len(m.headerChips) == 0 || width < 1 {
+		return nil
 	}
-	return 96
+	lines := []string{}
+	line := " Quick access"
+	for i, slot := range m.headerChips {
+		entry := fmt.Sprintf("%d %s", i+1, presentLabel(slot.Name))
+		candidate := line + " · " + entry
+		if tui.Width(candidate) > width {
+			lines = append(lines, tui.Truncate(line, width))
+			line = " " + entry
+		} else {
+			line = candidate
+		}
+	}
+	lines = append(lines, tui.Truncate(line, width))
+	return lines
+}
+
+func (m *Model) homeTitle() string {
+	switch m.homeView {
+	case config.ExplorerViewLanguage:
+		return "Language"
+	case config.ExplorerViewProjects:
+		return "Projects"
+	default:
+		if m.recentOrder == config.RecentOrderAsc {
+			return "Recent · oldest first"
+		}
+		return "Recent · newest first"
+	}
 }
 
 const HeaderCap = 9
@@ -216,18 +243,6 @@ func buildHeaderChips(workspaces []WorkspaceData) []Chip {
 			} else if !p.LastActiveAt.IsZero() {
 				recent = append(recent, c)
 			}
-		}
-		for _, g := range ws.Groups {
-			if !ws.FavoriteGroups[g] {
-				continue
-			}
-			favs = append(favs, Chip{
-				Kind:          KindGroup,
-				Name:          g,
-				Path:          filepath.Join(ws.Root, g),
-				Favorite:      true,
-				WorkspaceRoot: ws.Root,
-			})
 		}
 	}
 	sortChipsByActivity(favs)
@@ -278,101 +293,6 @@ func humanizeAgeAt(t, now time.Time) string {
 	}
 }
 
-func renderHeaderChips(chips []Chip, w, maxLines int) []string {
-	if len(chips) == 0 || w <= 0 || maxLines <= 0 {
-		return nil
-	}
-	tokens := make([]string, len(chips))
-	for i, c := range chips {
-		tokens[i] = tui.Truncate(formatChip(i+1, c), w)
-	}
-	return packChips(tokens, w, maxLines)
-}
-
-func formatChip(num int, c Chip) string {
-	star := ""
-	if c.Favorite {
-		star = "*"
-	}
-	body := presentLabel(c.Name)
-	if c.Kind == KindGroup {
-		body = "@" + body
-	}
-	age := humanizeAge(c.LastActiveAt)
-	if age == "" {
-		return fmt.Sprintf("%s%d.%s", star, num, body)
-	}
-	return fmt.Sprintf("%s%d.%s %s", star, num, body, age)
-}
-
-func packChips(chips []string, w, maxLines int) []string {
-	var lines []string
-	cur := ""
-	for _, c := range chips {
-		next := c
-		if cur != "" {
-			next = cur + "  " + c
-		}
-		if tui.Width(next) > w {
-			if cur != "" {
-				lines = append(lines, cur)
-				if len(lines) >= maxLines {
-					return lines
-				}
-			}
-			cur = c
-			continue
-		}
-		cur = next
-	}
-	if cur != "" && len(lines) < maxLines {
-		lines = append(lines, cur)
-	}
-	return lines
-}
-
-func styleHeaderLines(lines []string) []string {
-	out := make([]string, len(lines))
-	for i, line := range lines {
-		out[i] = styleChipLine(line)
-	}
-	return out
-}
-
-func styleChipLine(line string) string {
-	chips := strings.Split(line, "  ")
-	for i, c := range chips {
-		chips[i] = styleChip(c)
-	}
-	return strings.Join(chips, "  ")
-}
-
-func styleChip(c string) string {
-	hasStar := strings.HasPrefix(c, "*")
-	if hasStar {
-		c = c[1:]
-	}
-	dot := strings.Index(c, ".")
-	if dot < 0 {
-		return c
-	}
-	num := c[:dot]
-	rest := c[dot+1:]
-	name, age, _ := strings.Cut(rest, " ")
-
-	var b strings.Builder
-	if hasStar {
-		b.WriteString(favoriteStarStyle.Render("*"))
-	}
-	b.WriteString(chipNumberStyle.Render(num + "."))
-	b.WriteString(chipNameStyle.Render(name))
-	if age != "" {
-		b.WriteString(" ")
-		b.WriteString(activityAgeStyle.Render(age))
-	}
-	return b.String()
-}
-
 func formatInt(n int) string {
 	if n == 0 {
 		return "0"
@@ -401,12 +321,8 @@ var (
 
 	badgeStyle = tui.NewStyle().Foreground("240")
 
-	statusMsgStyle    = tui.NewStyle().Foreground("215").Bold(true)
-	favoriteStarStyle = tui.NewStyle().Foreground("215")
-	activityAgeStyle  = tui.NewStyle().Foreground("240")
-
-	chipNumberStyle = tui.NewStyle().Foreground("245")
-	chipNameStyle   = tui.NewStyle().Foreground("254").Bold(true)
+	statusMsgStyle   = tui.NewStyle().Foreground("215").Bold(true)
+	activityAgeStyle = tui.NewStyle().Foreground("240")
 
 	flashSearchStyle = tui.NewStyle().Bold(true).Foreground("215").Background("235")
 	flashLabelStyle  = tui.NewStyle().Bold(true).Foreground("235").Background("215")
@@ -420,8 +336,6 @@ var (
 
 	whichKeyBorderStyle = tui.NewStyle().Border(tui.RoundedBorder()).BorderForeground("173").Padding(0, 1)
 	whichKeyTitleStyle  = tui.NewStyle().Foreground("215").Bold(true)
-	whichKeyKeyStyle    = tui.NewStyle().Foreground("215").Bold(true)
-	whichKeyDescStyle   = tui.NewStyle().Foreground("245")
 )
 
 func flashInlineLabel(name, query string, label rune) string {
