@@ -122,6 +122,13 @@ func (s *Selection) ToggleSource(sourceKey string) error {
 }
 
 func (s *Selection) ExcludeTarget(targetID string) {
+	if targetID == s.plan.WorkspaceTargetID && s.plan.ServiceWorkspaceID != "" {
+		for _, selected := range s.projects {
+			if selected {
+				return
+			}
+		}
+	}
 	if target, ok := s.target(targetID); ok && target.Role == TargetProjectOrigin {
 		s.ExcludeProject(target.Project)
 		return
@@ -225,7 +232,7 @@ func (s Selection) TargetSelectable(targetID string) bool {
 
 func (s Selection) ConversionAvailable(targetID string) bool {
 	target, ok := s.target(targetID)
-	if !ok || target.Role == TargetMirror {
+	if !ok || target.Role == TargetMirror || s.plan.ServiceWorkspaceID != "" {
 		return false
 	}
 	result, ok := s.probes.result(target.EndpointID)

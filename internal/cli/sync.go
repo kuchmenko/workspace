@@ -41,6 +41,7 @@ Use 'ws sync resolve' to inspect and act on them.`,
 		},
 	}
 	cmd.AddCommand(newSyncResolveCmd())
+	cmd.AddCommand(newSyncServiceCmd())
 	return cmd
 }
 

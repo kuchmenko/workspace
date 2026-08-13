@@ -10,7 +10,8 @@ The same projects, branches, and works-in-progress should be available on
 every machine the user touches without hidden repository mutation. The
 core invariants are:
 
-1. A workspace has one git-synced project registry.
+1. A workspace has one authoritative project registry transport: the LAN sync
+   service or the legacy Git transport, never both.
 2. Each machine separately records which workspace roots it can explore.
 3. Synchronization runs only through an explicit foreground `ws sync`.
 4. Project branches are never pushed to origin by sync.
@@ -22,12 +23,11 @@ core invariants are:
 
 ## Configuration Boundaries
 
-`workspace.toml` at each workspace root is the shared source of truth for
-projects, groups, aliases, explorer preferences, mirrors, and branch
-metadata. It is committed through the workspace's own git repository.
-`ws sync` installs `workspace.toml merge=union` in that repository's
-`.gitattributes`, allowing concurrent additions on different machines to
-merge cleanly in the common case.
+`workspace.toml` at each workspace root contains projects, groups, aliases,
+explorer preferences, mirrors, and branch metadata. For an unbound workspace,
+it is committed through the workspace's own Git repository. For a service-bound
+workspace, it is a local materialized view of canonical service state and must
+not remain Git-tracked.
 
 `~/.config/ws/config.toml` is machine-local. It contains the machine name
 used for branch attribution and canonical workspace roots used by the
@@ -168,7 +168,9 @@ Project processing repairs the fetch refspec when needed, fetches origin,
 pushes selected mirrors, examines worktrees, fast-forwards eligible main
 worktrees, refreshes activity metadata, and detects origin-deleted
 branches. Missing selected projects are cloned in the same foreground
-run. There is no timer, service, retry queue, backoff, or cooldown.
+run. The central registry service never operates project repositories or
+initiates client work. There is no client timer, watcher, project service,
+retry scheduler, backoff, or cooldown.
 
 Cancellation stops scheduling new work and waits for the current git
 processes to return before the CLI exits. Reports retain completed,
@@ -177,6 +179,20 @@ failed, skipped, conflict, conversion, and cancellation results.
 See [Sync](sync.md) for the user-facing flow and exit codes.
 
 ## Registry Sync
+
+When machine config binds a workspace root to the LAN service, the client uses
+mTLS and an immutable service revision as its merge base. The server performs
+an atomic semantic three-way merge of base, client desired state, and current
+service state. Successful state becomes a new immutable SQLite revision.
+Conflicts do not advance the canonical revision or the client's ancestry;
+resolution requires a fresh explicit request. The client stages exact requests
+and responses in SQLite before network retry or local materialization.
+
+Service identity, endpoint, and workspace binding are frozen across preflight
+and execution. A missing service or changed binding blocks project mutation and
+never falls back to Git.
+
+For an unbound workspace, the legacy Git flow remains available:
 
 The workspace registry may be a regular file or a symlink. Sync resolves
 the real file, finds its owning git repository, and no-ops when that
@@ -274,5 +290,13 @@ workspace registry coverage lives in `internal/config/machine_test.go` and
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars.
 - `~/.local/state/ws/aliases.zsh`: generated zsh aliases.
+- `$XDG_STATE_HOME/ws/sync/credentials.json`: paired service identity and mTLS
+  client credentials.
+- `$XDG_STATE_HOME/ws/sync/client.db`: local canonical cache, outbox, staged
+  responses, and unresolved service conflicts.
+- `/var/lib/ws/service.db`: authoritative service revisions, clients, and
+  pairing state on the service host.
+- `/var/lib/ws/identity/`: service CA and TLS identity on the service host.
 
-There are no service, socket, pid, log, IPC, or watcher runtime files.
+There are no client watcher, timer, scheduler, or background project-sync
+runtime files.

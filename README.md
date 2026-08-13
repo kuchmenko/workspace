@@ -3,10 +3,11 @@
 Workspace manager for tracking, syncing, and developing many git
 projects across multiple machines.
 
-One git-synced TOML registry per workspace, a machine-local list of
-workspace roots, and per-feature worktrees with explicit cross-machine
-metadata. Synchronization happens only when you run `ws sync`; project
-branch pushes remain a deliberate user action.
+One shared registry per workspace, a machine-local list of workspace roots,
+and per-feature worktrees with explicit cross-machine metadata. The registry
+can use the LAN sync service or its legacy Git transport. Synchronization
+happens only when you run `ws sync`; project branch pushes remain a deliberate
+user action.
 
 ## Install
 
@@ -57,7 +58,7 @@ worktree.
   branch naming, cross-machine handoff, recovering from
   `branch-orphan` and re-registering legacy `wt/<machine>/*`.
 - [Sync](docs/sync.md) — preflight, interactive selection, execution,
-  conflicts, headless behavior, and multi-machine flow.
+  LAN service setup, conflicts, headless behavior, and multi-machine flow.
 - [Aliases](docs/aliases.md) — short shell aliases for projects and
   groups.
 - [Explorer TUI](docs/explorer.md) — bare `ws` opens a Bubble Tea
@@ -70,8 +71,9 @@ worktree.
 
 - Auto-push project branches to origin. Origin pushes are explicit
   (`ws worktree push` or plain `git push`).
-- Synchronize in the background. There is no service, scheduler, or
-  watcher; run `ws sync` when you want remote state changed.
+- Synchronize projects or mutate local registry files in the background. The
+  optional LAN service stores canonical registry state, but clients contact it
+  only during explicit commands such as `ws sync`.
 - Run `merge`, `rebase`, `reset`, `force`, or project-branch `push`
   inside a project repo. Unsafe states become skips or conflicts.
 - Synthesize a `wt/<machine>/<topic>` namespace. Branches use
@@ -85,6 +87,7 @@ Pre-1.0; breaking changes happen between minor versions when the
 design pressure is real. Single-user tool by design — the
 multi-machine sync model assumes one human, several machines.
 
-Current main removes the background daemon and its commands; use
-`ws workspace add/rm/list` for local workspace discovery and invoke
-`ws sync` explicitly.
+The LAN sync service is not the removed background workspace daemon: it never
+operates project repositories or initiates client work. Use
+`ws workspace add/rm/list` for local workspace discovery and invoke `ws sync`
+explicitly.

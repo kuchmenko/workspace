@@ -24,9 +24,10 @@ const (
 type TargetRole string
 
 const (
-	TargetWorkspaceOrigin TargetRole = "workspace-origin"
-	TargetProjectOrigin   TargetRole = "project-origin"
-	TargetMirror          TargetRole = "mirror"
+	TargetWorkspaceOrigin  TargetRole = "workspace-origin"
+	TargetWorkspaceService TargetRole = "workspace-service"
+	TargetProjectOrigin    TargetRole = "project-origin"
+	TargetMirror           TargetRole = "mirror"
 )
 
 type ProjectSnapshot struct {
@@ -64,6 +65,7 @@ type Target struct {
 	External   bool
 	Executable bool
 	Repository string
+	Transport  string
 }
 
 type Endpoint struct {
@@ -75,6 +77,7 @@ type Endpoint struct {
 	External   bool
 	Executable bool
 	ParseError string
+	Transport  string
 }
 
 type SourceGroup struct {
@@ -88,6 +91,7 @@ type Plan struct {
 	WorkspaceRepository string
 	WorkspaceBranch     string
 	WorkspaceTargetID   string
+	ServiceWorkspaceID  string
 	Projects            []ProjectPlan
 	Targets             []Target
 	Endpoints           []Endpoint
@@ -96,7 +100,15 @@ type Plan struct {
 
 func BuildPlan(root string, ws *config.Workspace) Plan {
 	plan := Plan{Root: root}
-	plan.addWorkspaceTarget()
+	if machine, err := config.LoadMachineConfig(); err == nil {
+		if binding, ok, _ := machine.Binding(root); ok && machine.Service != nil {
+			plan.addServiceTarget(machine.Service.Endpoint, binding.WorkspaceID)
+		} else {
+			plan.addWorkspaceTarget()
+		}
+	} else {
+		plan.addWorkspaceTarget()
+	}
 	for _, name := range slices.Sorted(maps.Keys(ws.Projects)) {
 		project := ws.Projects[name]
 		if project.Status != config.StatusActive {
@@ -106,6 +118,13 @@ func BuildPlan(root string, ws *config.Workspace) Plan {
 	}
 	plan.buildEndpoints()
 	return plan
+}
+
+func (p *Plan) addServiceTarget(endpoint, workspaceID string) {
+	p.WorkspaceTargetID = "workspace:service"
+	p.ServiceWorkspaceID = workspaceID
+	target := Target{ID: p.WorkspaceTargetID, Role: TargetWorkspaceService, URL: endpoint, ConfigURL: endpoint, SourceKey: "sync-service:" + endpoint, External: true, Executable: true, Transport: "service"}
+	p.Targets = append(p.Targets, target)
 }
 
 func (p *Plan) addWorkspaceTarget() {
@@ -238,6 +257,7 @@ func (p *Plan) buildEndpoints() {
 				External:   target.External,
 				Executable: target.Executable,
 				ParseError: target.ParseError,
+				Transport:  target.Transport,
 			})
 		}
 		endpoint := &p.Endpoints[endpointIndex]

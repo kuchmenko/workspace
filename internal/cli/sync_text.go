@@ -32,6 +32,9 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	if err := config.EnsureLegacyDaemonStopped(); err != nil {
 		return err
 	}
+	if _, err := config.LoadMachineConfig(); err != nil {
+		return err
+	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

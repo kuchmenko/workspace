@@ -1,8 +1,9 @@
 # Sync
 
-`ws sync` is the only synchronization entry point. It is an explicit,
-foreground operation: nothing watches `workspace.toml`, runs on a timer,
-or changes repositories in the background.
+`ws sync` is the only project synchronization entry point. It is an explicit,
+foreground operation: nothing watches `workspace.toml`, runs on a timer, or
+changes repositories in the background. A workspace may use either the LAN
+sync service or the legacy Git registry transport.
 
 The command separates discovery from mutation:
 
@@ -75,6 +76,12 @@ Execution is sequential and cancellation-aware:
    clean behind-only main worktree, refresh local-ahead branch activity,
    and detect deleted remote branches.
 6. Save refreshed project metadata once after project processing.
+
+For a service-bound workspace, the service endpoint replaces the workspace
+Git origin in preflight. Its authenticated registry synchronization is a
+mandatory barrier before any project operation. If the service is unavailable,
+the binding changes after preflight, or semantic merge reports a conflict, the
+run stops without falling back to Git.
 
 `ws sync` never pushes project branches to origin. Publish those explicitly
 with `ws worktree push <project> <branch>` or plain `git push`.
@@ -199,6 +206,86 @@ systemctl --user daemon-reload
 live process and prints the PID plus stop commands. This prevents the removed
 background reconciler from mutating the workspace during a foreground run.
 
+## LAN Sync Service
+
+The service is a native `ws` process intended for a Debian LXC on the local
+network. It stores immutable canonical revisions in SQLite. Clients keep their
+credentials and a SQLite cache/outbox under `$XDG_STATE_HOME/ws/sync`, so local
+registry edits remain available while the service is unreachable and are sent
+by the next explicit `ws sync`.
+
+Install the latest release on the LXC without Docker:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/kuchmenko/workspace/main/install-service.sh | sudo sh
+```
+
+The installer creates the unprivileged `ws` user, service state under
+`/var/lib/ws`, `ws-sync.service`, and the socket-activated privileged updater.
+It prints a one-time admin pairing code. By default the service advertises
+`https://<hostname>.local:47321` through mDNS. Inspect LAN advertisements with:
+
+```sh
+ws sync service discover
+```
+
+On the first client, pair and import an existing workspace:
+
+```sh
+ws sync service pair '<ws1-code>'
+resolved=$(readlink -f ./workspace.toml)
+git -C "$(dirname "$resolved")" rm --cached -- "$resolved"
+ws sync service import
+```
+
+Import refuses while the resolved `workspace.toml` is Git-tracked. Removing it
+from Git tracking is an explicit migration step: it prevents Git and the
+service from both claiming authority. Commit and push that removal yourself if
+the file came from a dotfiles repository.
+
+Create a client pairing code on an already paired admin machine, then attach a
+second workspace directory using the workspace ID stored in
+`~/.config/ws/config.toml`:
+
+```sh
+ws sync service pairing-code --role client
+ws sync service pair '<ws1-code>'
+mkdir -p ~/dev
+ws --root ~/dev sync service attach '<workspace-id>'
+```
+
+Pairing codes pin the service CA fingerprint and are single-use. mDNS records
+are discovery hints only; they never establish trust. Clients authenticate
+with their issued certificate, and an admin can revoke one with
+`ws sync service revoke <actor-id>`.
+
+Concurrent edits to different semantic fields merge. Concurrent incompatible
+edits to the same field stop sync and preserve the base, local desired state,
+and current service state. Edit `workspace.toml` to the value you choose, then
+submit that explicit choice:
+
+```sh
+ws sync service resolve
+```
+
+An admin upgrades the service through the constrained updater; the request can
+select only `latest` or an exact `vMAJOR.MINOR.PATCH` release:
+
+```sh
+ws sync service upgrade
+ws sync service upgrade --version v1.2.3
+```
+
+The service backs up SQLite before asking the root socket-activated helper to
+verify release checksums, atomically replace the binary, and restart the
+unprivileged service. Initial installation and upgrades trust the repository's
+GitHub release channel; release checksums protect transfer integrity but are
+not a separate signature authority.
+
+The initial scope is LAN-only. Outside the LAN, commands that only edit local
+state remain usable, while `ws sync` stops at the unavailable service barrier.
+The outbox reconciles when the machine can reach the service again.
+
 ## Multi-Machine Flow
 
 Each machine registers its local workspace path and runs sync explicitly:
@@ -213,8 +300,10 @@ ws workspace add ~/dev
 ws sync
 ```
 
-`workspace.toml` travels through the workspace repository. Project branch
-commits travel only after an explicit project push. A typical handoff is:
+With a service binding, `workspace.toml` is a local materialized view and its
+canonical state travels through the service. Without a binding, it continues
+to travel through the workspace repository. Project branch commits travel only
+after an explicit project push. A typical handoff is:
 
 ```sh
 # Machine A
@@ -226,8 +315,9 @@ ws sync
 ws worktree add myapp feat/auth-refactor
 ```
 
-Symlinked `workspace.toml` files remain supported: sync resolves the real
-file and operates in the git repository that owns it.
+Symlinked `workspace.toml` files remain supported. During service migration,
+the resolved file must first be removed from its owning Git repository's
+tracking.
 
 ## Health Check
 

@@ -15,6 +15,33 @@ import (
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
+func TestFrozenServiceBindingRejectsAuthorityChanges(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	legacyPlan := Plan{Root: root}
+	if err := frozenServiceBinding(legacyPlan); err != nil {
+		t.Fatal(err)
+	}
+	machine := &config.MachineConfig{Service: &config.MachineService{ID: "service", Endpoint: "https://service.local:47321", Bindings: []config.WorkspaceBinding{{Root: root, WorkspaceID: "workspace"}}}}
+	if err := config.SaveMachineConfig(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := frozenServiceBinding(legacyPlan); err == nil {
+		t.Fatal("accepted service authority added after preflight")
+	}
+	servicePlan := Plan{Root: root, WorkspaceTargetID: "workspace:service", ServiceWorkspaceID: "workspace", Targets: []Target{{ID: "workspace:service", URL: "https://service.local:47321"}}}
+	if err := frozenServiceBinding(servicePlan); err != nil {
+		t.Fatal(err)
+	}
+	machine.Service.Endpoint = "https://other.local:47321"
+	if err := config.SaveMachineConfig(machine); err != nil {
+		t.Fatal(err)
+	}
+	if err := frozenServiceBinding(servicePlan); err == nil {
+		t.Fatal("accepted service endpoint changed after preflight")
+	}
+}
+
 func TestRunContextLeavesExcludedExistingAndMissingProjectsUntouched(t *testing.T) {
 	root := newTestWorkspace(t)
 	remote := testutil.InitFakeRemote(t, "projects", "main")

@@ -25,6 +25,8 @@ var workspaceIndependentCommands = map[string]bool{
 	"explorer": true, "ws": true, "workspace": true,
 }
 
+const skipsWorkspaceAnnotation = "ws.skips-workspace"
+
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:               "ws",
@@ -80,6 +82,9 @@ func prepareCommand(cmd *cobra.Command, _ []string) error {
 }
 
 func commandSkipsWorkspace(cmd *cobra.Command) bool {
+	if cmd.Annotations[skipsWorkspaceAnnotation] == "true" {
+		return true
+	}
 	if workspaceIndependentCommands[cmd.Name()] {
 		return true
 	}
