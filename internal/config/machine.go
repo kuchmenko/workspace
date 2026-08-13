@@ -225,17 +225,8 @@ func ListWorkspaceRoots() ([]string, error) {
 }
 
 func normalizeMachineConfig(cfg *MachineConfig) error {
-	if cfg.ExplorerView == "" {
-		cfg.ExplorerView = ExplorerViewRecent
-	}
-	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
-		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
-	}
-	if cfg.RecentOrder == "" {
-		cfg.RecentOrder = RecentOrderDesc
-	}
-	if cfg.RecentOrder != RecentOrderAsc && cfg.RecentOrder != RecentOrderDesc {
-		return fmt.Errorf("invalid recent_order %q", cfg.RecentOrder)
+	if err := normalizeExplorerConfig(cfg); err != nil {
+		return err
 	}
 	roots := make([]string, 0, len(cfg.WorkspaceRoots))
 	for _, root := range cfg.WorkspaceRoots {
@@ -250,23 +241,44 @@ func normalizeMachineConfig(cfg *MachineConfig) error {
 	}
 	sort.Strings(roots)
 	cfg.WorkspaceRoots = roots[:dedupeSorted(roots)]
-	if cfg.Service != nil {
-		bindings := make(map[string]WorkspaceBinding)
-		for _, binding := range cfg.Service.Bindings {
-			if strings.TrimSpace(binding.Root) == "" || strings.TrimSpace(binding.WorkspaceID) == "" {
-				continue
-			}
-			root, err := canonicalWorkspaceRoot(binding.Root)
-			if err != nil {
-				return err
-			}
-			binding.Root = root
-			bindings[root] = binding
+	return normalizeServiceBindings(cfg)
+}
+
+func normalizeExplorerConfig(cfg *MachineConfig) error {
+	if cfg.ExplorerView == "" {
+		cfg.ExplorerView = ExplorerViewRecent
+	}
+	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
+		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
+	}
+	if cfg.RecentOrder == "" {
+		cfg.RecentOrder = RecentOrderDesc
+	}
+	if cfg.RecentOrder != RecentOrderAsc && cfg.RecentOrder != RecentOrderDesc {
+		return fmt.Errorf("invalid recent_order %q", cfg.RecentOrder)
+	}
+	return nil
+}
+
+func normalizeServiceBindings(cfg *MachineConfig) error {
+	if cfg.Service == nil {
+		return nil
+	}
+	bindings := make(map[string]WorkspaceBinding)
+	for _, binding := range cfg.Service.Bindings {
+		if strings.TrimSpace(binding.Root) == "" || strings.TrimSpace(binding.WorkspaceID) == "" {
+			continue
 		}
-		cfg.Service.Bindings = cfg.Service.Bindings[:0]
-		for _, root := range slices.Sorted(maps.Keys(bindings)) {
-			cfg.Service.Bindings = append(cfg.Service.Bindings, bindings[root])
+		root, err := canonicalWorkspaceRoot(binding.Root)
+		if err != nil {
+			return err
 		}
+		binding.Root = root
+		bindings[root] = binding
+	}
+	cfg.Service.Bindings = cfg.Service.Bindings[:0]
+	for _, root := range slices.Sorted(maps.Keys(bindings)) {
+		cfg.Service.Bindings = append(cfg.Service.Bindings, bindings[root])
 	}
 	return nil
 }
