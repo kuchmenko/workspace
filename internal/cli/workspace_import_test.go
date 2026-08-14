@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/syncnode"
 )
 
@@ -94,5 +95,47 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	explorer := newExplorerCmd()
 	if err = explorer.Execute(); err == nil || !strings.Contains(err.Error(), "explorer is disabled") {
 		t.Fatalf("Explorer error = %v", err)
+	}
+}
+
+func TestFindNodeWorkspaceRejectsSiblingRoot(t *testing.T) {
+	directory := t.TempDir()
+	store, err := syncnode.OpenStore(filepath.Join(directory, "node.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	identity, err := syncnode.OpenOrCreateIdentity(filepath.Join(directory, "identity.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := syncnode.CreateRecoveryKey(filepath.Join(directory, "recovery.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := config.DecodeWorkspaceForImport([]byte("[meta]\nversion = 1\n[groups]\n[projects]\n[aliases]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRoot := filepath.Join(directory, "one")
+	secondRoot := filepath.Join(directory, "two")
+	for _, root := range []string{firstRoot, secondRoot} {
+		if err = os.Mkdir(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = store.Import(context.Background(), "one", firstRoot, workspace, identity, recovery); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Import(context.Background(), "two", secondRoot, workspace, identity, recovery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := findNodeWorkspace(context.Background(), store, secondRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.ID != second.ID {
+		t.Fatalf("found workspace %q for sibling root %q", found.Name, secondRoot)
 	}
 }

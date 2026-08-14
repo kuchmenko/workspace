@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/alias"
@@ -204,7 +205,8 @@ func findNodeWorkspace(ctx context.Context, store *syncnode.Store, path string) 
 	var found syncnode.Workspace
 	for _, candidate := range workspaces {
 		relative, relErr := filepath.Rel(candidate.Root, abs)
-		if relErr == nil && relative != ".." && !filepath.IsAbs(relative) && (found.Root == "" || len(candidate.Root) > len(found.Root)) {
+		outside := relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator))
+		if relErr == nil && !outside && !filepath.IsAbs(relative) && (found.Root == "" || len(candidate.Root) > len(found.Root)) {
 			found = candidate
 		}
 	}
