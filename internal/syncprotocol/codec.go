@@ -64,7 +64,7 @@ func mustDecodeMode() cbor.DecMode {
 		DupMapKey:         cbor.DupMapKeyEnforcedAPF,
 		MaxNestedLevels:   16,
 		MaxArrayElements:  4096,
-		MaxMapPairs:       32,
+		MaxMapPairs:       4096,
 		IndefLength:       cbor.IndefLengthForbidden,
 		TagsMd:            cbor.TagsForbidden,
 		ExtraReturnErrors: cbor.ExtraDecErrorUnknownField,

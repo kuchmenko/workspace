@@ -30,7 +30,7 @@ func newCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new GitHub repo and register it as a workspace project",
 		Long: `Create a new GitHub repository (in your account or any accessible org)
-via the gh CLI, register it in workspace.toml, and clone it into the
+via the gh CLI, register it in the workspace registry, and clone it into the
 bare+worktree layout used by every other ws command.
 
 Without flags on a TTY, opens an interactive form:
@@ -40,7 +40,7 @@ Without flags on a TTY, opens an interactive form:
   - Visibility  — private (default) or public
   - Description — optional one-liner
   - Category    — personal (default) or work
-  - Group       — optional project group/dir for workspace.toml
+  - Group       — optional project group/dir in the registry
 
 The new repo is always created with --add-readme so it has a default
 branch + first commit, which lets clone succeed without
@@ -118,8 +118,8 @@ Requires gh authentication: run 'gh auth login' first.`,
 	cmd.Flags().BoolVar(&isPublic, "public", false, "shorthand for --visibility=public")
 	cmd.Flags().StringVarP(&description, "description", "d", "", "optional repo description")
 	cmd.Flags().StringVarP(&category, "category", "c", "personal", "project category: personal or work")
-	cmd.Flags().StringVarP(&group, "group", "g", "", "project group/dir for workspace.toml (default: owner login for work, category for personal)")
-	cmd.Flags().StringVar(&projectName, "project-name", "", "override the workspace.toml project key (default: repo name)")
+	cmd.Flags().StringVarP(&group, "group", "g", "", "project group/dir in the registry (default: owner login for work, category for personal)")
+	cmd.Flags().StringVar(&projectName, "project-name", "", "override the registry project key (default: repo name)")
 	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force headless mode; --owner and --name become required")
 

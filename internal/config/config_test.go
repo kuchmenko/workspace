@@ -478,3 +478,45 @@ func TestTouchActive_UnknownBranch_NoOp(t *testing.T) {
 		t.Error("TouchActive on unknown branch should be no-op")
 	}
 }
+
+func TestDecodeWorkspaceForImportMergesDuplicateBranchMetadata(t *testing.T) {
+	body := []byte(`[meta]
+version = 1
+
+[projects.app]
+path = "personal/app"
+status = "active"
+category = "personal"
+
+[[projects.app.branches]]
+name = "feat/shared"
+machines = ["linux"]
+last_active_machine = "linux"
+last_active_at = "2026-05-11T18:37:03Z"
+created_by = "linux"
+created_at = "2026-05-11T15:47:53Z"
+
+[[projects.app.branches]]
+name = "feat/shared"
+machines = ["archlinux"]
+last_active_machine = "archlinux"
+last_active_at = "2026-05-12T09:18:36Z"
+created_by = "archlinux"
+created_at = "2026-05-12T09:18:36Z"
+`)
+	if _, err := DecodeWorkspace(body); err == nil {
+		t.Fatal("strict decode accepted duplicate branch metadata")
+	}
+	workspace, err := DecodeWorkspaceForImport(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branches := workspace.Projects["app"].Branches
+	if len(branches) != 1 {
+		t.Fatalf("branches = %#v", branches)
+	}
+	branch := branches[0]
+	if !reflect.DeepEqual(branch.Machines, []string{"archlinux", "linux"}) || branch.LastActiveMachine != "archlinux" || branch.CreatedBy != "linux" {
+		t.Fatalf("merged branch = %#v", branch)
+	}
+}

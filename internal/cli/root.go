@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/metrics"
+	"github.com/kuchmenko/workspace/internal/syncnode"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
@@ -18,6 +20,9 @@ var (
 	wsRoot    string
 	ws        *config.Workspace
 	wsLoadErr error
+	nodeStore *syncnode.Store
+	nodeState syncnode.Workspace
+	nodeID    syncnode.Identity
 )
 
 var workspaceIndependentCommands = map[string]bool{
@@ -116,16 +121,97 @@ func loadSetupWorkspace() error {
 }
 
 func loadCurrentWorkspace() error {
-	if err := findWorkspaceRoot(); err != nil {
+	if nodeStore != nil {
+		_ = nodeStore.Close()
+		nodeStore = nil
+		nodeState = syncnode.Workspace{}
+		nodeID = syncnode.Identity{}
+	}
+	loaded, err := loadCurrentNodeWorkspace()
+	if err != nil {
 		return err
 	}
-	var err error
+	if loaded {
+		wsLoadErr = nil
+		return nil
+	}
+	if err = findWorkspaceRoot(); err != nil {
+		return err
+	}
 	ws, err = config.Load(wsRoot)
 	if err != nil {
 		return err
 	}
 	wsLoadErr = nil
 	return nil
+}
+
+func loadCurrentNodeWorkspace() (bool, error) {
+	paths, err := syncnode.DefaultPaths()
+	if err != nil {
+		return false, err
+	}
+	if _, err = os.Stat(paths.Database); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	store, err := syncnode.OpenStore(paths.Database)
+	if err != nil {
+		return false, err
+	}
+	var loaded syncnode.Workspace
+	if wsRoot != "" {
+		loaded, err = store.LoadByRoot(context.Background(), wsRoot)
+	} else {
+		var cwd string
+		cwd, err = os.Getwd()
+		if err == nil {
+			loaded, err = findNodeWorkspace(context.Background(), store, cwd)
+		}
+	}
+	if errors.Is(err, syncnode.ErrWorkspaceNotFound) {
+		store.Close()
+		return false, nil
+	}
+	if err != nil {
+		store.Close()
+		return false, err
+	}
+	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
+	if err != nil {
+		store.Close()
+		return false, err
+	}
+	nodeStore = store
+	nodeState = loaded
+	nodeID = identity
+	wsRoot = loaded.Root
+	ws = loaded.State
+	return true, nil
+}
+
+func findNodeWorkspace(ctx context.Context, store *syncnode.Store, path string) (syncnode.Workspace, error) {
+	workspaces, err := store.List(ctx)
+	if err != nil {
+		return syncnode.Workspace{}, err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return syncnode.Workspace{}, err
+	}
+	var found syncnode.Workspace
+	for _, candidate := range workspaces {
+		relative, relErr := filepath.Rel(candidate.Root, abs)
+		if relErr == nil && relative != ".." && !filepath.IsAbs(relative) && (found.Root == "" || len(candidate.Root) > len(found.Root)) {
+			found = candidate
+		}
+	}
+	if found.Root == "" {
+		return syncnode.Workspace{}, syncnode.ErrWorkspaceNotFound
+	}
+	return found, nil
 }
 
 func findWorkspaceRoot() error {
@@ -174,7 +260,14 @@ func commandOutcome(err error) metrics.Outcome {
 }
 
 func saveWorkspace() error {
-	if err := config.Save(wsRoot, ws); err != nil {
+	if nodeStore != nil && nodeState.Root == wsRoot {
+		committed, err := nodeStore.Commit(context.Background(), nodeState.Name, nodeState.Head, ws, nodeID)
+		if err != nil {
+			return fmt.Errorf("saving workspace revision: %w", err)
+		}
+		nodeState = committed
+		ws = committed.State
+	} else if err := config.Save(wsRoot, ws); err != nil {
 		return fmt.Errorf("saving workspace.toml: %w", err)
 	}
 

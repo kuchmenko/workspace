@@ -197,3 +197,9 @@ func sortedUniqueRevisionIDs(ids []RevisionID) bool {
 
 func (id RevisionID) String() string { return hex.EncodeToString(id[:]) }
 func (id NodeID) String() string     { return hex.EncodeToString(id[:]) }
+func (id WorkspaceID) String() string {
+	return hex.EncodeToString(id[:])
+}
+func (epoch RecoveryEpoch) String() string {
+	return hex.EncodeToString(epoch[:])
+}

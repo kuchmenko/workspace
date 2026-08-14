@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/syncnode"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -122,6 +124,67 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 	}
 	if meta.LastActiveMachine != "linux" {
 		t.Errorf("LastActiveMachine: want linux, got %q", meta.LastActiveMachine)
+	}
+}
+
+func TestWorktreeAddCommitsDatabaseRevisionWithoutChangingTOML(t *testing.T) {
+	root := setupTestWorkspace(t, "linux", "myapp", "main")
+	paths, err := syncnode.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryPublicKey, err := syncnode.CreateRecoveryKey(filepath.Join(t.TempDir(), "recovery.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := config.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncnode.OpenStore(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := store.Import(context.Background(), "personal", root, state, identity, recoveryPublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tomlPath := filepath.Join(root, "workspace.toml")
+	before, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := NewRootCmd()
+	command.SetArgs([]string{"--root", root, "worktree", "add", "myapp", "feat/database"})
+	if err = command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(tomlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("database-backed worktree add changed workspace.toml")
+	}
+	store, err = syncnode.OpenStore(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	loaded, err := store.LoadByName(context.Background(), "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := loaded.State.Projects["myapp"]
+	if loaded.Head == imported.Head || project.LookupBranch("feat/database") == nil {
+		t.Fatalf("worktree metadata was not committed: %#v", loaded)
 	}
 }
 

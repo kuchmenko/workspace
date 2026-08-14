@@ -391,11 +391,17 @@ ws workspace export shared > workspace.toml
 Importing it on a disconnected machine creates a new local workspace:
 
 ```sh
-ws workspace import workspace.toml --name local-copy --local
+ws workspace import workspace.toml --name local-copy --root ~/development --recovery-key /offline/ws-recovery.key
 ```
 
 It carries no membership, credentials, node identities, conflicts, or history
 and never reconnects to the source workspace automatically.
+
+The current implementation provides this local migration slice: node identity,
+genesis import, export, SQLite-backed reads, and signed compare-and-swap
+revisions for CLI registry mutations, including project and worktree metadata.
+Peer discovery, transfer, reconciliation, enrollment, revocation, backup, and
+background replication remain future slices.
 
 ## MVP Validation
 

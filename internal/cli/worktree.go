@@ -34,7 +34,7 @@ func newWorktreeCmd() *cobra.Command {
 func resolveProject(name string) (config.Project, string, string, error) {
 	proj, ok := ws.Projects[name]
 	if !ok {
-		return config.Project{}, "", "", fmt.Errorf("project %q not found in workspace.toml", name)
+		return config.Project{}, "", "", fmt.Errorf("project %q not found in workspace registry", name)
 	}
 	mainPath, err := layout.ProjectPath(wsRoot, proj.Path)
 	if err != nil {
@@ -76,7 +76,7 @@ rewrite — beyond what git check-ref-format accepts. The same command
 covers three cases:
 
   1. Branch is new: created from --from (or project default_branch)
-     and a fresh [[branches]] entry is recorded in workspace.toml.
+     and fresh branch metadata is recorded in the workspace registry.
 
   2. Branch exists on origin: fetched into the bare repo, the new
      worktree checks it out, upstream tracking wired automatically.
@@ -109,6 +109,8 @@ EXAMPLES
 			}
 			result, err := repo.AddWorktree(repo.WorktreeAddOptions{
 				WorkspaceRoot: wsRoot,
+				Workspace:     ws,
+				Save:          func(*config.Workspace) error { return saveWorkspace() },
 				Project:       projectName,
 				Branch:        branch,
 				Machine:       machine,
@@ -122,7 +124,7 @@ EXAMPLES
 			}
 			machines := strings.Join(result.Machines, ", ")
 			if result.ReRegistered {
-				fmt.Printf("re-registered existing worktree %s\n  branch: %s\n  registered in workspace.toml (machines=[%s])\n",
+				fmt.Printf("re-registered existing worktree %s\n  branch: %s\n  registered in workspace registry (machines=[%s])\n",
 					result.Path, branch, machines)
 				return nil
 			}
@@ -135,7 +137,7 @@ EXAMPLES
 			default:
 				fmt.Printf("  branch: %s\n  base:   %s\n", branch, result.Base)
 			}
-			fmt.Printf("  registered in workspace.toml (machines=[%s])\n", machines)
+			fmt.Printf("  registered in workspace registry (machines=[%s])\n", machines)
 			return nil
 		},
 	}
@@ -264,10 +266,10 @@ func newWorktreePushCmd() *cobra.Command {
 	var forceDirty bool
 	cmd := &cobra.Command{
 		Use:         "push <project> <branch>",
-		Short:       "Push the branch to origin and stamp last_active_* in workspace.toml",
+		Short:       "Push the branch to origin and stamp activity in the workspace registry",
 		Annotations: agentAnnotations("worktree-push", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectWrite, "text", "0,1"),
 		Long: `Push <branch> to origin from its local worktree. Updates
-last_active_machine and last_active_at in workspace.toml so other machines
+last_active_machine and last_active_at in the workspace registry so other machines
 see the activity. Refuses dirty worktrees unless --force-dirty is set, and
 refuses branches that are not registered in [[branches]] (a sign of
 out-of-band creation; the user should re-register via ws worktree add).`,
@@ -287,7 +289,7 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			}
 
 			if proj.LookupBranch(branch) == nil {
-				return fmt.Errorf("branch %s has no [[branches]] entry in workspace.toml\n"+
+				return fmt.Errorf("branch %s has no [[branches]] entry in the workspace registry\n"+
 					"  this is usually a sign of an out-of-band creation; either:\n"+
 					"    - ws worktree add %s %s  (re-register; works for legacy wt/* too)\n"+
 					"    - cd <wt> && git push    (skip metadata update)",
@@ -312,12 +314,12 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			if p.MarkPushed(branch, machine, time.Now()) {
 				ws.Projects[projectName] = p
 				if err := saveWorkspace(); err != nil {
-					fmt.Fprintf(os.Stderr, "warning: push succeeded but workspace.toml save failed: %v\n", err)
+					fmt.Fprintf(os.Stderr, "warning: push succeeded but workspace registry save failed: %v\n", err)
 				}
 			}
 			meta := p.LookupBranch(branch)
 			if meta != nil {
-				fmt.Printf("updated workspace.toml: last_pushed_machine=%s, last_pushed_at=%s\n",
+				fmt.Printf("updated workspace registry: last_pushed_machine=%s, last_pushed_at=%s\n",
 					meta.LastPushedMachine, meta.LastPushedAt)
 			}
 			return nil
@@ -345,7 +347,7 @@ func newWorktreeRmCmd() *cobra.Command {
 				return resolveErr
 			}
 			wtPath := locateWorktreeForBranch(barePath, branch)
-			result, err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Project: projectName, Branch: branch, Machine: machine, Force: force})
+			result, err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Workspace: ws, Save: func(*config.Workspace) error { return saveWorkspace() }, Project: projectName, Branch: branch, Machine: machine, Force: force})
 			if result.Removed {
 				fmt.Printf("removed worktree %s\n", wtPath)
 			}
@@ -353,7 +355,7 @@ func newWorktreeRmCmd() *cobra.Command {
 				return err
 			}
 			if !result.Removed && result.MetadataReleased {
-				fmt.Printf("released stale workspace.toml ownership for %s\n", branch)
+				fmt.Printf("released stale workspace registry ownership for %s\n", branch)
 			}
 			return nil
 		},
