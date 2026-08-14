@@ -116,27 +116,15 @@ func (snapshot WorkspaceSnapshot) Validate() error {
 	if snapshot.Schema != SnapshotSchemaVersion {
 		return fmt.Errorf("unsupported snapshot schema %d", snapshot.Schema)
 	}
+	if snapshot.Registry.Version != 1 {
+		return fmt.Errorf("unsupported registry schema %d", snapshot.Registry.Version)
+	}
 	if len(snapshot.RecoveryPublicKey) != ed25519.PublicKeySize {
 		return errors.New("invalid recovery public key")
 	}
-	adminCount := uint64(0)
-	for index, member := range snapshot.Members {
-		if len(member.PublicKey) != ed25519.PublicKeySize {
-			return errors.New("invalid member public key")
-		}
-		nodeID, err := NodeIDFor(ed25519.PublicKey(member.PublicKey))
-		if err != nil || nodeID != member.NodeID {
-			return errors.New("member node ID does not match public key")
-		}
-		if member.Role < RoleReplica || member.Role > RoleAdmin {
-			return errors.New("invalid member role")
-		}
-		if index > 0 && bytes.Compare(snapshot.Members[index-1].NodeID[:], member.NodeID[:]) >= 0 {
-			return errors.New("members must be sorted and unique")
-		}
-		if member.Role == RoleAdmin {
-			adminCount++
-		}
+	adminCount, err := validateMembers(snapshot.Members)
+	if err != nil {
+		return err
 	}
 	if snapshot.AdminThreshold == 0 || snapshot.AdminThreshold > adminCount {
 		return errors.New("admin threshold exceeds active administrators")
@@ -146,6 +134,29 @@ func (snapshot WorkspaceSnapshot) Validate() error {
 		return fmt.Errorf("invalid registry snapshot: %v", issues)
 	}
 	return nil
+}
+
+func validateMembers(members []Member) (uint64, error) {
+	adminCount := uint64(0)
+	for index, member := range members {
+		if len(member.PublicKey) != ed25519.PublicKeySize {
+			return 0, errors.New("invalid member public key")
+		}
+		nodeID, err := NodeIDFor(ed25519.PublicKey(member.PublicKey))
+		if err != nil || nodeID != member.NodeID {
+			return 0, errors.New("member node ID does not match public key")
+		}
+		if member.Role < RoleReplica || member.Role > RoleAdmin {
+			return 0, errors.New("invalid member role")
+		}
+		if index > 0 && bytes.Compare(members[index-1].NodeID[:], member.NodeID[:]) >= 0 {
+			return 0, errors.New("members must be sorted and unique")
+		}
+		if member.Role == RoleAdmin {
+			adminCount++
+		}
+	}
+	return adminCount, nil
 }
 
 func (snapshot WorkspaceSnapshot) Workspace(root string) *config.Workspace {
@@ -170,7 +181,7 @@ func (snapshot *WorkspaceSnapshot) normalize() {
 
 func registrySnapshot(workspace *config.Workspace) RegistrySnapshot {
 	registry := RegistrySnapshot{
-		Version:     uint64(workspace.Meta.Version),
+		Version:     1,
 		DefaultView: workspace.Agent.DefaultView,
 		Groups:      make(map[string]GroupSnapshot, len(workspace.Groups)),
 		Projects:    make(map[string]ProjectSnapshot, len(workspace.Projects)),
@@ -248,7 +259,7 @@ func (registry *RegistrySnapshot) normalize() {
 
 func (registry RegistrySnapshot) Workspace() *config.Workspace {
 	workspace := &config.Workspace{
-		Meta:     config.Meta{Version: int(registry.Version)},
+		Meta:     config.Meta{Version: 1},
 		Agent:    config.AgentConfig{DefaultView: registry.DefaultView},
 		Groups:   make(map[string]config.Group, len(registry.Groups)),
 		Projects: make(map[string]config.Project, len(registry.Projects)),

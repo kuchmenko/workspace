@@ -102,13 +102,13 @@ func rejectNodeExplorer() error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	workspaces, err := store.List(context.Background())
 	if err != nil {
 		return err
 	}
 	if len(workspaces) != 0 {
-		return errors.New("Explorer is disabled while imported workspaces are active; its SQLite migration is not implemented yet")
+		return errors.New("explorer is disabled while imported workspaces are active; its SQLite migration is not implemented yet")
 	}
 	return nil
 }

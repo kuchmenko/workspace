@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,20 +46,20 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if _, err = db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err = createSchema(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	store := &Store{db: db}
 	if err = store.loadMetadata(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	if err = restrictDatabaseFiles(path); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
@@ -86,8 +85,7 @@ func (s *Store) Backup(stateDir string) (string, error) {
 		return "", err
 	}
 	path := filepath.Join(directory, "service-"+time.Now().UTC().Format("20060102T150405.000000000Z")+".db")
-	quoted := strings.ReplaceAll(path, "'", "''")
-	if _, err := s.db.Exec(`VACUUM INTO '` + quoted + `'`); err != nil {
+	if _, err := s.db.Exec(`VACUUM INTO ?`, path); err != nil {
 		return "", err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
@@ -139,40 +137,44 @@ func (s *Store) Pair(ctx context.Context, request PairRequest, identity *Identit
 	csrHash := hashString(request.CSR)
 	var response PairResponse
 	err := withTx(ctx, s.db, func(tx *sql.Tx) error {
-		var expires int64
-		var role Role
-		var attemptID, storedCSR sql.NullString
-		var storedResponse []byte
-		err := tx.QueryRow(`SELECT expires_at,role,attempt_id,csr_hash,response FROM pairing_tokens WHERE token_hash=?`, hashString(request.Token)).Scan(&expires, &role, &attemptID, &storedCSR, &storedResponse)
-		if errors.Is(err, sql.ErrNoRows) || expires < time.Now().Unix() {
-			return ErrPairingInvalid
-		}
-		if err != nil {
-			return err
-		}
-		if attemptID.Valid {
-			if attemptID.String != request.AttemptID || storedCSR.String != csrHash {
-				return ErrPairingMismatch
-			}
-			return json.Unmarshal(storedResponse, &response)
-		}
-		actorID := uuid.NewString()
-		issued, serial, publicKeyHash, err := identity.issueClient(request.CSR, actorID)
-		if err != nil {
-			return err
-		}
-		response = PairResponse{ActorID: actorID, Role: role, CAPEM: string(identity.CAPEM()), Certificate: string(issued), ServiceID: s.serviceID, ServiceEpoch: s.epoch}
-		body, err := json.Marshal(response)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(`INSERT INTO clients(actor_id,display_name,role,certificate_serial,public_key_hash,active) VALUES(?,?,?,?,?,1)`, actorID, request.DisplayName, role, serial, publicKeyHash); err != nil {
-			return err
-		}
-		_, err = tx.Exec(`UPDATE pairing_tokens SET attempt_id=?,csr_hash=?,response=? WHERE token_hash=? AND attempt_id IS NULL`, request.AttemptID, csrHash, body, hashString(request.Token))
-		return err
+		return s.pair(tx, request, csrHash, identity, &response)
 	})
 	return response, err
+}
+
+func (s *Store) pair(tx *sql.Tx, request PairRequest, csrHash string, identity *Identity, response *PairResponse) error {
+	var expires int64
+	var role Role
+	var attemptID, storedCSR sql.NullString
+	var storedResponse []byte
+	err := tx.QueryRow(`SELECT expires_at,role,attempt_id,csr_hash,response FROM pairing_tokens WHERE token_hash=?`, hashString(request.Token)).Scan(&expires, &role, &attemptID, &storedCSR, &storedResponse)
+	if errors.Is(err, sql.ErrNoRows) || expires < time.Now().Unix() {
+		return ErrPairingInvalid
+	}
+	if err != nil {
+		return err
+	}
+	if attemptID.Valid {
+		if attemptID.String != request.AttemptID || storedCSR.String != csrHash {
+			return ErrPairingMismatch
+		}
+		return json.Unmarshal(storedResponse, response)
+	}
+	actorID := uuid.NewString()
+	issued, serial, publicKeyHash, err := identity.issueClient(request.CSR, actorID)
+	if err != nil {
+		return err
+	}
+	*response = PairResponse{ActorID: actorID, Role: role, CAPEM: string(identity.CAPEM()), Certificate: string(issued), ServiceID: s.serviceID, ServiceEpoch: s.epoch}
+	body, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO clients(actor_id,display_name,role,certificate_serial,public_key_hash,active) VALUES(?,?,?,?,?,1)`, actorID, request.DisplayName, role, serial, publicKeyHash); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE pairing_tokens SET attempt_id=?,csr_hash=?,response=? WHERE token_hash=? AND attempt_id IS NULL`, request.AttemptID, csrHash, body, hashString(request.Token))
+	return err
 }
 
 func (s *Store) AuthenticateClient(ctx context.Context, serial, publicKeyHash string) (Client, error) {

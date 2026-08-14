@@ -154,7 +154,7 @@ func (r *Runner) syncServiceWorkspace(ctx context.Context, selection Selection, 
 				var store *syncclient.Store
 				store, err = syncclient.Open(paths.Database)
 				if err == nil {
-					defer store.Close()
+					defer func() { _ = store.Close() }()
 					var response syncservice.SyncResponse
 					response, err = client.SyncWorkspace(ctx, store, selection.plan.ServiceWorkspaceID, r.root)
 					if err == nil && len(response.Conflicts) != 0 {

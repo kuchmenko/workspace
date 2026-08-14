@@ -49,12 +49,12 @@ CREATE TABLE IF NOT EXISTS workspace_state (
  workspace_id TEXT PRIMARY KEY, phase TEXT NOT NULL, state_ref BLOB NOT NULL, canonical BLOB NOT NULL,
  request BLOB, response BLOB, base BLOB, desired BLOB, observed BLOB, conflicts BLOB, expected_hash TEXT
 );`); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	store := &Store{db: db, path: path}
 	if err = store.restrict(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	return store, nil

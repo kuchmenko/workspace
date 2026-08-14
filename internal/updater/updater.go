@@ -66,7 +66,9 @@ func apply(ctx context.Context, output io.Writer, stateDir, binaryPath, backupPa
 		return err
 	}
 	if err = json.NewEncoder(output).Encode(syncservice.UpgradeResponse{Accepted: true, Version: version}); err != nil {
-		restore(binaryPath, rollback)
+		if restoreErr := restore(binaryPath, rollback); restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore updater rollback: %w", restoreErr))
+		}
 		return err
 	}
 	if file, ok := output.(*os.File); ok {
@@ -252,7 +254,7 @@ func extract(data []byte, expected string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	reader := tar.NewReader(gz)
 	var binary []byte
 	for {

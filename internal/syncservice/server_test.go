@@ -276,8 +276,12 @@ func TestAdminUpgradeBacksUpBeforeUpdaterAndForbidsClient(t *testing.T) {
 		}
 		defer connection.Close()
 		backups, globErr := filepath.Glob(filepath.Join(service.server.stateDir, "backups", "service-*.db"))
-		if globErr != nil || len(backups) != 1 {
-			received <- fmt.Errorf("backup before request = %v, %v", backups, globErr)
+		if globErr != nil {
+			received <- fmt.Errorf("list backups: %w", globErr)
+			return
+		}
+		if len(backups) != 1 {
+			received <- fmt.Errorf("backups before request = %v", backups)
 			return
 		}
 		var request UpdaterRequest

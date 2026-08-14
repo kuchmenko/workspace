@@ -92,7 +92,7 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 		t.Fatalf("legacy sync error = %v", err)
 	}
 	explorer := newExplorerCmd()
-	if err = explorer.Execute(); err == nil || !strings.Contains(err.Error(), "Explorer is disabled") {
+	if err = explorer.Execute(); err == nil || !strings.Contains(err.Error(), "explorer is disabled") {
 		t.Fatalf("Explorer error = %v", err)
 	}
 }

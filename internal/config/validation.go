@@ -21,6 +21,12 @@ type ValidationIssue struct {
 	Detail  string
 }
 
+type branchObservation struct {
+	name string
+	by   string
+	at   string
+}
+
 func (w *Workspace) Validate() []ValidationIssue {
 	var issues []ValidationIssue
 	for projName, proj := range w.Projects {
@@ -45,23 +51,29 @@ func (w *Workspace) Validate() []ValidationIssue {
 func timestampIssues(project string, branches []BranchMeta) []ValidationIssue {
 	var issues []ValidationIssue
 	for _, branch := range branches {
-		observations := []struct{ name, by, at string }{
+		observations := []branchObservation{
 			{"last_active", branch.LastActiveMachine, branch.LastActiveAt},
 			{"last_pushed", branch.LastPushedMachine, branch.LastPushedAt},
 			{"created", branch.CreatedBy, branch.CreatedAt},
 		}
 		for _, observation := range observations {
-			if observation.by == "" && observation.at != "" {
-				issues = append(issues, ValidationIssue{Kind: ValidationIncompleteObservation, Project: project, Branch: branch.Name, Detail: fmt.Sprintf("%s_at requires %s", observation.name, observationByField(observation.name))})
-			}
-			if observation.by != "" && observation.at == "" {
-				issues = append(issues, ValidationIssue{Kind: ValidationIncompleteObservation, Project: project, Branch: branch.Name, Detail: fmt.Sprintf("%s requires %s_at", observationByField(observation.name), observation.name)})
-			}
-			if observation.at != "" {
-				if _, err := time.Parse(time.RFC3339, observation.at); err != nil {
-					issues = append(issues, ValidationIssue{Kind: ValidationInvalidTimestamp, Project: project, Branch: branch.Name, Detail: fmt.Sprintf("%s_at is not RFC3339", observation.name)})
-				}
-			}
+			issues = append(issues, validateObservation(project, branch.Name, observation)...)
+		}
+	}
+	return issues
+}
+
+func validateObservation(project, branch string, observation branchObservation) []ValidationIssue {
+	var issues []ValidationIssue
+	if observation.by == "" && observation.at != "" {
+		issues = append(issues, ValidationIssue{Kind: ValidationIncompleteObservation, Project: project, Branch: branch, Detail: fmt.Sprintf("%s_at requires %s", observation.name, observationByField(observation.name))})
+	}
+	if observation.by != "" && observation.at == "" {
+		issues = append(issues, ValidationIssue{Kind: ValidationIncompleteObservation, Project: project, Branch: branch, Detail: fmt.Sprintf("%s requires %s_at", observationByField(observation.name), observation.name)})
+	}
+	if observation.at != "" {
+		if _, err := time.Parse(time.RFC3339, observation.at); err != nil {
+			issues = append(issues, ValidationIssue{Kind: ValidationInvalidTimestamp, Project: project, Branch: branch, Detail: fmt.Sprintf("%s_at is not RFC3339", observation.name)})
 		}
 	}
 	return issues

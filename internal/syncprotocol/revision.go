@@ -90,41 +90,59 @@ func (core RevisionCore) Validate() error {
 }
 
 func (core RevisionCore) validateKind() error {
-	authored := core.Author != (NodeID{}) || core.AuthorSequence != 0 || core.PreviousAuthorRevision != (RevisionID{})
+	var err error
 	switch core.Kind {
 	case RevisionGenesis:
-		if len(core.Parents) != 0 || core.Generation != 0 || authored {
-			return errors.New("genesis must have no parents, generation, or author")
-		}
+		err = core.validateGenesis()
 	case RevisionWrite:
-		if len(core.Parents) != 1 {
-			return errors.New("write must have exactly one parent")
-		}
-		if err := core.validateAuthor(); err != nil {
-			return err
-		}
+		err = core.validateAuthored(1)
 	case RevisionResolution:
-		if len(core.Parents) == 0 {
-			return errors.New("resolution must have at least one parent")
-		}
-		if err := core.validateAuthor(); err != nil {
-			return err
-		}
+		err = core.validateAuthored(0)
 	case RevisionAuthority, RevisionCheckpoint:
-		if len(core.Parents) == 0 || core.Generation == 0 || authored {
-			return errors.New("authority and checkpoint revisions require parents and detached admin proofs")
-		}
+		err = core.validateDetached(1)
 	case RevisionReconcile:
-		if len(core.Parents) < 2 || core.Generation == 0 || authored {
-			return errors.New("reconcile must have at least two parents and no author")
-		}
+		err = core.validateDetached(2)
 	default:
 		return fmt.Errorf("unsupported revision kind %d", core.Kind)
+	}
+	if err != nil {
+		return err
 	}
 	if core.Kind != RevisionGenesis && core.Generation == 0 {
 		return errors.New("non-genesis revision generation is required")
 	}
 	return nil
+}
+
+func (core RevisionCore) validateGenesis() error {
+	if len(core.Parents) != 0 || core.Generation != 0 || core.authored() {
+		return errors.New("genesis must have no parents, generation, or author")
+	}
+	return nil
+}
+
+func (core RevisionCore) validateAuthored(parentCount int) error {
+	if parentCount == 0 && len(core.Parents) == 0 {
+		return errors.New("resolution must have at least one parent")
+	}
+	if parentCount != 0 && len(core.Parents) != parentCount {
+		return errors.New("write must have exactly one parent")
+	}
+	return core.validateAuthor()
+}
+
+func (core RevisionCore) validateDetached(minimumParents int) error {
+	if len(core.Parents) < minimumParents || core.Generation == 0 || core.authored() {
+		if core.Kind == RevisionReconcile {
+			return errors.New("reconcile must have at least two parents and no author")
+		}
+		return errors.New("authority and checkpoint revisions require parents and detached admin proofs")
+	}
+	return nil
+}
+
+func (core RevisionCore) authored() bool {
+	return core.Author != (NodeID{}) || core.AuthorSequence != 0 || core.PreviousAuthorRevision != (RevisionID{})
 }
 
 func (core RevisionCore) validateAuthor() error {

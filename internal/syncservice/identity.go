@@ -68,25 +68,33 @@ func loadOrCreateCA(stateDir string) (*x509.Certificate, ed25519.PrivateKey, []b
 	certPEM, certErr := os.ReadFile(certPath)
 	keyPEM, keyErr := os.ReadFile(keyPath)
 	if certErr == nil && keyErr == nil {
-		certBlock, _ := pem.Decode(certPEM)
-		keyBlock, _ := pem.Decode(keyPEM)
-		if certBlock == nil || keyBlock == nil {
-			return nil, nil, nil, errors.New("invalid identity PEM")
-		}
-		cert, err := x509.ParseCertificate(certBlock.Bytes)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		keyAny, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
-		key, ok := keyAny.(ed25519.PrivateKey)
-		if err != nil || !ok {
-			return nil, nil, nil, errors.New("invalid Ed25519 CA key")
-		}
-		return cert, key, certPEM, nil
+		return parseCA(certPEM, keyPEM)
 	}
 	if !errors.Is(certErr, os.ErrNotExist) || !errors.Is(keyErr, os.ErrNotExist) {
 		return nil, nil, nil, errors.New("incomplete identity")
 	}
+	return createCA(certPath, keyPath)
+}
+
+func parseCA(certPEM, keyPEM []byte) (*x509.Certificate, ed25519.PrivateKey, []byte, error) {
+	certBlock, _ := pem.Decode(certPEM)
+	keyBlock, _ := pem.Decode(keyPEM)
+	if certBlock == nil || keyBlock == nil {
+		return nil, nil, nil, errors.New("invalid identity PEM")
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	keyAny, err := x509.ParsePKCS8PrivateKey(keyBlock.Bytes)
+	key, ok := keyAny.(ed25519.PrivateKey)
+	if err != nil || !ok {
+		return nil, nil, nil, errors.New("invalid Ed25519 CA key")
+	}
+	return cert, key, certPEM, nil
+}
+
+func createCA(certPath, keyPath string) (*x509.Certificate, ed25519.PrivateKey, []byte, error) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, nil, err
@@ -97,7 +105,7 @@ func loadOrCreateCA(stateDir string) (*x509.Certificate, ed25519.PrivateKey, []b
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
 		return nil, nil, nil, err

@@ -162,7 +162,20 @@ func pairAttempt(ctx context.Context, attempt pairingAttempt) (Credentials, erro
 	if err != nil {
 		return Credentials{}, err
 	}
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true}
+	tlsConfig := pairingTLSConfig(endpoint, code.CAFingerprint)
+	var response pairingResponse
+	if err := jsonCall(ctx, &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}, http.MethodPost, code.Endpoint+"/v1/pair", attempt.Request, &response); err != nil {
+		return Credentials{}, err
+	}
+	if err = validatePairingResponse(response, code, attempt.PrivateKey); err != nil {
+		return Credentials{}, err
+	}
+	return Credentials{Endpoint: code.Endpoint, ServiceID: response.ServiceID, ServiceEpoch: response.ServiceEpoch, ActorID: response.ActorID, Role: response.Role, CAPEM: []byte(response.CAPEM), ClientCertPEM: []byte(response.Certificate), ClientKeyPEM: attempt.PrivateKey}, nil
+}
+
+func pairingTLSConfig(endpoint *url.URL, fingerprint string) *tls.Config {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
+	tlsConfig.InsecureSkipVerify = true
 	tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
 		if len(state.PeerCertificates) == 0 {
 			return errors.New("server presented no certificate")
@@ -170,7 +183,7 @@ func pairAttempt(ctx context.Context, attempt pairingAttempt) (Credentials, erro
 		var pinned *x509.Certificate
 		for _, certificate := range state.PeerCertificates {
 			sum := sha256.Sum256(certificate.Raw)
-			if strings.EqualFold(hex.EncodeToString(sum[:]), code.CAFingerprint) {
+			if strings.EqualFold(hex.EncodeToString(sum[:]), fingerprint) {
 				pinned = certificate
 				break
 			}
@@ -189,25 +202,25 @@ func pairAttempt(ctx context.Context, attempt pairingAttempt) (Credentials, erro
 		_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: endpoint.Hostname(), Roots: roots, Intermediates: intermediates})
 		return err
 	}
-	var response pairingResponse
-	if err := jsonCall(ctx, &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}, http.MethodPost, code.Endpoint+"/v1/pair", attempt.Request, &response); err != nil {
-		return Credentials{}, err
-	}
+	return tlsConfig
+}
+
+func validatePairingResponse(response pairingResponse, code PairingCode, privateKey []byte) error {
 	if response.ServiceID != code.ServiceID {
-		return Credentials{}, &IdentityError{WantServiceID: code.ServiceID, GotServiceID: response.ServiceID, GotEpoch: response.ServiceEpoch}
+		return &IdentityError{WantServiceID: code.ServiceID, GotServiceID: response.ServiceID, GotEpoch: response.ServiceEpoch}
 	}
 	block, _ := pem.Decode([]byte(response.CAPEM))
 	if block == nil {
-		return Credentials{}, errors.New("invalid pairing CA PEM")
+		return errors.New("invalid pairing CA PEM")
 	}
 	sum := sha256.Sum256(block.Bytes)
 	if !strings.EqualFold(hex.EncodeToString(sum[:]), code.CAFingerprint) {
-		return Credentials{}, errors.New("pairing CA fingerprint mismatch")
+		return errors.New("pairing CA fingerprint mismatch")
 	}
-	if _, err := tls.X509KeyPair([]byte(response.Certificate), attempt.PrivateKey); err != nil {
-		return Credentials{}, errors.New("pairing certificate does not match generated key")
+	if _, err := tls.X509KeyPair([]byte(response.Certificate), privateKey); err != nil {
+		return errors.New("pairing certificate does not match generated key")
 	}
-	return Credentials{Endpoint: code.Endpoint, ServiceID: response.ServiceID, ServiceEpoch: response.ServiceEpoch, ActorID: response.ActorID, Role: response.Role, CAPEM: []byte(response.CAPEM), ClientCertPEM: []byte(response.Certificate), ClientKeyPEM: attempt.PrivateKey}, nil
+	return nil
 }
 
 func loadPairingAttempt(path string) (pairingAttempt, error) {

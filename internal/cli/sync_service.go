@@ -53,7 +53,7 @@ func newServiceRunCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		server := syncservice.NewServer(store, identity, stateDir, updaterSocket)
 		ref := store.ServiceRef()
 		port, _ := strconv.Atoi(advertised.Port())
@@ -116,7 +116,7 @@ func newServicePairingCodeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		identity, err := syncservice.OpenIdentity(filepath.Join(stateDir, "identity"), endpointNames(endpoint))
 		if err != nil {
 			return err
@@ -242,7 +242,7 @@ func newServiceImportCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		if err = store.Initialize(cmd.Context(), response); err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func newServiceAttachCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		if err = store.Attach(cmd.Context(), wsRoot, response); err != nil {
 			return err
 		}
@@ -299,7 +299,7 @@ func newServiceResolveCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		response, err := client.ResolveWorkspace(cmd.Context(), store, binding.WorkspaceID, wsRoot)
 		if err != nil {
 			return err

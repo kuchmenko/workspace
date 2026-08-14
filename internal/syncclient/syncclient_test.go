@@ -201,7 +201,7 @@ func TestPendingExactRetryAfterReopen(t *testing.T) {
 	if err := store.Initialize(ctx, initial); err != nil {
 		t.Fatal(err)
 	}
-	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "forced", 500) }))
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "forced", http.StatusInternalServerError) }))
 	defer failing.Close()
 	client := &Client{credentials: Credentials{Endpoint: failing.URL, ServiceID: "service", ServiceEpoch: "epoch"}, http: failing.Client()}
 	if _, err := client.SyncWorkspace(ctx, store, "workspace", root); err == nil {

@@ -133,7 +133,7 @@ func newWorkspaceImportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer store.Close()
+			defer func() { _ = store.Close() }()
 			imported, err := store.Import(cmd.Context(), name, root, workspace, identity, recoveryPublicKey)
 			if err != nil {
 				return err
@@ -167,7 +167,7 @@ func newWorkspaceExportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer store.Close()
+			defer func() { _ = store.Close() }()
 			workspace, err := store.LoadByName(cmd.Context(), args[0])
 			if err != nil {
 				return err

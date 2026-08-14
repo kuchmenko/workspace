@@ -37,6 +37,16 @@ type Workspace struct {
 	State *config.Workspace
 }
 
+type genesis struct {
+	workspaceID syncprotocol.WorkspaceID
+	epoch       syncprotocol.RecoveryEpoch
+	revisionID  syncprotocol.RevisionID
+	core        syncprotocol.RevisionCore
+	coreBytes   []byte
+	proof       syncprotocol.SignatureProof
+	snapshot    syncprotocol.WorkspaceSnapshot
+}
+
 func OpenStore(path string) (*Store, error) {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -93,12 +103,12 @@ CREATE TABLE IF NOT EXISTS revision_proofs (
  PRIMARY KEY(revision_id, node_id),
  FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
 );`); err != nil {
-		database.Close()
+		_ = database.Close()
 		return nil, err
 	}
 	store := &Store{db: database, path: path}
 	if err = store.restrict(); err != nil {
-		database.Close()
+		_ = database.Close()
 		return nil, err
 	}
 	return store, nil
@@ -115,22 +125,33 @@ func (store *Store) Import(ctx context.Context, name, root string, workspace *co
 	if err != nil {
 		return Workspace{}, err
 	}
-	member := syncprotocol.Member{NodeID: identity.NodeID(), PublicKey: identity.PublicKey(), Role: syncprotocol.RoleAdmin}
-	snapshot, err := syncprotocol.NewWorkspaceSnapshot(workspace, []syncprotocol.Member{member}, 1, recoveryPublicKey)
+	created, err := createGenesis(workspace, identity, recoveryPublicKey)
 	if err != nil {
 		return Workspace{}, err
 	}
+	if err = store.insertGenesis(ctx, name, canonicalRoot, created); err != nil {
+		return Workspace{}, fmt.Errorf("import workspace: %w", err)
+	}
+	return Workspace{ID: created.workspaceID, Epoch: created.epoch, Name: name, Root: canonicalRoot, Head: created.revisionID, State: created.snapshot.Workspace(canonicalRoot)}, nil
+}
+
+func createGenesis(workspace *config.Workspace, identity Identity, recoveryPublicKey []byte) (genesis, error) {
+	member := syncprotocol.Member{NodeID: identity.NodeID(), PublicKey: identity.PublicKey(), Role: syncprotocol.RoleAdmin}
+	snapshot, err := syncprotocol.NewWorkspaceSnapshot(workspace, []syncprotocol.Member{member}, 1, recoveryPublicKey)
+	if err != nil {
+		return genesis{}, err
+	}
 	snapshotBytes, err := syncprotocol.EncodeWorkspaceSnapshot(snapshot)
 	if err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
 	var workspaceID syncprotocol.WorkspaceID
 	var epoch syncprotocol.RecoveryEpoch
 	if _, err = rand.Read(workspaceID[:]); err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
 	if _, err = rand.Read(epoch[:]); err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
 	core := syncprotocol.RevisionCore{
 		ProtocolVersion: syncprotocol.ProtocolVersion,
@@ -144,36 +165,36 @@ func (store *Store) Import(ctx context.Context, name, root string, workspace *co
 	}
 	revisionID, err := syncprotocol.RevisionIDFor(core)
 	if err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
 	proof, err := identity.Sign(revisionID)
 	if err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
 	if !syncprotocol.VerifyRevisionProof(identity.PublicKey(), revisionID, proof) {
-		return Workspace{}, errors.New("generated genesis proof is invalid")
+		return genesis{}, errors.New("generated genesis proof is invalid")
 	}
 	coreBytes, err := syncprotocol.EncodeRevisionCore(core)
 	if err != nil {
-		return Workspace{}, err
+		return genesis{}, err
 	}
-	err = withTx(ctx, store.db, func(transaction *sql.Tx) error {
-		if _, err = transaction.ExecContext(ctx, `INSERT INTO workspaces(workspace_id,recovery_epoch,name,root) VALUES(?,?,?,?)`, workspaceID[:], epoch[:], name, canonicalRoot); err != nil {
+	return genesis{workspaceID: workspaceID, epoch: epoch, revisionID: revisionID, core: core, coreBytes: coreBytes, proof: proof, snapshot: snapshot}, nil
+}
+
+func (store *Store) insertGenesis(ctx context.Context, name, root string, created genesis) error {
+	return withTx(ctx, store.db, func(transaction *sql.Tx) error {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO workspaces(workspace_id,recovery_epoch,name,root) VALUES(?,?,?,?)`, created.workspaceID[:], created.epoch[:], name, root); err != nil {
 			return err
 		}
-		if _, err = transaction.ExecContext(ctx, `INSERT INTO revisions(revision_id,workspace_id,recovery_epoch,generation,kind,core) VALUES(?,?,?,?,?,?)`, revisionID[:], workspaceID[:], epoch[:], 0, core.Kind, coreBytes); err != nil {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO revisions(revision_id,workspace_id,recovery_epoch,generation,kind,core) VALUES(?,?,?,?,?,?)`, created.revisionID[:], created.workspaceID[:], created.epoch[:], 0, created.core.Kind, created.coreBytes); err != nil {
 			return err
 		}
-		if _, err = transaction.ExecContext(ctx, `INSERT INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, workspaceID[:], revisionID[:]); err != nil {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, created.workspaceID[:], created.revisionID[:]); err != nil {
 			return err
 		}
-		_, err = transaction.ExecContext(ctx, `INSERT INTO revision_proofs(revision_id,node_id,signature) VALUES(?,?,?)`, revisionID[:], proof.NodeID[:], proof.Signature)
+		_, err := transaction.ExecContext(ctx, `INSERT INTO revision_proofs(revision_id,node_id,signature) VALUES(?,?,?)`, created.revisionID[:], created.proof.NodeID[:], created.proof.Signature)
 		return err
 	})
-	if err != nil {
-		return Workspace{}, fmt.Errorf("import workspace: %w", err)
-	}
-	return Workspace{ID: workspaceID, Epoch: epoch, Name: name, Root: canonicalRoot, Head: revisionID, State: snapshot.Workspace(canonicalRoot)}, nil
 }
 
 func (store *Store) LoadByName(ctx context.Context, name string) (Workspace, error) {
@@ -404,7 +425,7 @@ func (store *Store) List(ctx context.Context) ([]Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var workspaces []Workspace
 	for rows.Next() {
 		workspace, err := store.scanWorkspace(rows)

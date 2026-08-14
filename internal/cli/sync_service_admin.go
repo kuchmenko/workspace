@@ -57,7 +57,7 @@ func newServiceInstallCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		defer store.Close()
+		defer func() { _ = store.Close() }()
 		pairing, err := store.CreatePairing(syncservice.RoleAdmin, 10*time.Minute)
 		if err != nil {
 			return err

@@ -172,16 +172,16 @@ func loadCurrentNodeWorkspace() (bool, error) {
 		}
 	}
 	if errors.Is(err, syncnode.ErrWorkspaceNotFound) {
-		store.Close()
+		_ = store.Close()
 		return false, nil
 	}
 	if err != nil {
-		store.Close()
+		_ = store.Close()
 		return false, err
 	}
 	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
 	if err != nil {
-		store.Close()
+		_ = store.Close()
 		return false, err
 	}
 	nodeStore = store
