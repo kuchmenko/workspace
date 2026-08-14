@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/kuchmenko/workspace/internal/agent"
 	"github.com/kuchmenko/workspace/internal/metrics"
+	"github.com/kuchmenko/workspace/internal/syncnode"
 	"github.com/kuchmenko/workspace/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -39,6 +42,9 @@ func newExplorerShellCmd() *cobra.Command {
 		Short: "Open shell in a directory",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := rejectNodeExplorer(); err != nil {
+				return err
+			}
 			stampLaunchActivity(args[0])
 			return agent.LaunchShell(args[0])
 		},
@@ -46,6 +52,9 @@ func newExplorerShellCmd() *cobra.Command {
 }
 
 func runExplorerTUI() error {
+	if err := rejectNodeExplorer(); err != nil {
+		return err
+	}
 	metrics.RecordExplorerInvoked()
 	cwd, _ := os.Getwd()
 	workspaces, diagnostics := agent.LoadWorkspaces(cwd)
@@ -74,6 +83,32 @@ func runExplorerTUI() error {
 	if final, ok := finalModel.(*agent.Model); ok && final.Launch != nil {
 		stampLaunchActivity(final.Launch.Cwd)
 		return agent.LaunchShell(final.Launch.Cwd)
+	}
+	return nil
+}
+
+func rejectNodeExplorer() error {
+	paths, err := syncnode.DefaultPaths()
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stat(paths.Database); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	store, err := syncnode.OpenStore(paths.Database)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	workspaces, err := store.List(context.Background())
+	if err != nil {
+		return err
+	}
+	if len(workspaces) != 0 {
+		return errors.New("Explorer is disabled while imported workspaces are active; its SQLite migration is not implemented yet")
 	}
 	return nil
 }

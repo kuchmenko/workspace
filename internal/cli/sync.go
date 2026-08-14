@@ -37,6 +37,9 @@ user action via 'ws worktree push'.
 Conflicts are recorded to ~/.local/state/ws/conflicts.json.
 Use 'ws sync resolve' to inspect and act on them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if nodeStore != nil {
+				return fmt.Errorf("legacy Git-backed sync is disabled for imported workspace %q; peer sync is not implemented yet", nodeState.Name)
+			}
 			return runSync(cmd.Context(), wsRoot, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}

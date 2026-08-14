@@ -86,4 +86,13 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	if after.Head == before.Head || after.State.Projects["app"].Remote != "git@github.com:owner/app.git" {
 		t.Fatalf("database-backed add did not create a child revision: %#v", after)
 	}
+	rootCommand = NewRootCmd()
+	rootCommand.SetArgs([]string{"--root", root, "sync"})
+	if err = rootCommand.Execute(); err == nil || !strings.Contains(err.Error(), "legacy Git-backed sync is disabled") {
+		t.Fatalf("legacy sync error = %v", err)
+	}
+	explorer := newExplorerCmd()
+	if err = explorer.Execute(); err == nil || !strings.Contains(err.Error(), "Explorer is disabled") {
+		t.Fatalf("Explorer error = %v", err)
+	}
 }
