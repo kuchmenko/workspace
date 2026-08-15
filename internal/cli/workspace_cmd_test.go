@@ -12,11 +12,10 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
 	workspace := t.TempDir()
-	recoveryKey := filepath.Join(directory, "recovery.key")
 	cmd := newWorkspaceCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"create", workspace, "--name", "personal", "--recovery-key", recoveryKey})
+	cmd.SetArgs([]string{"create", workspace, "--name", "personal"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("workspace create: %v", err)
 	}
@@ -34,7 +33,7 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("workspace list: %v", err)
 	}
-	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\t") {
+	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\n") {
 		t.Fatalf("workspace list output = %q", got)
 	}
 }
@@ -54,7 +53,7 @@ func TestWorkspaceCreateDefaultsToCurrentDirectory(t *testing.T) {
 
 	cmd := newWorkspaceCmd()
 	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetArgs([]string{"create", "--name", "personal", "--recovery-key", filepath.Join(directory, "recovery.key")})
+	cmd.SetArgs([]string{"create", "--name", "personal"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("workspace create: %v", err)
 	}
@@ -65,7 +64,7 @@ func TestWorkspaceCreateDefaultsToCurrentDirectory(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("workspace list: %v", err)
 	}
-	if !strings.Contains(out.String(), "personal\t"+cwd+"\t") {
+	if !strings.Contains(out.String(), "personal\t"+cwd+"\n") {
 		t.Fatalf("workspace list output = %q", out.String())
 	}
 }

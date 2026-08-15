@@ -10,7 +10,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -54,7 +54,6 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 	testutil.RunGit(t, barePath, "fetch", "--all", "--prune")
 	testutil.RunGit(t, barePath, "worktree", "add", mainPath, defaultBranch)
 
-	// Write a workspace.toml with the project registered.
 	wsCfg := &config.Workspace{
 		Meta:    config.Meta{Version: 1, Root: root},
 		Groups:  map[string]config.Group{},
@@ -69,26 +68,15 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 			},
 		},
 	}
-	if err := config.Save(root, wsCfg); err != nil {
-		t.Fatalf("config.Save: %v", err)
-	}
-	paths, err := syncnode.DefaultPaths()
+	path, err := registry.DefaultPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
+	store, err := registry.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := syncnode.CreateRecoveryKey(filepath.Join(t.TempDir(), "recovery.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := syncnode.OpenStore(paths.Database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	imported, err := store.Import(context.Background(), "personal", root, wsCfg, identity, recovery)
+	imported, err := store.Create(context.Background(), "personal", root, wsCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,28 +84,26 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 	// Wire package-level globals so RunE can resolve the project.
 	wsRoot = root
 	ws = imported.State
-	nodeStore = store
-	nodeState = imported
-	nodeID = identity
+	registryStore = store
+	registryState = imported
 	t.Cleanup(func() {
 		_ = store.Close()
 		wsRoot = ""
 		ws = nil
-		nodeStore = nil
-		nodeState = syncnode.Workspace{}
-		nodeID = syncnode.Identity{}
+		registryStore = nil
+		registryState = registry.Workspace{}
 	})
 
 	return root
 }
 
-func loadCLIRegistryState(t *testing.T, root string) syncnode.Workspace {
+func loadCLIRegistryState(t *testing.T, root string) registry.Workspace {
 	t.Helper()
-	paths, err := syncnode.DefaultPaths()
+	path, err := registry.DefaultPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := syncnode.OpenStore(paths.Database)
+	store, err := registry.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,27 +158,22 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 
 func TestWorktreeAddCommitsDatabaseRevisionWithoutChangingTOML(t *testing.T) {
 	root := setupTestWorkspace(t, "linux", "myapp", "main")
-	imported := nodeState
+	imported := registryState
 	tomlPath := filepath.Join(root, "workspace.toml")
-	before, err := os.ReadFile(tomlPath)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(tomlPath); !os.IsNotExist(err) {
+		t.Fatalf("workspace.toml exists before worktree add: %v", err)
 	}
 	command := NewRootCmd()
 	command.SetArgs([]string{"--root", root, "worktree", "add", "myapp", "feat/database"})
-	if err = command.Execute(); err != nil {
+	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := os.ReadFile(tomlPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) {
-		t.Fatal("database-backed worktree add changed workspace.toml")
+	if _, err := os.Stat(tomlPath); !os.IsNotExist(err) {
+		t.Fatalf("workspace.toml exists after worktree add: %v", err)
 	}
 	loaded := loadCLIRegistryState(t, root)
 	project := loaded.State.Projects["myapp"]
-	if loaded.Head == imported.Head || project.LookupBranch("feat/database") == nil {
+	if loaded.Revision == imported.Revision || project.LookupBranch("feat/database") == nil {
 		t.Fatalf("worktree metadata was not committed: %#v", loaded)
 	}
 }

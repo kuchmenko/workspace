@@ -133,16 +133,16 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 }
 
 func RegisterWorktree(options WorktreeAddOptions, result *WorktreeAddResult) error {
+	if options.Save == nil {
+		return errors.New("workspace registry save is required")
+	}
 	workspace, project, _, _, err := loadWorktreeProject(options.WorkspaceRoot, options.Project, options.Workspace)
 	if err != nil {
 		return err
 	}
 	setAddMetadata(&project, strings.TrimSpace(options.Branch), options.Machine, result.Source == "fetched", result)
 	workspace.Projects[options.Project] = project
-	if options.Save != nil {
-		return options.Save(workspace)
-	}
-	return config.Save(options.WorkspaceRoot, workspace)
+	return options.Save(workspace)
 }
 
 func addWorktreeSource(localExists, remoteExists bool) string {
@@ -196,21 +196,15 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 	}
 	if changed, _ := project.ReleaseBranch(options.Branch, options.Machine); changed {
 		workspace.Projects[options.Project] = project
-		var saveErr error
-		if options.Save != nil {
-			saveErr = options.Save(workspace)
-		} else {
-			saveErr = config.Save(options.WorkspaceRoot, workspace)
+		if options.Save == nil {
+			return result, errors.New("workspace registry save is required")
 		}
+		saveErr := options.Save(workspace)
 		if saveErr != nil {
-			registry := "registry"
-			if options.Save == nil {
-				registry = "workspace.toml"
-			}
 			if result.Removed {
-				return result, fmt.Errorf("worktree removed but %s ownership release failed: %w", registry, saveErr)
+				return result, fmt.Errorf("worktree removed but registry ownership release failed: %w", saveErr)
 			}
-			return result, fmt.Errorf("%s ownership release failed: %w", registry, saveErr)
+			return result, fmt.Errorf("registry ownership release failed: %w", saveErr)
 		}
 		result.MetadataReleased = true
 	}
@@ -219,11 +213,7 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 
 func loadWorktreeProject(root, name string, workspace *config.Workspace) (*config.Workspace, config.Project, string, string, error) {
 	if workspace == nil {
-		var err error
-		workspace, err = config.Load(root)
-		if err != nil {
-			return nil, config.Project{}, "", "", err
-		}
+		return nil, config.Project{}, "", "", errors.New("workspace registry is required")
 	}
 	project, ok := workspace.Projects[name]
 	if !ok {

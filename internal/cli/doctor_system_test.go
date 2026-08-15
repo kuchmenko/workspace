@@ -112,7 +112,7 @@ func TestCheckConflicts_OtherWorkspaceIgnored(t *testing.T) {
 	absOther, _ := filepath.Abs(other)
 	if _, err := store.Record(conflict.Conflict{
 		Workspace: absOther,
-		Kind:      conflict.KindTOMLMerge,
+		Kind:      conflict.KindMainDivergence,
 	}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}

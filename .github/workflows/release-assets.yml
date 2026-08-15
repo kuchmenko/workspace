@@ -56,7 +56,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           binary="ws-${GOOS}-${GOARCH}"
-          go build -trimpath -ldflags="-s -w -X github.com/kuchmenko/workspace/internal/buildinfo.Version=${{ inputs.tag }}" -o "$binary" ./cmd/ws
+          go build -trimpath -ldflags="-s -w" -o "$binary" ./cmd/ws
           tar czf "${binary}.tar.gz" "$binary"
       - uses: actions/upload-artifact@v4
         with:

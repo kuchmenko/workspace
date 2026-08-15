@@ -3,11 +3,9 @@ package config
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,22 +15,10 @@ import (
 )
 
 type MachineConfig struct {
-	MachineName    string          `toml:"machine_name"`
-	WorkspaceRoots []string        `toml:"workspace_roots,omitempty"`
-	ExplorerView   string          `toml:"explorer_view,omitempty"`
-	RecentOrder    string          `toml:"recent_order,omitempty"`
-	Service        *MachineService `toml:"service,omitempty"`
-}
-
-type MachineService struct {
-	ID       string             `toml:"id"`
-	Endpoint string             `toml:"endpoint"`
-	Bindings []WorkspaceBinding `toml:"bindings,omitempty"`
-}
-
-type WorkspaceBinding struct {
-	Root        string `toml:"root"`
-	WorkspaceID string `toml:"workspace_id"`
+	MachineName    string   `toml:"machine_name"`
+	WorkspaceRoots []string `toml:"workspace_roots,omitempty"`
+	ExplorerView   string   `toml:"explorer_view,omitempty"`
+	RecentOrder    string   `toml:"recent_order,omitempty"`
 }
 
 const (
@@ -225,8 +211,17 @@ func ListWorkspaceRoots() ([]string, error) {
 }
 
 func normalizeMachineConfig(cfg *MachineConfig) error {
-	if err := normalizeExplorerConfig(cfg); err != nil {
-		return err
+	if cfg.ExplorerView == "" {
+		cfg.ExplorerView = ExplorerViewRecent
+	}
+	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
+		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
+	}
+	if cfg.RecentOrder == "" {
+		cfg.RecentOrder = RecentOrderDesc
+	}
+	if cfg.RecentOrder != RecentOrderAsc && cfg.RecentOrder != RecentOrderDesc {
+		return fmt.Errorf("invalid recent_order %q", cfg.RecentOrder)
 	}
 	roots := make([]string, 0, len(cfg.WorkspaceRoots))
 	for _, root := range cfg.WorkspaceRoots {
@@ -241,100 +236,7 @@ func normalizeMachineConfig(cfg *MachineConfig) error {
 	}
 	sort.Strings(roots)
 	cfg.WorkspaceRoots = roots[:dedupeSorted(roots)]
-	return normalizeServiceBindings(cfg)
-}
-
-func normalizeExplorerConfig(cfg *MachineConfig) error {
-	if cfg.ExplorerView == "" {
-		cfg.ExplorerView = ExplorerViewRecent
-	}
-	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
-		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
-	}
-	if cfg.RecentOrder == "" {
-		cfg.RecentOrder = RecentOrderDesc
-	}
-	if cfg.RecentOrder != RecentOrderAsc && cfg.RecentOrder != RecentOrderDesc {
-		return fmt.Errorf("invalid recent_order %q", cfg.RecentOrder)
-	}
 	return nil
-}
-
-func normalizeServiceBindings(cfg *MachineConfig) error {
-	if cfg.Service == nil {
-		return nil
-	}
-	bindings := make(map[string]WorkspaceBinding)
-	for _, binding := range cfg.Service.Bindings {
-		if strings.TrimSpace(binding.Root) == "" || strings.TrimSpace(binding.WorkspaceID) == "" {
-			continue
-		}
-		root, err := canonicalWorkspaceRoot(binding.Root)
-		if err != nil {
-			return err
-		}
-		binding.Root = root
-		bindings[root] = binding
-	}
-	cfg.Service.Bindings = cfg.Service.Bindings[:0]
-	for _, root := range slices.Sorted(maps.Keys(bindings)) {
-		cfg.Service.Bindings = append(cfg.Service.Bindings, bindings[root])
-	}
-	return nil
-}
-
-func (cfg *MachineConfig) Binding(root string) (WorkspaceBinding, bool, error) {
-	canonical, err := canonicalWorkspaceRoot(root)
-	if err != nil {
-		return WorkspaceBinding{}, false, err
-	}
-	if cfg.Service != nil {
-		for _, binding := range cfg.Service.Bindings {
-			if binding.Root == canonical {
-				return binding, true, nil
-			}
-		}
-	}
-	return WorkspaceBinding{}, false, nil
-}
-
-func (cfg *MachineConfig) AddBinding(root, workspaceID string) error {
-	canonical, err := canonicalWorkspaceRoot(root)
-	if err != nil {
-		return err
-	}
-	if cfg.Service == nil {
-		return errors.New("sync service is not paired")
-	}
-	for index := range cfg.Service.Bindings {
-		if cfg.Service.Bindings[index].Root == canonical {
-			cfg.Service.Bindings[index].WorkspaceID = workspaceID
-			return normalizeMachineConfig(cfg)
-		}
-	}
-	cfg.Service.Bindings = append(cfg.Service.Bindings, WorkspaceBinding{Root: canonical, WorkspaceID: workspaceID})
-	return normalizeMachineConfig(cfg)
-}
-
-func (cfg *MachineConfig) RemoveBinding(root string) (bool, error) {
-	canonical, err := canonicalWorkspaceRoot(root)
-	if err != nil {
-		return false, err
-	}
-	if cfg.Service == nil {
-		return false, nil
-	}
-	found := false
-	bindings := cfg.Service.Bindings[:0]
-	for _, binding := range cfg.Service.Bindings {
-		if binding.Root == canonical {
-			found = true
-			continue
-		}
-		bindings = append(bindings, binding)
-	}
-	cfg.Service.Bindings = bindings
-	return found, nil
 }
 
 func canonicalWorkspaceRoot(root string) (string, error) {

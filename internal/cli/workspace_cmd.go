@@ -1,13 +1,12 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +25,7 @@ func newWorkspaceCmd() *cobra.Command {
 }
 
 func newWorkspaceCreateCmd() *cobra.Command {
-	var name, recoveryKey string
+	var name string
 	cmd := &cobra.Command{
 		Use:         "create [path]",
 		Aliases:     []string{"add"},
@@ -45,31 +44,22 @@ func newWorkspaceCreateCmd() *cobra.Command {
 			if err = os.MkdirAll(root, 0o755); err != nil {
 				return err
 			}
-			recoveryPublicKey, created, err := openOrCreateRecoveryKey(recoveryKey)
+			local, err := registry.OpenDefault()
 			if err != nil {
 				return err
 			}
-			node, err := syncnode.OpenNode()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = node.Close() }()
+			defer func() { _ = local.Close() }()
 			workspace := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}
-			createdWorkspace, err := node.Import(cmd.Context(), name, root, workspace, recoveryPublicKey)
+			createdWorkspace, err := local.Create(cmd.Context(), name, root, workspace)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s id=%s head=%s root=%s\n", createdWorkspace.Name, createdWorkspace.ID, createdWorkspace.Head, createdWorkspace.Root)
-			if created {
-				fmt.Fprintf(cmd.OutOrStdout(), "recovery key created at %s; move it off this node before enabling peer sync\n", recoveryKey)
-			}
+			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s root=%s\n", createdWorkspace.Name, createdWorkspace.Root)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "local workspace name")
-	cmd.Flags().StringVar(&recoveryKey, "recovery-key", "", "offline recovery key path (created when missing)")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("recovery-key")
 	return cmd
 }
 
@@ -80,17 +70,17 @@ func newWorkspaceListCmd() *cobra.Command {
 		Annotations: agentAnnotations("workspace-list", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "lines", "0,1"),
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			node, err := syncnode.OpenNode()
+			local, err := registry.OpenDefault()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = node.Close() }()
-			workspaces, err := node.List(cmd.Context())
+			defer func() { _ = local.Close() }()
+			workspaces, err := local.List(cmd.Context())
 			if err != nil {
 				return err
 			}
 			for _, workspace := range workspaces {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", workspace.Name, workspace.Root, workspace.Head)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", workspace.Name, workspace.Root)
 			}
 			return nil
 		},
@@ -105,10 +95,10 @@ func workspacePathArg(args []string) (string, error) {
 }
 
 func newWorkspaceImportCmd() *cobra.Command {
-	var name, root, recoveryKey string
+	var name, root string
 	cmd := &cobra.Command{
 		Use:   "import <workspace.toml>",
-		Short: "Import TOML into the local revision store",
+		Short: "Import TOML into the local SQLite registry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if root == "" {
@@ -126,39 +116,22 @@ func newWorkspaceImportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			recoveryPublicKey, created, err := openOrCreateRecoveryKey(recoveryKey)
-			if err != nil {
-				return err
-			}
-			paths, err := syncnode.DefaultPaths()
-			if err != nil {
-				return err
-			}
-			identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
-			if err != nil {
-				return err
-			}
-			store, err := syncnode.OpenStore(paths.Database)
+			store, err := registry.OpenDefault()
 			if err != nil {
 				return err
 			}
 			defer func() { _ = store.Close() }()
-			imported, err := store.Import(cmd.Context(), name, root, workspace, identity, recoveryPublicKey)
+			imported, err := store.Create(cmd.Context(), name, root, workspace)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s id=%s head=%s root=%s\n", imported.Name, imported.ID, imported.Head, imported.Root)
-			if created {
-				fmt.Fprintf(cmd.OutOrStdout(), "recovery key created at %s; move it off this node before enabling peer sync\n", recoveryKey)
-			}
+			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s root=%s\n", imported.Name, imported.Root)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "local workspace name")
 	cmd.Flags().StringVar(&root, "root", "", "local workspace root (default: current directory)")
-	cmd.Flags().StringVar(&recoveryKey, "recovery-key", "", "offline recovery key path (created when missing)")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("recovery-key")
 	return cmd
 }
 
@@ -168,11 +141,7 @@ func newWorkspaceExportCmd() *cobra.Command {
 		Short: "Export a local workspace as TOML",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			paths, err := syncnode.DefaultPaths()
-			if err != nil {
-				return err
-			}
-			store, err := syncnode.OpenStore(paths.Database)
+			store, err := registry.OpenDefault()
 			if err != nil {
 				return err
 			}
@@ -181,7 +150,7 @@ func newWorkspaceExportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			body, err := config.EncodeCanonicalWorkspace(workspace.State)
+			body, err := config.EncodeWorkspace(workspace.State)
 			if err != nil {
 				return err
 			}
@@ -189,23 +158,4 @@ func newWorkspaceExportCmd() *cobra.Command {
 			return err
 		},
 	}
-}
-
-func openOrCreateRecoveryKey(path string) ([]byte, bool, error) {
-	if path == "" {
-		return nil, false, errors.New("recovery key path is required")
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, false, err
-	}
-	publicKey, err := syncnode.LoadRecoveryKey(absolute)
-	if err == nil {
-		return publicKey, false, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, false, err
-	}
-	publicKey, err = syncnode.CreateRecoveryKey(absolute)
-	return publicKey, err == nil, err
 }

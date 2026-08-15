@@ -102,7 +102,7 @@ func compareObservation(leftMachine, leftAt, rightMachine, rightAt string) int {
 	return bytes.Compare([]byte(leftMachine), []byte(rightMachine))
 }
 
-func EncodeCanonicalWorkspace(ws *Workspace) ([]byte, error) {
+func EncodeWorkspace(ws *Workspace) ([]byte, error) {
 	cloned := cloneWorkspace(ws)
 	cloned.Meta.Root = ""
 	if cloned.Meta.Version != 1 {
@@ -149,7 +149,7 @@ func cloneStringMap(in map[string]string) map[string]string {
 	return out
 }
 
-func DecodeCanonicalWorkspace(data []byte) (*Workspace, error) {
+func DecodeStoredWorkspace(data []byte) (*Workspace, error) {
 	ws, err := DecodeWorkspace(data)
 	if err != nil {
 		return nil, err

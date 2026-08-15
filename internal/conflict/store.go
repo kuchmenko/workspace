@@ -15,8 +15,6 @@ import (
 type Kind string
 
 const (
-	KindTOMLMerge        Kind = "toml-merge"
-	KindTOMLPushFailed   Kind = "toml-push-failed"
 	KindMainDivergence   Kind = "main-divergence"
 	KindNeedsMigration   Kind = "needs-migration"
 	KindNeedsBootstrap   Kind = "needs-bootstrap"

@@ -1,8 +1,13 @@
 # ws
 
-Workspace manager for tracking and developing many Git projects across multiple machines.
+Workspace manager for tracking, syncing, and developing many git
+projects across multiple machines.
 
-SQLite is the runtime source of truth for workspace registries. Each mutation creates a signed revision in a local snapshot DAG. Peer transfer is not implemented yet; local workspace management works without enabling sync.
+SQLite at `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for
+named local workspaces, and per-feature worktrees carry explicit branch
+metadata. `workspace.toml` is import/export interchange only. Project Git
+synchronization happens only when you run `ws sync`; branch pushes remain
+a deliberate user action.
 
 ## Install
 
@@ -17,64 +22,72 @@ Or build from source:
 ```sh
 gh repo clone kuchmenko/workspace
 cd workspace
-just install
+just install            # binary lands at ~/.local/bin/ws
 ```
 
 ## Quick start
 
-Create a new local workspace:
-
 ```sh
-mkdir -p ~/dev
-ws workspace create ~/dev \
-  --name personal \
-  --recovery-key ~/Documents/workspace/personal-recovery.key
+mkdir ~/dev
+ws workspace create ~/dev --name personal
 cd ~/dev
-ws auth login
-ws setup
+ws auth login            # GitHub device flow (or `--pat` for a token)
+ws setup                 # TUI: pick repos, organize into groups
+ws sync                  # preflight, review, then synchronize explicitly
 ```
 
-Or migrate an existing TOML registry once:
+For per-feature work:
 
 ```sh
-ws workspace import ./workspace.toml \
-  --name personal \
-  --root ~/dev \
-  --recovery-key ~/Documents/workspace/personal-recovery.key
+ws worktree add myapp feat/auth-refactor   # new worktree on a literal branch
+# (edit, commit)
+ws worktree push myapp feat/auth-refactor  # explicit publish + metadata stamp
 ```
 
-`workspace.toml` is import/export data, not runtime state. Export a portable copy with:
+Import an existing TOML registry with
+`ws workspace import ./workspace.toml --name personal --root ~/dev`, export
+one with `ws workspace export personal`, and inspect local workspaces with
+`ws workspace list`.
 
-```sh
-ws workspace export personal > workspace.toml
-```
+For everyday navigation, run bare `ws` in a terminal. It opens the
+[Explorer TUI](docs/explorer.md) across every registered workspace and
+worktree.
 
-Project and worktree commands use the selected SQLite workspace normally:
+## What's where
 
-```sh
-ws add git@github.com:owner/myapp.git
-ws worktree add myapp feat/auth-refactor
-ws worktree push myapp feat/auth-refactor
-```
+- [Getting started](docs/getting-started.md) — install, first-time
+  setup, adding more repos, authentication.
+- [Worktrees](docs/worktrees.md) — `ws worktree add/list/push/rm`,
+  branch naming, cross-machine handoff, recovering from
+  `branch-orphan` and re-registering legacy `wt/<machine>/*`.
+- [Sync](docs/sync.md) — preflight, interactive selection, execution,
+  conflicts, headless behavior, and multi-machine flow.
+- [Aliases](docs/aliases.md) — short shell aliases for projects and
+  groups.
+- [Explorer TUI](docs/explorer.md) — bare `ws` opens a Bubble Tea
+  shell launcher; keys, search, and worktree creation.
+- [Architecture](docs/architecture.md) — internals: data model,
+  on-disk layout, foreground sync contract, conflict invariants.
+- [Command reference](docs/reference.md) — commands and flags.
 
-Run bare `ws` in a terminal to open the Explorer across all local workspaces.
+## What `ws` deliberately doesn't do
 
-## Documentation
+- Auto-push project branches to origin. Origin pushes are explicit
+  (`ws worktree push` or plain `git push`).
+- Synchronize in the background. There is no service, scheduler, or
+  watcher; run `ws sync` when you want remote state changed.
+- Run `merge`, `rebase`, `reset`, `force`, or project-branch `push`
+  inside a project repo. Unsafe states become skips or conflicts.
+- Synthesize a `wt/<machine>/<topic>` namespace. Branches use
+  repo-native names from the first commit; pre-0.7.0
+  `wt/<machine>/*` checkouts continue to function and can be
+  re-registered via `ws worktree add`.
 
-- [Getting started](docs/getting-started.md)
-- [Explorer](docs/explorer.md)
-- [Worktrees](docs/worktrees.md)
-- [Aliases](docs/aliases.md)
-- [Current sync status](docs/sync.md)
-- [Multi-master protocol](docs/multi-master-sync-protocol.md)
-- [Architecture](docs/architecture.md)
-- [Command reference](docs/reference.md)
+## Status
 
-## Deliberate boundaries
+Pre-1.0; breaking changes happen between minor versions when the
+design pressure is real. Single-user tool by design — the
+multi-machine sync model assumes one human, several machines.
 
-- Project repositories remain ordinary Git repositories; registry sync never transfers repository contents.
-- Project branch pushes remain explicit.
-- `workspace.toml` is never a runtime fallback.
-- Peer enrollment, transfer, reconciliation, background anti-entropy, and backup automation are not implemented yet.
-
-Pre-1.0 and single-user by design: one human, several equal-weight machines.
+Workspace commands are `create`, `import`, `export`, and `list`. They do not
+synchronize registry data; invoke `ws sync` explicitly for project Git state.

@@ -3,25 +3,22 @@ package sync
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"log"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
-	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/sidecar"
-	"github.com/kuchmenko/workspace/internal/syncclient"
-	"github.com/kuchmenko/workspace/internal/syncservice"
 )
 
 type Runner struct {
-	root   string
-	logger *log.Logger
-	store  *conflict.Store
+	root      string
+	logger    *log.Logger
+	store     *conflict.Store
+	registry  *registry.Store
+	workspace registry.Workspace
 }
 
 func NewRunner(root string, logger *log.Logger) *Runner {
@@ -45,55 +42,22 @@ func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent fu
 		r.cancelReport(&report, err, onEvent)
 		return report
 	}
-	if err := frozenServiceBinding(selection.plan); err != nil {
-		r.addWorkspaceFailure(&report, "workspace-authority", err, onEvent)
-		return report
-	}
-	ws, err := config.Load(r.root)
+	local, err := registry.OpenDefault()
 	if err != nil {
 		r.addWorkspaceFailure(&report, "load", err, onEvent)
 		return report
 	}
-	if selection.plan.ServiceWorkspaceID != "" {
-		if !r.syncServiceWorkspace(ctx, selection, &report, onEvent) {
-			return report
-		}
-		ws, err = config.Load(r.root)
-		if err != nil {
-			r.addWorkspaceFailure(&report, "reload", err, onEvent)
-			return report
-		}
-		r.recordValidationIssues(ws, &report, onEvent)
-		if len(report.Conflicts) != 0 {
-			return report
-		}
-		r.runSelectedProjects(ctx, selection, map[string]string{}, ws, &report, onEvent)
-		return report
-	}
-	if err := frozenWorkspaceBranch(selection.plan); err != nil {
-		r.addWorkspaceFailure(&report, "workspace-sync", err, onEvent)
-		return report
-	}
-	converted := r.applyWorkspaceConversion(ctx, &selection, &report, onEvent)
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	for targetID, candidate := range r.applyProjectConversions(ctx, &selection, ws, &report, onEvent) {
-		converted[targetID] = candidate
-	}
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	r.syncSelectedWorkspace(ctx, selection, &report, onEvent)
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	ws, err = config.Load(r.root)
+	defer func() { _ = local.Close() }()
+	r.workspace, err = local.LoadByRoot(ctx, r.root)
 	if err != nil {
-		r.addWorkspaceFailure(&report, "reload", err, onEvent)
+		r.addWorkspaceFailure(&report, "load", err, onEvent)
+		return report
+	}
+	r.registry = local
+	ws := r.workspace.State
+	converted := r.applyProjectConversions(ctx, &selection, ws, &report, onEvent)
+	if ctx.Err() != nil {
+		r.cancelReport(&report, ctx.Err(), onEvent)
 		return report
 	}
 	r.recordValidationIssues(ws, &report, onEvent)
@@ -101,135 +65,12 @@ func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent fu
 	return report
 }
 
-func frozenServiceBinding(plan Plan) error {
-	machine, err := config.LoadMachineConfig()
-	if err != nil {
-		return err
-	}
-	binding, bound, err := machine.Binding(plan.Root)
-	if err != nil {
-		return err
-	}
-	if plan.ServiceWorkspaceID == "" {
-		if bound {
-			return errors.New("workspace sync authority changed after preflight")
-		}
-		return nil
-	}
-	if !bound || machine.Service == nil || binding.WorkspaceID != plan.ServiceWorkspaceID {
-		return errors.New("workspace sync service binding changed after preflight")
-	}
-	for _, target := range plan.Targets {
-		if target.ID == plan.WorkspaceTargetID {
-			if strings.TrimRight(machine.Service.Endpoint, "/") == strings.TrimRight(target.URL, "/") {
-				return nil
-			}
-			break
-		}
-	}
-	return errors.New("workspace sync service endpoint changed after preflight")
-}
-
-func (r *Runner) syncServiceWorkspace(ctx context.Context, selection Selection, report *Report, onEvent func(Event)) bool {
-	targetID := selection.plan.WorkspaceTargetID
-	if !selection.TargetSelected(targetID) {
-		r.addWorkspaceFailure(report, "service-sync", errors.New("service workspace target is mandatory while projects are selected"), onEvent)
-		return false
-	}
-	report.start(Event{Operation: "service-sync", TargetID: targetID}, onEvent)
-	paths, err := syncclient.DefaultPaths()
+func (r *Runner) saveRegistry(workspace *config.Workspace) error {
+	updated, err := r.registry.Update(context.Background(), r.workspace.Name, r.workspace.Revision, workspace)
 	if err == nil {
-		var credentials syncclient.Credentials
-		credentials, err = syncclient.LoadCredentials(paths.Credentials)
-		if err == nil {
-			target, _ := selection.target(targetID)
-			if strings.TrimRight(credentials.Endpoint, "/") != strings.TrimRight(target.URL, "/") {
-				err = errors.New("configured service endpoint does not match persisted credentials endpoint")
-			}
-		}
-		if err == nil {
-			var client *syncclient.Client
-			client, err = syncclient.New(credentials)
-			if err == nil {
-				var store *syncclient.Store
-				store, err = syncclient.Open(paths.Database)
-				if err == nil {
-					defer func() { _ = store.Close() }()
-					var response syncservice.SyncResponse
-					response, err = client.SyncWorkspace(ctx, store, selection.plan.ServiceWorkspaceID, r.root)
-					if err == nil && len(response.Conflicts) != 0 {
-						for _, serviceConflict := range response.Conflicts {
-							diagnostic := "service workspace conflict at " + serviceConflict.Path
-							result := OperationResult{Status: ResultFailed, Operation: "service-conflict", Diagnostic: diagnostic}
-							report.Conflicts = append(report.Conflicts, result)
-							report.add(Event{Kind: EventConflict, Status: ResultFailed, Operation: result.Operation, Diagnostic: diagnostic}, onEvent)
-						}
-						return false
-					}
-				}
-			}
-		}
+		r.workspace = updated
 	}
-	if err != nil {
-		r.addWorkspaceFailure(report, "service-sync", err, onEvent)
-		return false
-	}
-	result := OperationResult{Status: ResultSuccess, Operation: "service-sync", TargetID: targetID}
-	report.Workspace = append(report.Workspace, result)
-	report.add(Event{Kind: EventWorkspace, Status: ResultSuccess, Operation: result.Operation, TargetID: targetID}, onEvent)
-	return true
-}
-
-func frozenWorkspaceBranch(plan Plan) error {
-	if plan.WorkspaceRepository == "" {
-		return nil
-	}
-	branch, err := git.CurrentBranch(plan.WorkspaceRepository)
-	if err != nil {
-		return nil
-	}
-	if branch != plan.WorkspaceBranch {
-		return fmt.Errorf("workspace branch changed after preflight: got %q, want %q", branch, plan.WorkspaceBranch)
-	}
-	return nil
-}
-
-func (r *Runner) syncSelectedWorkspace(ctx context.Context, selection Selection, report *Report, onEvent func(Event)) {
-	if selection.plan.WorkspaceTargetID == "" {
-		result := OperationResult{Status: ResultSkipped, Operation: "workspace-sync", Reason: SkipState, Diagnostic: "workspace origin was not planned"}
-		report.Workspace = append(report.Workspace, result)
-		report.add(Event{Kind: EventSkipped, Status: ResultSkipped, Operation: result.Operation, Reason: result.Reason, Diagnostic: result.Diagnostic}, onEvent)
-		return
-	}
-	if !selection.TargetSelected(selection.plan.WorkspaceTargetID) {
-		result := OperationResult{Status: ResultSkipped, Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID, Reason: SkipExcluded}
-		report.Workspace = append(report.Workspace, result)
-		report.add(Event{Kind: EventSkipped, Status: ResultSkipped, Operation: result.Operation, TargetID: result.TargetID, Reason: result.Reason}, onEvent)
-		return
-	}
-	report.start(Event{Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID}, onEvent)
-	target, _ := selection.target(selection.plan.WorkspaceTargetID)
-	expectedURL := target.ConfigURL
-	remoteURL := target.URL
-	if candidate, converted := selection.Conversion(target.ID); converted {
-		expectedURL = candidate
-		remoteURL = candidate
-	}
-	_, err := r.syncTOMLContext(ctx, selection.plan.WorkspaceRepository, expectedURL, remoteURL, selection.plan.WorkspaceBranch)
-	status := ResultSuccess
-	reason := SkipReason("")
-	diagnostic := ""
-	if err != nil {
-		status = ResultFailed
-		if ctx.Err() != nil {
-			status = ResultCanceled
-			reason = SkipCanceled
-		}
-		diagnostic = err.Error()
-	}
-	result := OperationResult{Status: status, Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID, Reason: reason, Diagnostic: diagnostic}
-	report.Workspace = append(report.Workspace, result)
-	report.add(Event{Kind: EventWorkspace, Status: status, Operation: result.Operation, TargetID: result.TargetID, Reason: reason, Diagnostic: diagnostic}, onEvent)
+	return err
 }
 
 func (r *Runner) runSelectedProjects(ctx context.Context, selection Selection, converted map[string]string, ws *config.Workspace, report *Report, onEvent func(Event)) {
@@ -253,7 +94,7 @@ func (r *Runner) runSelectedProjects(ctx context.Context, selection Selection, c
 		}
 	}
 	if dirty {
-		if err := config.Save(r.root, ws); err != nil {
+		if err := r.saveRegistry(ws); err != nil {
 			r.addWorkspaceFailure(report, "save-metadata", err, onEvent)
 		}
 	}
@@ -276,7 +117,7 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 		planned.OriginURL = remote
 	}
 	if !ok || !snapshotMatches(expected, project) {
-		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace.toml changed after preflight", onEvent)
+		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace registry changed after preflight", onEvent)
 		return false, false
 	}
 	touched := false

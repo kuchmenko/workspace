@@ -276,7 +276,7 @@ func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {
 	}
 	setTestRegistryWorkspace(t, wsRoot, ws)
 
-	r := &Runner{WsRoot: wsRoot, WS: nodeState.State, SkipRemote: true}
+	r := &Runner{WsRoot: wsRoot, WS: registryState.State, SkipRemote: true}
 
 	f := r.checkDefaultBranch("demo", proj, barePath)
 	if f.Severity != Warn {
@@ -289,7 +289,7 @@ func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {
 		t.Fatalf("Fix: %v", err)
 	}
 
-	reloadedState, err := nodeStore.LoadByRoot(context.Background(), wsRoot)
+	reloadedState, err := registryStore.LoadByRoot(context.Background(), wsRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,42 +14,6 @@ type appliedOrigin struct {
 	oldURL     string
 }
 
-func (r *Runner) applyWorkspaceConversion(ctx context.Context, selection *Selection, report *Report, onEvent func(Event)) map[string]string {
-	converted := make(map[string]string)
-	targetID := selection.plan.WorkspaceTargetID
-	candidate, selected := selection.Conversion(targetID)
-	if !selected {
-		return converted
-	}
-	if !selection.verifiedConversion(targetID, candidate) {
-		r.addConversion(report, *selection, targetID, candidate, ResultFailed, "SSH conversion was not verified", onEvent)
-		selection.ExcludeTarget(targetID)
-		return converted
-	}
-	report.start(Event{TargetID: targetID, Operation: "convert-origin"}, onEvent)
-	if err := ctx.Err(); err != nil {
-		r.addConversion(report, *selection, targetID, candidate, ResultCanceled, err.Error(), onEvent)
-		selection.ExcludeTarget(targetID)
-		return converted
-	}
-	target, _ := selection.target(targetID)
-	old, err := applyRepositoryOrigin(target.Repository, target.ConfigURL, candidate)
-	if err != nil {
-		r.addConversion(report, *selection, targetID, candidate, ResultFailed, err.Error(), onEvent)
-		selection.ExcludeTarget(targetID)
-		return converted
-	}
-	if err := ctx.Err(); err != nil {
-		_ = git.SetRemoteURL(target.Repository, old)
-		r.addConversion(report, *selection, targetID, candidate, ResultCanceled, err.Error(), onEvent)
-		selection.ExcludeTarget(targetID)
-		return converted
-	}
-	converted[targetID] = candidate
-	r.addConversion(report, *selection, targetID, candidate, ResultSuccess, "", onEvent)
-	return converted
-}
-
 func (r *Runner) applyProjectConversions(ctx context.Context, selection *Selection, ws *config.Workspace, report *Report, onEvent func(Event)) map[string]string {
 	converted := make(map[string]string)
 	originals := make(map[string]config.Project)
@@ -75,7 +39,7 @@ func (r *Runner) applyProjectConversions(ctx context.Context, selection *Selecti
 }
 
 func (r *Runner) saveProjectConversions(selection *Selection, ws *config.Workspace, originals map[string]config.Project, applied []appliedOrigin, converted map[string]string, report *Report, onEvent func(Event)) map[string]string {
-	if err := config.Save(r.root, ws); err != nil {
+	if err := r.saveRegistry(ws); err != nil {
 		restoreOrigins(applied)
 		for project, original := range originals {
 			ws.Projects[project] = original
@@ -115,7 +79,7 @@ func (r *Runner) applyProjectConversion(ctx context.Context, selection *Selectio
 	planned, ok := projectPlan(selection.plan, target.Project)
 	current, exists := ws.Projects[target.Project]
 	if !ok || !exists || !snapshotMatches(planned.Snapshot, current) {
-		r.addConversion(report, *selection, target.ID, candidate, ResultSkipped, "workspace.toml changed after preflight", onEvent)
+		r.addConversion(report, *selection, target.ID, candidate, ResultSkipped, "workspace registry changed after preflight", onEvent)
 		selection.ExcludeProject(target.Project)
 		return
 	}

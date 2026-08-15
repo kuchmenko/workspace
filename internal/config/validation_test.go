@@ -1,7 +1,6 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -43,24 +42,6 @@ func TestValidate_NoDuplicates_ReturnsEmpty(t *testing.T) {
 	}
 	if got := ws.Validate(); len(got) != 0 {
 		t.Errorf("want empty, got %+v", got)
-	}
-}
-
-func TestValidateObservationTuplesAndTimestamps(t *testing.T) {
-	ws := &Workspace{Projects: map[string]Project{"app": {Branches: []BranchMeta{{
-		Name:              "feat/x",
-		LastActiveMachine: "linux",
-		LastPushedAt:      "not-a-time",
-		CreatedBy:         "archlinux",
-	}}}}}
-	want := []ValidationIssue{
-		{Kind: ValidationIncompleteObservation, Project: "app", Branch: "feat/x", Detail: "created_by requires created_at"},
-		{Kind: ValidationIncompleteObservation, Project: "app", Branch: "feat/x", Detail: "last_active_machine requires last_active_at"},
-		{Kind: ValidationIncompleteObservation, Project: "app", Branch: "feat/x", Detail: "last_pushed_at requires last_pushed_machine"},
-		{Kind: ValidationInvalidTimestamp, Project: "app", Branch: "feat/x", Detail: "last_pushed_at is not RFC3339"},
-	}
-	if got := ws.Validate(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("issues:\n got: %+v\nwant: %+v", got, want)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/git"
-	"github.com/kuchmenko/workspace/internal/syncclient"
 )
 
 const (
@@ -122,29 +121,6 @@ func probeEndpoint(ctx context.Context, endpoint Endpoint, emit func(ProbeEvent)
 	emit(ProbeEvent{Kind: ProbeStarted, EndpointID: endpoint.ID, URL: endpoint.URL})
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	if endpoint.Transport == "service" {
-		paths, err := syncclient.DefaultPaths()
-		if err == nil {
-			var credentials syncclient.Credentials
-			credentials, err = syncclient.LoadCredentials(paths.Credentials)
-			if err == nil {
-				if strings.TrimRight(credentials.Endpoint, "/") != strings.TrimRight(endpoint.URL, "/") {
-					err = fmt.Errorf("configured service endpoint does not match persisted credentials endpoint")
-				}
-			}
-			if err == nil {
-				var client *syncclient.Client
-				client, err = syncclient.New(credentials)
-				if err == nil {
-					_, err = client.Status(probeCtx)
-				}
-			}
-		}
-		status, diagnostic := classifyProbeError(err)
-		result := ProbeResult{EndpointID: endpoint.ID, URL: endpoint.URL, Status: status, Diagnostic: diagnostic}
-		emit(ProbeEvent{Kind: ProbeFinished, EndpointID: endpoint.ID, URL: endpoint.URL, Result: result})
-		return result
-	}
 	err := git.ProbeRepository(probeCtx, endpoint.URL)
 	status, diagnostic := classifyProbeError(err)
 	result := ProbeResult{EndpointID: endpoint.ID, URL: endpoint.URL, Status: status, Diagnostic: diagnostic}
@@ -214,7 +190,7 @@ enqueue:
 func endpointHasOrigin(plan Plan, endpoint Endpoint) bool {
 	for _, targetID := range endpoint.TargetIDs {
 		for _, target := range plan.Targets {
-			if target.ID == targetID && (target.Role == TargetWorkspaceOrigin || target.Role == TargetProjectOrigin) {
+			if target.ID == targetID && target.Role == TargetProjectOrigin {
 				return true
 			}
 		}

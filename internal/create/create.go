@@ -33,6 +33,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Workspace == nil {
 		return nil, errors.New("create.Run: nil Workspace")
 	}
+	if opts.Save == nil {
+		return nil, errors.New("create.Run: nil Save")
+	}
 
 	useTUI := false
 	switch opts.Mode {
@@ -140,16 +143,7 @@ func buildRegisterOpts(opts Options) add.Options {
 		Name:      name,
 		WsRoot:    opts.WsRoot,
 		Workspace: opts.Workspace,
-		Save:      resolveSaveFn(opts),
-	}
-}
-
-func resolveSaveFn(opts Options) func(*config.Workspace) error {
-	if opts.Save != nil {
-		return opts.Save
-	}
-	return func(ws *config.Workspace) error {
-		return config.Save(opts.WsRoot, ws)
+		Save:      opts.Save,
 	}
 }
 
@@ -197,10 +191,6 @@ func (m CreateModel) createCmd() tui.Cmd {
 
 	wsRoot := m.opts.WsRoot
 	ws := m.opts.Workspace
-	saveFn := m.opts.Save
-	if saveFn == nil {
-		saveFn = func(w *config.Workspace) error { return config.Save(wsRoot, w) }
-	}
 	projectName := m.opts.ProjectName
 	if projectName == "" {
 		projectName = name
@@ -228,7 +218,7 @@ func (m CreateModel) createCmd() tui.Cmd {
 			Name:      projectName,
 			WsRoot:    wsRoot,
 			Workspace: ws,
-			Save:      saveFn,
+			Save:      m.opts.Save,
 		}
 		regRes, err := add.Register(regOpts, sshURL)
 		if err != nil {
@@ -301,7 +291,7 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	model := NewCreateModel(CreateModelOptions{
 		WsRoot:      opts.WsRoot,
 		Workspace:   opts.Workspace,
-		Save:        resolveSaveFn(opts),
+		Save:        opts.Save,
 		GHRunner:    opts.GHRunner,
 		Owner:       opts.Owner,
 		Name:        opts.Name,

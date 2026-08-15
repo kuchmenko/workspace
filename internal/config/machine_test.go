@@ -95,32 +95,6 @@ func TestLoadMachineConfigNormalizesExistingRoots(t *testing.T) {
 	}
 }
 
-func TestMachineServiceBindingsRoundTripNormalizeAndRemove(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	root := t.TempDir()
-	link := filepath.Join(t.TempDir(), "root-link")
-	if err := os.Symlink(root, link); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &MachineConfig{MachineName: "linux", Service: &MachineService{ID: "service", Endpoint: "https://service", Bindings: []WorkspaceBinding{{Root: link, WorkspaceID: "old"}, {Root: root, WorkspaceID: "workspace"}}}}
-	if err := SaveMachineConfig(cfg); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := LoadMachineConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(loaded.Service.Bindings) != 1 || loaded.Service.Bindings[0].Root != root || loaded.Service.Bindings[0].WorkspaceID != "workspace" {
-		t.Fatalf("bindings=%+v", loaded.Service.Bindings)
-	}
-	if binding, ok, err := loaded.Binding(link); err != nil || !ok || binding.WorkspaceID != "workspace" {
-		t.Fatalf("binding=%+v ok=%v err=%v", binding, ok, err)
-	}
-	if removed, err := loaded.RemoveBinding(link); err != nil || !removed || len(loaded.Service.Bindings) != 0 {
-		t.Fatalf("removed=%v bindings=%+v err=%v", removed, loaded.Service.Bindings, err)
-	}
-}
-
 func TestLoadMachineConfigMigratesLegacyDaemonRoots(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)

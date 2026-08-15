@@ -53,9 +53,9 @@ origin — those cases attach to the existing branch.
 
 ## Cross-machine handoff
 
-Origin pushes are explicit. Each `ws worktree push` updates `last_pushed_*` /
-`last_active_*` in the SQLite workspace registry. Peer transfer of that
-activity is not implemented yet.
+`ws sync` does **not** auto-push project branches to origin. Origin pushes
+are explicit. Each `ws worktree push` updates `last_pushed_*` /
+`last_active_*` in the local SQLite workspace registry.
 
 ```sh
 # On linux:
@@ -63,7 +63,8 @@ ws worktree add myapp feat/fix-login
 # (edit, commit)
 ws worktree push myapp feat/fix-login        # publish + stamp
 
-# On archlinux, after peer sync is implemented and the registry arrives:
+# On archlinux, after creating or importing the local workspace registry:
+ws sync                                      # synchronize project Git state
 ws worktree add myapp feat/fix-login         # auto-detects existing origin ref,
                                              # creates local from origin/feat/fix-login,
                                              # machines=[linux, archlinux]

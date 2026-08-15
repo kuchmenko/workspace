@@ -5,25 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/metrics"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
 var (
-	wsRoot    string
-	ws        *config.Workspace
-	wsLoadErr error
-	nodeStore *syncnode.Store
-	nodeState syncnode.Workspace
-	nodeID    syncnode.Identity
+	wsRoot        string
+	ws            *config.Workspace
+	wsLoadErr     error
+	registryStore *registry.Store
+	registryState registry.Workspace
 )
 
 var workspaceIndependentCommands = map[string]bool{
@@ -119,13 +117,12 @@ func loadSetupWorkspace() error {
 }
 
 func loadCurrentWorkspace() error {
-	if nodeStore != nil {
-		_ = nodeStore.Close()
-		nodeStore = nil
-		nodeState = syncnode.Workspace{}
-		nodeID = syncnode.Identity{}
+	if registryStore != nil {
+		_ = registryStore.Close()
+		registryStore = nil
+		registryState = registry.Workspace{}
 	}
-	loaded, err := loadCurrentNodeWorkspace()
+	loaded, err := loadCurrentRegistryWorkspace()
 	if err != nil {
 		return err
 	}
@@ -136,22 +133,22 @@ func loadCurrentWorkspace() error {
 	return errors.New("no SQLite workspace found; run `ws workspace import <workspace.toml>` or `ws workspace create`")
 }
 
-func loadCurrentNodeWorkspace() (bool, error) {
-	paths, err := syncnode.DefaultPaths()
+func loadCurrentRegistryWorkspace() (bool, error) {
+	path, err := registry.DefaultPath()
 	if err != nil {
 		return false, err
 	}
-	if _, err = os.Stat(paths.Database); errors.Is(err, os.ErrNotExist) {
+	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	store, err := syncnode.OpenStore(paths.Database)
+	store, err := registry.Open(path)
 	if err != nil {
 		return false, err
 	}
-	var loaded syncnode.Workspace
+	var loaded registry.Workspace
 	requestedRoot := wsRoot
 	if requestedRoot == "" {
 		requestedRoot = strings.TrimSpace(os.Getenv("WS_ROOT"))
@@ -162,10 +159,10 @@ func loadCurrentNodeWorkspace() (bool, error) {
 		var cwd string
 		cwd, err = os.Getwd()
 		if err == nil {
-			loaded, err = findNodeWorkspace(context.Background(), store, cwd)
+			loaded, err = store.Find(context.Background(), cwd)
 		}
 	}
-	if errors.Is(err, syncnode.ErrWorkspaceNotFound) {
+	if errors.Is(err, registry.ErrWorkspaceNotFound) {
 		_ = store.Close()
 		return false, nil
 	}
@@ -173,40 +170,11 @@ func loadCurrentNodeWorkspace() (bool, error) {
 		_ = store.Close()
 		return false, err
 	}
-	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
-	if err != nil {
-		_ = store.Close()
-		return false, err
-	}
-	nodeStore = store
-	nodeState = loaded
-	nodeID = identity
+	registryStore = store
+	registryState = loaded
 	wsRoot = loaded.Root
 	ws = loaded.State
 	return true, nil
-}
-
-func findNodeWorkspace(ctx context.Context, store *syncnode.Store, path string) (syncnode.Workspace, error) {
-	workspaces, err := store.List(ctx)
-	if err != nil {
-		return syncnode.Workspace{}, err
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return syncnode.Workspace{}, err
-	}
-	var found syncnode.Workspace
-	for _, candidate := range workspaces {
-		relative, relErr := filepath.Rel(candidate.Root, abs)
-		outside := relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator))
-		if relErr == nil && !outside && !filepath.IsAbs(relative) && (found.Root == "" || len(candidate.Root) > len(found.Root)) {
-			found = candidate
-		}
-	}
-	if found.Root == "" {
-		return syncnode.Workspace{}, syncnode.ErrWorkspaceNotFound
-	}
-	return found, nil
 }
 
 func Execute() {
@@ -250,12 +218,12 @@ func saveWorkspace() error {
 }
 
 func saveWorkspaceState(state *config.Workspace) error {
-	if nodeStore != nil && nodeState.Root == wsRoot {
-		committed, err := nodeStore.Commit(context.Background(), nodeState.Name, nodeState.Head, state, nodeID)
+	if registryStore != nil && registryState.Root == wsRoot {
+		committed, err := registryStore.Update(context.Background(), registryState.Name, registryState.Revision, state)
 		if err != nil {
-			return fmt.Errorf("saving workspace revision: %w", err)
+			return fmt.Errorf("saving workspace registry: %w", err)
 		}
-		nodeState = committed
+		registryState = committed
 		ws = committed.State
 	} else {
 		return errors.New("workspace is not loaded from the SQLite node store")

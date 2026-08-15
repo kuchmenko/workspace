@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
 func TestLoadCurrentWorkspaceDoesNotFallBackToTOML(t *testing.T) {
@@ -29,7 +29,7 @@ func TestLoadCurrentWorkspaceUsesWSRoot(t *testing.T) {
 	root := t.TempDir()
 	command := newWorkspaceCmd()
 	command.SetOut(&bytes.Buffer{})
-	command.SetArgs([]string{"create", root, "--name", "selected", "--recovery-key", filepath.Join(directory, "recovery.key")})
+	command.SetArgs([]string{"create", root, "--name", "selected"})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -39,19 +39,18 @@ func TestLoadCurrentWorkspaceUsesWSRoot(t *testing.T) {
 	if err := loadCurrentWorkspace(); err != nil {
 		t.Fatal(err)
 	}
-	if nodeState.Name != "selected" || wsRoot != root {
-		t.Fatalf("loaded workspace = %#v", nodeState)
+	if registryState.Name != "selected" || wsRoot != root {
+		t.Fatalf("loaded workspace = %#v", registryState)
 	}
 }
 
 func resetCLIWorkspace() {
-	if nodeStore != nil {
-		_ = nodeStore.Close()
+	if registryStore != nil {
+		_ = registryStore.Close()
 	}
 	wsRoot = ""
 	ws = nil
 	wsLoadErr = nil
-	nodeStore = nil
-	nodeState = syncnode.Workspace{}
-	nodeID = syncnode.Identity{}
+	registryStore = nil
+	registryState = registry.Workspace{}
 }

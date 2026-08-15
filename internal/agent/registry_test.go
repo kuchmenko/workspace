@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
 func saveRegistryFixture(t *testing.T, root string, workspace *config.Workspace) {
@@ -17,18 +17,14 @@ func saveRegistryFixture(t *testing.T, root string, workspace *config.Workspace)
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	node, err := syncnode.OpenNode()
+	local, err := registry.OpenDefault()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = node.Close() }()
-	loaded, err := node.LoadByRoot(context.Background(), root)
-	if errors.Is(err, syncnode.ErrWorkspaceNotFound) {
-		recovery, createErr := syncnode.CreateRecoveryKey(filepath.Join(t.TempDir(), "recovery.key"))
-		if createErr != nil {
-			t.Fatal(createErr)
-		}
-		if _, err = node.Import(context.Background(), filepath.Base(root), root, workspace, recovery); err != nil {
+	defer func() { _ = local.Close() }()
+	_, err = local.LoadByRoot(context.Background(), root)
+	if errors.Is(err, registry.ErrWorkspaceNotFound) {
+		if _, err = local.Create(context.Background(), filepath.Base(root), root, workspace); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -36,14 +32,13 @@ func saveRegistryFixture(t *testing.T, root string, workspace *config.Workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = node.Mutate(context.Background(), root, func(current *config.Workspace) error {
+	_, err = local.Mutate(context.Background(), root, func(current *config.Workspace) error {
 		*current = *workspace
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = loaded
 }
 
 func loadRegistryFixture(t *testing.T, root string) *config.Workspace {

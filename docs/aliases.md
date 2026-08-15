@@ -1,8 +1,7 @@
 # Shell aliases
 
 `ws alias` generates short shell aliases that `cd` into any project,
-group, or the workspace root. Aliases live in the SQLite workspace registry
-and will transfer between machines once peer sync is implemented.
+group, or the workspace root. Aliases live in the SQLite workspace registry.
 
 ## Interactive flow
 

@@ -27,10 +27,7 @@ func TestRunContextAppliesVerifiedProjectConversionConsistently(t *testing.T) {
 	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultSuccess {
 		t.Fatalf("conversions = %+v", report.Conversions)
 	}
-	loaded, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadTestWorkspace(t, root)
 	if got := loaded.Projects["project"].Remote; got != candidate {
 		t.Fatalf("workspace remote = %q, want %q", got, candidate)
 	}
@@ -50,10 +47,7 @@ func TestRunContextConversionUpdatesBlockedRegistryOnly(t *testing.T) {
 	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultSuccess {
 		t.Fatalf("conversions = %+v", report.Conversions)
 	}
-	loaded, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadTestWorkspace(t, root)
 	if loaded.Projects["project"].Remote != candidate {
 		t.Fatalf("registry conversion not saved: %+v", loaded.Projects["project"])
 	}
@@ -130,32 +124,6 @@ func TestRunContextFailedProjectConversionSkipsTarget(t *testing.T) {
 	}
 }
 
-func TestRunContextFailedWorkspaceConversionSkipsWorkspace(t *testing.T) {
-	remote := testutil.InitFakeRemote(t, "workspace-conversion-failure", "main")
-	configureTestSSH(t, remote)
-	root := filepath.Join(t.TempDir(), "workspace")
-	testutil.RunGit(t, filepath.Dir(root), "clone", remote, root)
-	testutil.RunGit(t, root, "remote", "set-url", "origin", testHTTPSRemote)
-	workspace := &config.Workspace{Projects: map[string]config.Project{}}
-	saveTestWorkspace(t, root, workspace)
-	plan := BuildPlan(root, workspace)
-	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
-	if err := selection.SelectConversion(plan.WorkspaceTargetID); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(root, ".git")); err != nil {
-		t.Fatal(err)
-	}
-
-	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
-	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultFailed {
-		t.Fatalf("conversions = %+v", report.Conversions)
-	}
-	if len(report.Workspace) != 1 || report.Workspace[0].Status != ResultSkipped || report.Workspace[0].Reason != SkipExcluded {
-		t.Fatalf("workspace = %+v", report.Workspace)
-	}
-}
-
 func TestRunContextCanceledConversionsRestoreOriginsBeforeSave(t *testing.T) {
 	root := newTestWorkspace(t)
 	sshRemote := testutil.InitFakeRemote(t, "conversion-cancel", "main")
@@ -193,10 +161,7 @@ func TestRunContextCanceledConversionsRestoreOriginsBeforeSave(t *testing.T) {
 			t.Fatalf("%s origin = %q, %v", project.Name, got, err)
 		}
 	}
-	loaded, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadTestWorkspace(t, root)
 	for name, project := range loaded.Projects {
 		if project.Remote != testHTTPSRemote {
 			t.Fatalf("%s registry remote = %q", name, project.Remote)
@@ -237,49 +202,23 @@ func TestRunContextCancellationStartsNoLaterConversion(t *testing.T) {
 }
 
 func TestRunContextRestoresOriginWhenConversionSaveFails(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("read-only file does not reject root")
-	}
 	root, workspace, barePath, _ := setupConvertibleProject(t, false)
 	plan := BuildPlan(root, workspace)
 	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
 	if err := selection.SelectConversion(plan.Projects[0].OriginID); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(root, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(root, 0o755)
 
-	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
+	report := newTestRunner(t, root).RunContext(context.Background(), selection, func(event Event) {
+		if event.Kind == EventStarted && event.Operation == "save-conversions" {
+			saveTestWorkspace(t, root, workspace)
+		}
+	})
 	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultFailed {
 		t.Fatalf("conversions = %+v", report.Conversions)
 	}
 	if got, err := git.ConfiguredRemoteURL(barePath, "origin"); err != nil || got != testHTTPSRemote {
 		t.Fatalf("bare origin after save failure = %q, %v", got, err)
-	}
-}
-
-func TestRunContextAppliesVerifiedWorkspaceConversion(t *testing.T) {
-	remote := testutil.InitFakeRemote(t, "workspace-origin", "main")
-	configureTestSSH(t, remote)
-	root := filepath.Join(t.TempDir(), "workspace")
-	testutil.RunGit(t, filepath.Dir(root), "clone", remote, root)
-	testutil.RunGit(t, root, "remote", "set-url", "origin", testHTTPSRemote)
-	workspace := &config.Workspace{Projects: map[string]config.Project{}}
-	saveTestWorkspace(t, root, workspace)
-	plan := BuildPlan(root, workspace)
-	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
-	if err := selection.SelectConversion(plan.WorkspaceTargetID); err != nil {
-		t.Fatal(err)
-	}
-	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
-	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultSuccess {
-		t.Fatalf("conversions = %+v", report.Conversions)
-	}
-	candidate := "git@github.com:acme/workspace-sync-test.git"
-	if got, err := git.RemoteURL(root); err != nil || got != candidate {
-		t.Fatalf("workspace origin = %q, %v; want %q", got, err, candidate)
 	}
 }
 

@@ -263,7 +263,7 @@ func (m *Model) reloadProjectMetadata(root, id string) error {
 
 func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 	_ = fallbackRoot
-	registered, err := nodeWorkspaces()
+	registered, err := localWorkspaces()
 	if err != nil {
 		return nil, []string{err.Error()}
 	}

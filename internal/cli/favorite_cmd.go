@@ -16,9 +16,8 @@ func newFavoriteCmd() *cobra.Command {
 		Short: "Pin projects to the Favorites section of `ws explorer`",
 		Long: `Manage the project favorites shown at the top of ` + "`" + `ws explorer` + "`" + `.
 
-Favorites are stored in the workspace registry and sync across machines once
-peer sync is enabled. The same toggle is available in the TUI as the f hotkey on
-any project row.`,
+Favorites are stored in the local workspace registry. The same toggle is
+available in the TUI as the f hotkey on any project row.`,
 	}
 	cmd.AddCommand(
 		newFavoriteAddCmd(),

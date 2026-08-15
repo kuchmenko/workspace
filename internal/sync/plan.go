@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -24,10 +23,8 @@ const (
 type TargetRole string
 
 const (
-	TargetWorkspaceOrigin  TargetRole = "workspace-origin"
-	TargetWorkspaceService TargetRole = "workspace-service"
-	TargetProjectOrigin    TargetRole = "project-origin"
-	TargetMirror           TargetRole = "mirror"
+	TargetProjectOrigin TargetRole = "project-origin"
+	TargetMirror        TargetRole = "mirror"
 )
 
 type ProjectSnapshot struct {
@@ -65,7 +62,6 @@ type Target struct {
 	External   bool
 	Executable bool
 	Repository string
-	Transport  string
 }
 
 type Endpoint struct {
@@ -77,7 +73,6 @@ type Endpoint struct {
 	External   bool
 	Executable bool
 	ParseError string
-	Transport  string
 }
 
 type SourceGroup struct {
@@ -87,28 +82,15 @@ type SourceGroup struct {
 }
 
 type Plan struct {
-	Root                string
-	WorkspaceRepository string
-	WorkspaceBranch     string
-	WorkspaceTargetID   string
-	ServiceWorkspaceID  string
-	Projects            []ProjectPlan
-	Targets             []Target
-	Endpoints           []Endpoint
-	SourceGroups        []SourceGroup
+	Root         string
+	Projects     []ProjectPlan
+	Targets      []Target
+	Endpoints    []Endpoint
+	SourceGroups []SourceGroup
 }
 
 func BuildPlan(root string, ws *config.Workspace) Plan {
 	plan := Plan{Root: root}
-	if machine, err := config.LoadMachineConfig(); err == nil {
-		if binding, ok, _ := machine.Binding(root); ok && machine.Service != nil {
-			plan.addServiceTarget(machine.Service.Endpoint, binding.WorkspaceID)
-		} else {
-			plan.addWorkspaceTarget()
-		}
-	} else {
-		plan.addWorkspaceTarget()
-	}
 	for _, name := range slices.Sorted(maps.Keys(ws.Projects)) {
 		project := ws.Projects[name]
 		if project.Status != config.StatusActive {
@@ -118,32 +100,6 @@ func BuildPlan(root string, ws *config.Workspace) Plan {
 	}
 	plan.buildEndpoints()
 	return plan
-}
-
-func (p *Plan) addServiceTarget(endpoint, workspaceID string) {
-	p.WorkspaceTargetID = "workspace:service"
-	p.ServiceWorkspaceID = workspaceID
-	target := Target{ID: p.WorkspaceTargetID, Role: TargetWorkspaceService, URL: endpoint, ConfigURL: endpoint, SourceKey: "sync-service:" + endpoint, External: true, Executable: true, Transport: "service"}
-	p.Targets = append(p.Targets, target)
-}
-
-func (p *Plan) addWorkspaceTarget() {
-	tomlPath, err := filepath.EvalSymlinks(filepath.Join(p.Root, "workspace.toml"))
-	if err != nil {
-		return
-	}
-	repository := findGitRoot(filepath.Dir(tomlPath))
-	if repository == "" {
-		return
-	}
-	remote, err := git.ConfiguredRemoteURL(repository, "origin")
-	if err != nil || remote == "" {
-		return
-	}
-	p.WorkspaceRepository = repository
-	p.WorkspaceBranch, _ = git.CurrentBranch(repository)
-	p.WorkspaceTargetID = "workspace:origin"
-	p.Targets = append(p.Targets, newTarget(p.WorkspaceTargetID, TargetWorkspaceOrigin, "", "", remote, repository, repository))
 }
 
 func (p *Plan) addProject(name string, project config.Project) {
@@ -257,7 +213,6 @@ func (p *Plan) buildEndpoints() {
 				External:   target.External,
 				Executable: target.Executable,
 				ParseError: target.ParseError,
-				Transport:  target.Transport,
 			})
 		}
 		endpoint := &p.Endpoints[endpointIndex]

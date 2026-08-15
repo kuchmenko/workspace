@@ -6,43 +6,31 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
-func setTestRegistryWorkspace(t *testing.T, root string, workspace *config.Workspace) syncnode.Workspace {
+func setTestRegistryWorkspace(t *testing.T, root string, workspace *config.Workspace) registry.Workspace {
 	t.Helper()
 	directory := t.TempDir()
-	store, err := syncnode.OpenStore(filepath.Join(directory, "node.db"))
+	store, err := registry.Open(filepath.Join(directory, "registry.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := syncnode.OpenOrCreateIdentity(filepath.Join(directory, "identity.key"))
-	if err != nil {
-		_ = store.Close()
-		t.Fatal(err)
-	}
-	recovery, err := syncnode.CreateRecoveryKey(filepath.Join(directory, "recovery.key"))
-	if err != nil {
-		_ = store.Close()
-		t.Fatal(err)
-	}
-	registered, err := store.Import(context.Background(), "test", root, workspace, identity, recovery)
+	registered, err := store.Create(context.Background(), "test", root, workspace)
 	if err != nil {
 		_ = store.Close()
 		t.Fatal(err)
 	}
 	wsRoot = registered.Root
 	ws = registered.State
-	nodeStore = store
-	nodeState = registered
-	nodeID = identity
+	registryStore = store
+	registryState = registered
 	t.Cleanup(func() {
 		_ = store.Close()
 		wsRoot = ""
 		ws = nil
-		nodeStore = nil
-		nodeState = syncnode.Workspace{}
-		nodeID = syncnode.Identity{}
+		registryStore = nil
+		registryState = registry.Workspace{}
 	})
 	return registered
 }

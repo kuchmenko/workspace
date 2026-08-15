@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/syncnode"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
 func TestWorkspaceImportAndExport(t *testing.T) {
@@ -28,11 +28,11 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	command := newWorkspaceCmd()
 	command.SetOut(&output)
 	command.SetErr(&output)
-	command.SetArgs([]string{"import", tomlPath, "--name", "personal", "--root", root, "--recovery-key", filepath.Join(directory, "offline", "recovery.key")})
+	command.SetArgs([]string{"import", tomlPath, "--name", "personal", "--root", root})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "workspace=personal") || !strings.Contains(output.String(), "recovery key created") {
+	if !strings.Contains(output.String(), "workspace=personal") {
 		t.Fatalf("import output = %q", output.String())
 	}
 	output.Reset()
@@ -46,11 +46,11 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	if !strings.Contains(output.String(), "ws = \"workspace\"") || strings.Contains(output.String(), root) {
 		t.Fatalf("export output = %q", output.String())
 	}
-	paths, err := syncnode.DefaultPaths()
+	path, err := registry.DefaultPath()
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := syncnode.OpenStore(paths.Database)
+	store, err := registry.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	if string(afterBody) != body {
 		t.Fatal("source TOML changed after database-backed add")
 	}
-	store, err = syncnode.OpenStore(paths.Database)
+	store, err = registry.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,31 +84,18 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Head == before.Head || after.State.Projects["app"].Remote != "git@github.com:owner/app.git" || after.State.Projects["api"].Remote != "git@github.com:owner/api.git" {
-		t.Fatalf("database-backed add did not create a child revision: %#v", after)
-	}
-	rootCommand = NewRootCmd()
-	rootCommand.SetArgs([]string{"--root", root, "sync"})
-	if err = rootCommand.Execute(); err == nil || !strings.Contains(err.Error(), "peer sync is not implemented") {
-		t.Fatalf("sync error = %v", err)
+	if after.Revision == before.Revision || after.State.Projects["app"].Remote != "git@github.com:owner/app.git" || after.State.Projects["api"].Remote != "git@github.com:owner/api.git" {
+		t.Fatalf("database-backed add did not advance the revision: %#v", after)
 	}
 }
 
-func TestFindNodeWorkspaceRejectsSiblingRoot(t *testing.T) {
+func TestFindRegistryWorkspaceRejectsSiblingRoot(t *testing.T) {
 	directory := t.TempDir()
-	store, err := syncnode.OpenStore(filepath.Join(directory, "node.db"))
+	store, err := registry.Open(filepath.Join(directory, "registry.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	identity, err := syncnode.OpenOrCreateIdentity(filepath.Join(directory, "identity.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	recovery, err := syncnode.CreateRecoveryKey(filepath.Join(directory, "recovery.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	workspace, err := config.DecodeWorkspaceForImport([]byte("[meta]\nversion = 1\n[groups]\n[projects]\n[aliases]\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -120,18 +107,18 @@ func TestFindNodeWorkspaceRejectsSiblingRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = store.Import(context.Background(), "one", firstRoot, workspace, identity, recovery); err != nil {
+	if _, err = store.Create(context.Background(), "one", firstRoot, workspace); err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.Import(context.Background(), "two", secondRoot, workspace, identity, recovery)
+	second, err := store.Create(context.Background(), "two", secondRoot, workspace)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found, err := findNodeWorkspace(context.Background(), store, secondRoot)
+	found, err := store.Find(context.Background(), secondRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if found.ID != second.ID {
+	if found.Name != second.Name {
 		t.Fatalf("found workspace %q for sibling root %q", found.Name, secondRoot)
 	}
 }
