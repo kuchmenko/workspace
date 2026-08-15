@@ -41,7 +41,7 @@ func (r *Runner) checkLayout(name string, proj config.Project) (string, Finding)
 	if err != nil {
 		return "", Finding{
 			Scope: name, Check: "layout", Severity: Error,
-			Message: "invalid project path in workspace.toml",
+			Message: "invalid project path in workspace registry",
 			FixHint: fmt.Sprintf("set projects.%s.path to a relative path inside the workspace", name),
 		}
 	}
@@ -126,7 +126,7 @@ func (r *Runner) checkMirrorRemotes(name string, proj config.Project, barePath s
 	if len(extra) > 0 {
 		findings = append(findings, Finding{
 			Scope: name, Check: "mirror:extra", Severity: Warn,
-			Message: fmt.Sprintf("remotes not declared in workspace.toml: %s", strings.Join(extra, ", ")),
+			Message: fmt.Sprintf("remotes not declared in workspace registry: %s", strings.Join(extra, ", ")),
 			FixHint: fmt.Sprintf("declare under [projects.%s.mirrors] or `git remote remove <name>` in the bare repo", name),
 		})
 	}
@@ -142,13 +142,13 @@ func (r *Runner) checkRemoteURL(name string, proj config.Project, barePath strin
 		}
 	}
 	if strings.TrimSpace(actual) == strings.TrimSpace(proj.Remote) {
-		return Finding{Scope: name, Check: "remote-url", Severity: OK, Message: "remote URL matches workspace.toml"}
+		return Finding{Scope: name, Check: "remote-url", Severity: OK, Message: "remote URL matches workspace registry"}
 	}
 	declared := proj.Remote
 	return Finding{
 		Scope: name, Check: "remote-url", Severity: Error,
-		Message: fmt.Sprintf("origin URL %q does not match workspace.toml %q", git.RedactRemote(actual), git.RedactRemote(declared)),
-		FixHint: "reset origin URL to match workspace.toml",
+		Message: fmt.Sprintf("origin URL %q does not match workspace registry %q", git.RedactRemote(actual), git.RedactRemote(declared)),
+		FixHint: "reset origin URL to match workspace registry",
 		Fix:     func() error { return git.SetRemoteURL(barePath, declared) },
 	}
 }
@@ -192,23 +192,23 @@ func (r *Runner) checkDefaultBranch(name string, proj config.Project, barePath s
 	if detected == "" {
 		return Finding{
 			Scope: name, Check: "default-branch", Severity: Warn,
-			Message: "default_branch not set in workspace.toml and could not be auto-detected",
-			FixHint: "edit workspace.toml manually",
+			Message: "default branch is not set and could not be auto-detected",
+			FixHint: "set the project default branch",
 		}
 	}
 	if i := strings.Index(detected, "/"); i >= 0 {
 		detected = detected[i+1:]
 	}
-	wsRoot, ws := r.WsRoot, r.WS
+	ws := r.WS
 	return Finding{
 		Scope: name, Check: "default-branch", Severity: Warn,
-		Message: fmt.Sprintf("default_branch missing in workspace.toml (detected %q from bare)", detected),
+		Message: fmt.Sprintf("default branch is missing (detected %q from bare)", detected),
 		FixHint: fmt.Sprintf("persist %q as default_branch", detected),
 		Fix: func() error {
 			project := ws.Projects[name]
 			project.DefaultBranch = detected
 			ws.Projects[name] = project
-			return config.Save(wsRoot, ws)
+			return saveWorkspace()
 		},
 	}
 }

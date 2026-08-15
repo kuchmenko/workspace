@@ -85,7 +85,7 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 				Mode:      mode,
 				WsRoot:    wsRoot,
 				Workspace: ws,
-				Save:      func(*config.Workspace) error { return saveWorkspace() },
+				Save:      saveWorkspaceState,
 			})
 			if err != nil {
 				return err

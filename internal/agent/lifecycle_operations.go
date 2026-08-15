@@ -52,48 +52,47 @@ func ArchiveProjects(projects []worktreeCandidate, progress ...func(ProjectIdent
 	sort.Strings(roots)
 	var result ProjectArchiveResult
 	for _, root := range roots {
-		ws, err := config.Load(root)
-		if err != nil {
-			result.Failures = append(result.Failures, root+": "+err.Error())
-			result.Failed += len(by[root])
-			if len(progress) > 0 {
-				for _, id := range by[root] {
-					identity := ProjectIdentity{root, id}
-					progress[0](identity, true, "")
-					progress[0](identity, false, "failed: "+err.Error())
-				}
-			}
-			continue
-		}
-		var changed []string
-		for _, id := range by[root] {
-			if len(progress) > 0 {
+		if len(progress) > 0 {
+			for _, id := range by[root] {
 				progress[0](ProjectIdentity{root, id}, true, "")
 			}
-			p, ok := ws.Projects[id]
-			if !ok {
-				result.Failed++
-				result.Failures = append(result.Failures, id+": project missing")
-				if len(progress) > 0 {
-					progress[0](ProjectIdentity{root, id}, false, "failed: project missing")
-				}
-				continue
-			}
-			if p.Status == config.StatusArchived {
-				if len(progress) > 0 {
-					progress[0](ProjectIdentity{root, id}, false, "unchanged: already archived")
-				}
-				continue
-			}
-			p.Status = config.StatusArchived
-			ws.Projects[id] = p
-			changed = append(changed, id)
 		}
-		if err := config.Save(root, ws); err != nil {
+		var changed []string
+		err := mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
+			for _, id := range by[root] {
+				project, ok := workspace.Projects[id]
+				if !ok {
+					result.Failed++
+					result.Failures = append(result.Failures, id+": project missing")
+					if len(progress) > 0 {
+						progress[0](ProjectIdentity{root, id}, false, "failed: project missing")
+					}
+					continue
+				}
+				if project.Status == config.StatusArchived {
+					if len(progress) > 0 {
+						progress[0](ProjectIdentity{root, id}, false, "unchanged: already archived")
+					}
+					continue
+				}
+				project.Status = config.StatusArchived
+				workspace.Projects[id] = project
+				changed = append(changed, id)
+			}
+			if len(changed) == 0 {
+				return errRegistryUnchanged
+			}
+			return nil
+		})
+		if err != nil {
 			result.Failures = append(result.Failures, root+": "+err.Error())
-			result.Failed += len(changed)
+			failed := changed
+			if len(failed) == 0 {
+				failed = by[root]
+			}
+			result.Failed += len(failed)
 			if len(progress) > 0 {
-				for _, id := range changed {
+				for _, id := range failed {
 					progress[0](ProjectIdentity{root, id}, false, "failed: "+err.Error())
 				}
 			}
@@ -122,23 +121,21 @@ func releaseWorktreeOwnershipBatch(root string, releases []ownershipRelease) err
 	if err != nil {
 		return err
 	}
-	ws, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	changed := false
-	for _, release := range releases {
-		p, ok := ws.Projects[release.id]
-		if !ok {
-			return fmt.Errorf("project missing")
+	return mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
+		changed := false
+		for _, release := range releases {
+			project, ok := workspace.Projects[release.id]
+			if !ok {
+				return fmt.Errorf("project missing")
+			}
+			if released, _ := project.ReleaseBranch(release.branch, mc.MachineName); released {
+				workspace.Projects[release.id] = project
+				changed = true
+			}
 		}
-		if released, _ := p.ReleaseBranch(release.branch, mc.MachineName); released {
-			ws.Projects[release.id] = p
-			changed = true
+		if !changed {
+			return errRegistryUnchanged
 		}
-	}
-	if changed {
-		return config.Save(root, ws)
-	}
-	return nil
+		return nil
+	})
 }

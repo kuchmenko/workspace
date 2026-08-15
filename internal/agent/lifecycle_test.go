@@ -466,9 +466,7 @@ func TestArchiveProjectsReportsEveryTargetProgress(t *testing.T) {
 		},
 		Groups: map[string]config.Group{},
 	}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, ws)
 	projects := []worktreeCandidate{
 		{WorkspaceRoot: root, ProjectID: "active"},
 		{WorkspaceRoot: root, ProjectID: "archived"},
@@ -577,9 +575,7 @@ func lifecycleGitFixture(t *testing.T) (string, *Project, *Worktree, string) {
 	testutil.RunGit(t, bare, "worktree", "add", "-b", "feat/lifecycle", worktreePath, "main")
 	testutil.RunGit(t, worktreePath, "push", "-u", "origin", "feat/lifecycle")
 	ws := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{"project": {Path: "project", Status: config.StatusActive, DefaultBranch: "main"}}, Groups: map[string]config.Group{}}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, ws)
 	project := &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: mainPath, DefaultBranch: "main"}
 	worktrees, err := LoadWorktrees(mainPath)
 	if err != nil {

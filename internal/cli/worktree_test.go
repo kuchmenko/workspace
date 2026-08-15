@@ -72,20 +72,66 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 	if err := config.Save(root, wsCfg); err != nil {
 		t.Fatalf("config.Save: %v", err)
 	}
-	loaded, err := config.Load(root)
+	paths, err := syncnode.DefaultPaths()
 	if err != nil {
-		t.Fatalf("config.Load: %v", err)
+		t.Fatal(err)
+	}
+	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := syncnode.CreateRecoveryKey(filepath.Join(t.TempDir(), "recovery.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncnode.OpenStore(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := store.Import(context.Background(), "personal", root, wsCfg, identity, recovery)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// Wire package-level globals so RunE can resolve the project.
 	wsRoot = root
-	ws = loaded
+	ws = imported.State
+	nodeStore = store
+	nodeState = imported
+	nodeID = identity
 	t.Cleanup(func() {
+		_ = store.Close()
 		wsRoot = ""
 		ws = nil
+		nodeStore = nil
+		nodeState = syncnode.Workspace{}
+		nodeID = syncnode.Identity{}
 	})
 
 	return root
+}
+
+func loadCLIRegistryState(t *testing.T, root string) syncnode.Workspace {
+	t.Helper()
+	paths, err := syncnode.DefaultPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncnode.OpenStore(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspace
+}
+
+func loadCLIRegistry(t *testing.T, root string) *config.Workspace {
+	t.Helper()
+	return loadCLIRegistryState(t, root).State
 }
 
 func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
@@ -106,10 +152,7 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 	}
 
 	// workspace.toml should have a [[branches]] entry for feat/foo.
-	reloaded, err := config.Load(root)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	reloaded := loadCLIRegistry(t, root)
 	proj := reloaded.Projects["myapp"]
 	meta := proj.LookupBranch("feat/foo")
 	if meta == nil {
@@ -129,33 +172,7 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 
 func TestWorktreeAddCommitsDatabaseRevisionWithoutChangingTOML(t *testing.T) {
 	root := setupTestWorkspace(t, "linux", "myapp", "main")
-	paths, err := syncnode.DefaultPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	identity, err := syncnode.OpenOrCreateIdentity(paths.Identity)
-	if err != nil {
-		t.Fatal(err)
-	}
-	recoveryPublicKey, err := syncnode.CreateRecoveryKey(filepath.Join(t.TempDir(), "recovery.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	state, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := syncnode.OpenStore(paths.Database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	imported, err := store.Import(context.Background(), "personal", root, state, identity, recoveryPublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	imported := nodeState
 	tomlPath := filepath.Join(root, "workspace.toml")
 	before, err := os.ReadFile(tomlPath)
 	if err != nil {
@@ -173,15 +190,7 @@ func TestWorktreeAddCommitsDatabaseRevisionWithoutChangingTOML(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("database-backed worktree add changed workspace.toml")
 	}
-	store, err = syncnode.OpenStore(paths.Database)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	loaded, err := store.LoadByName(context.Background(), "personal")
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadCLIRegistryState(t, root)
 	project := loaded.State.Projects["myapp"]
 	if loaded.Head == imported.Head || project.LookupBranch("feat/database") == nil {
 		t.Fatalf("worktree metadata was not committed: %#v", loaded)
@@ -207,7 +216,7 @@ func TestWorktreeAdd_AttachesToExistingLocalBranch(t *testing.T) {
 	if _, err := os.Stat(wantDir); err != nil {
 		t.Errorf("re-registration worktree dir missing: %v", err)
 	}
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	proj := reloaded.Projects["myapp"]
 	if proj.LookupBranch("wt/linux/legacy-foo") == nil {
 		t.Errorf("legacy branch was not registered in [[branches]]")
@@ -297,7 +306,7 @@ func TestWorktreeAdd_ReRegistersExistingCheckout(t *testing.T) {
 		t.Errorf("existing worktree was removed: %v", err)
 	}
 	// Metadata must be repaired.
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	rp := reloaded.Projects["myapp"]
 	meta := rp.LookupBranch("feat/leg-foo")
 	if meta == nil {
@@ -383,7 +392,7 @@ func TestWorktreeRm_ReleasesMachine(t *testing.T) {
 	}
 
 	// Reload globals so the rm cmd sees the persisted state.
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	ws = reloaded
 
 	// Then rm.
@@ -396,7 +405,7 @@ func TestWorktreeRm_ReleasesMachine(t *testing.T) {
 	}
 
 	// Empty-machines GC: entry must be gone after Save.
-	final, _ := config.Load(root)
+	final := loadCLIRegistry(t, root)
 	finalProj := final.Projects["myapp"]
 	if meta := finalProj.LookupBranch("feat/temp"); meta != nil {
 		t.Errorf("feat/temp should be GC'd after the only machine released, got %+v", meta)

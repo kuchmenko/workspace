@@ -93,7 +93,7 @@ Requires gh authentication: run 'gh auth login' first.`,
 				Mode:        mode,
 				WsRoot:      wsRoot,
 				Workspace:   ws,
-				Save:        func(*config.Workspace) error { return saveWorkspace() },
+				Save:        saveWorkspaceState,
 			})
 			if errors.Is(err, create.ErrCancelled) {
 				return nil

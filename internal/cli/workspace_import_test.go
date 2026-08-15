@@ -64,7 +64,7 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	rootCommand := NewRootCmd()
 	rootCommand.SetOut(&output)
 	rootCommand.SetErr(&output)
-	rootCommand.SetArgs([]string{"--root", root, "add", "git@github.com:owner/app.git", "--name", "app", "--no-clone", "--no-tui"})
+	rootCommand.SetArgs([]string{"--root", root, "add", "git@github.com:owner/app.git", "git@github.com:owner/api.git", "--no-clone", "--no-tui"})
 	if err = rootCommand.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -84,17 +84,13 @@ func TestWorkspaceImportAndExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Head == before.Head || after.State.Projects["app"].Remote != "git@github.com:owner/app.git" {
+	if after.Head == before.Head || after.State.Projects["app"].Remote != "git@github.com:owner/app.git" || after.State.Projects["api"].Remote != "git@github.com:owner/api.git" {
 		t.Fatalf("database-backed add did not create a child revision: %#v", after)
 	}
 	rootCommand = NewRootCmd()
 	rootCommand.SetArgs([]string{"--root", root, "sync"})
-	if err = rootCommand.Execute(); err == nil || !strings.Contains(err.Error(), "legacy Git-backed sync is disabled") {
-		t.Fatalf("legacy sync error = %v", err)
-	}
-	explorer := newExplorerCmd()
-	if err = explorer.Execute(); err == nil || !strings.Contains(err.Error(), "explorer is disabled") {
-		t.Fatalf("Explorer error = %v", err)
+	if err = rootCommand.Execute(); err == nil || !strings.Contains(err.Error(), "peer sync is not implemented") {
+		t.Fatalf("sync error = %v", err)
 	}
 }
 

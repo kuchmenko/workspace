@@ -63,10 +63,6 @@ func newSetupCmd() *cobra.Command {
 			if err := saveWorkspace(); err != nil {
 				return err
 			}
-			if _, err := config.AddWorkspaceRoot(wsRoot); err != nil {
-				return fmt.Errorf("registering workspace root: %w", err)
-			}
-
 			total := 0
 			for _, g := range r.Groups {
 				total += len(g.Repos)

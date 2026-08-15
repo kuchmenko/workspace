@@ -19,9 +19,8 @@ func TestAgentContractProductionInventory(t *testing.T) {
 		"ws migrate",
 		"ws path",
 		"ws sync",
-		"ws workspace add",
+		"ws workspace create",
 		"ws workspace list",
-		"ws workspace rm",
 		"ws worktree add",
 		"ws worktree list",
 		"ws worktree push",
@@ -48,8 +47,8 @@ func TestAgentContractAliasesAndSafetyDistinctions(t *testing.T) {
 	for _, command := range contract.Commands {
 		commands[command.Canonical] = command
 	}
-	if !reflect.DeepEqual(commands["ws workspace rm"].Aliases, []string{"ws workspace remove"}) {
-		t.Errorf("workspace rm aliases = %v", commands["ws workspace rm"].Aliases)
+	if !reflect.DeepEqual(commands["ws workspace create"].Aliases, []string{"ws workspace add"}) {
+		t.Errorf("workspace create aliases = %v", commands["ws workspace create"].Aliases)
 	}
 	if !reflect.DeepEqual(commands["ws worktree add"].Aliases, []string{"ws wt add"}) {
 		t.Errorf("worktree add aliases = %v", commands["ws worktree add"].Aliases)

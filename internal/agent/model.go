@@ -65,15 +65,11 @@ func StampLaunchFromPath(cwd string) error {
 	if err != nil {
 		return nil
 	}
-	wsRoot, ok := config.FindRootFrom(abs)
-	if !ok {
-		return nil
-	}
-	ws, err := config.Load(wsRoot)
+	registered, err := findRegistryWorkspace(abs)
 	if err != nil {
 		return nil
 	}
-	projID, proj := findProjectByPath(ws, wsRoot, abs)
+	projID, proj := findProjectByPath(registered.State, registered.Root, abs)
 	if proj == nil {
 		return nil
 	}
@@ -85,14 +81,17 @@ func StampLaunchFromPath(cwd string) error {
 	if machine == "" {
 		return nil
 	}
-	if !proj.StampActivity(branch, machine, time.Now()) {
+	return mutateRegistryWorkspace(registered.Root, func(workspace *config.Workspace) error {
+		project, ok := workspace.Projects[projID]
+		if !ok {
+			return fmt.Errorf("project %q is missing from workspace registry", projID)
+		}
+		if !project.StampActivity(branch, machine, time.Now()) {
+			return errRegistryUnchanged
+		}
+		workspace.Projects[projID] = project
 		return nil
-	}
-	ws.Projects[projID] = *proj
-	if err := config.Save(wsRoot, ws); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func loadMachineName() string {
@@ -227,21 +226,16 @@ func detectIconUncached(path string) string {
 }
 
 func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
-	ws, err := config.Load(wsRoot)
-	if err != nil {
-		return err
-	}
-	if !apply(ws) {
+	return mutateRegistryWorkspace(wsRoot, func(workspace *config.Workspace) error {
+		if !apply(workspace) {
+			return errRegistryUnchanged
+		}
 		return nil
-	}
-	if err := config.Save(wsRoot, ws); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 func (m *Model) reloadProjectMetadata(root, id string) error {
-	ws, err := config.Load(root)
+	ws, err := loadRegistryWorkspace(root)
 	if err != nil {
 		return err
 	}
@@ -268,18 +262,22 @@ func (m *Model) reloadProjectMetadata(root, id string) error {
 }
 
 func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
-	var diagnostics []string
-	roots := workspaceRoots(fallbackRoot)
-	if len(roots) == 0 {
-		diagnostics = append(diagnostics, "no workspace found; run from inside a workspace")
-		return nil, diagnostics
+	_ = fallbackRoot
+	registered, err := nodeWorkspaces()
+	if err != nil {
+		return nil, []string{err.Error()}
+	}
+	if len(registered) == 0 {
+		return nil, []string{"no workspace found; create or import a workspace"}
 	}
 
 	var result []WorkspaceData
-	for _, root := range roots {
-		ws, diags := loadOneWorkspace(root)
+	var diagnostics []string
+	for _, workspace := range registered {
+		ws, diags := workspaceData(workspace.Root, workspace.State)
 		diagnostics = append(diagnostics, diags...)
 		if ws != nil {
+			ws.Name = workspace.Name
 			result = append(result, *ws)
 		}
 	}
@@ -287,12 +285,15 @@ func LoadWorkspaces(fallbackRoot string) ([]WorkspaceData, []string) {
 }
 
 func loadOneWorkspace(root string) (*WorkspaceData, []string) {
-	var diagnostics []string
-	w, err := config.Load(root)
+	w, err := loadRegistryWorkspace(root)
 	if err != nil {
 		return nil, []string{fmt.Sprintf("%s: %v", filepath.Base(root), err)}
 	}
+	return workspaceData(root, w)
+}
 
+func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) {
+	var diagnostics []string
 	ws := &WorkspaceData{
 		Name:           filepath.Base(root),
 		Root:           root,
@@ -416,19 +417,4 @@ func projectActivity(branches []config.BranchMeta) (time.Time, string) {
 		}
 	}
 	return best, machine
-}
-
-func workspaceRoots(fallback string) []string {
-	if roots, err := config.ListWorkspaceRoots(); err == nil && len(roots) > 0 {
-		return roots
-	}
-	if fallback != "" {
-		if root, ok := config.FindRootFrom(fallback); ok {
-			return []string{root}
-		}
-	}
-	if root, err := config.FindRoot(); err == nil {
-		return []string{root}
-	}
-	return nil
 }

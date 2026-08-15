@@ -13,7 +13,7 @@ import (
 func newScanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "scan",
-		Short: "Find git repos not registered in workspace.toml",
+		Short: "Find git repos not registered in the workspace registry",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			scanDirs := []string{"personal", "work", "playground", "researches", "tools"}

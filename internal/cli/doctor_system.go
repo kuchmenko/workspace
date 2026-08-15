@@ -123,21 +123,20 @@ func checkConfig(wsRoot string, ws *config.Workspace, loadErr error) Finding {
 	if loadErr != nil {
 		return Finding{
 			Scope: "system", Check: "config", Severity: Error,
-			Message: loadErr.Error(), FixHint: "repair duplicated branch keys in workspace.toml",
-			Fix: func() error { return repairWorkspaceTOML(wsRoot) },
+			Message: loadErr.Error(), FixHint: "restore or re-import the workspace registry",
 		}
 	}
 	if ws == nil {
-		return Finding{Scope: "system", Check: "config", Severity: Error, Message: "workspace.toml not loaded"}
+		return Finding{Scope: "system", Check: "config", Severity: Error, Message: "workspace registry not loaded"}
 	}
 	issues := collectConfigIssues(ws)
 	if len(issues) == 0 {
-		return Finding{Scope: "system", Check: "config", Severity: OK, Message: "workspace.toml valid"}
+		return Finding{Scope: "system", Check: "config", Severity: OK, Message: "workspace registry valid"}
 	}
 	return Finding{
 		Scope: "system", Check: "config", Severity: Error,
-		Message: fmt.Sprintf("workspace.toml has %d issue(s): %s", len(issues), strings.Join(issues, "; ")),
-		FixHint: "edit workspace.toml by hand or re-add affected projects",
+		Message: fmt.Sprintf("workspace registry has %d issue(s): %s", len(issues), strings.Join(issues, "; ")),
+		FixHint: "repair or re-import affected projects",
 	}
 }
 

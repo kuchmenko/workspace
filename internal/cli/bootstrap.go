@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -18,10 +17,10 @@ func newBootstrapCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "bootstrap [project]",
-		Short: "Clone projects from workspace.toml that are missing on this machine",
+		Short: "Clone registered projects that are missing on this machine",
 		Args:  cobra.MaximumNArgs(1),
-		Long: `Materialize projects listed in workspace.toml into the bare+worktree
-layout. On a fresh machine where workspace.toml has been pulled but nothing
+		Long: `Materialize projects listed in the workspace registry into the bare+worktree
+layout. On a fresh machine where the registry is present but nothing
 is cloned yet, 'ws bootstrap' walks the registry and clones each missing
 project directly into the canonical layout.
 
@@ -155,10 +154,10 @@ func runBootstrap(args []string, dryRun bool) error {
 }
 
 func commitBootstrap(sc *repo.BootstrapSidecar) error {
-	freshWS, err := config.Load(wsRoot)
-	if err != nil {
+	if err := loadCurrentWorkspace(); err != nil {
 		return err
 	}
+	freshWS := ws
 	entries, err := sc.DoneEntries()
 	if err != nil {
 		return err

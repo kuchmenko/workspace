@@ -14,11 +14,10 @@ import (
 func newWorkspaceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "workspace",
-		Short: "Manage workspace roots registered on this machine",
+		Short: "Manage local SQLite workspaces",
 	}
 	cmd.AddCommand(
-		newWorkspaceAddCmd(),
-		newWorkspaceRemoveCmd(),
+		newWorkspaceCreateCmd(),
 		newWorkspaceListCmd(),
 		newWorkspaceImportCmd(),
 		newWorkspaceExportCmd(),
@@ -26,62 +25,72 @@ func newWorkspaceCmd() *cobra.Command {
 	return cmd
 }
 
-func newWorkspaceAddCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:         "add [path]",
-		Short:       "Register a workspace root on this machine",
-		Annotations: agentAnnotations("workspace-register", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "path", "0,1"),
+func newWorkspaceCreateCmd() *cobra.Command {
+	var name, recoveryKey string
+	cmd := &cobra.Command{
+		Use:         "create [path]",
+		Aliases:     []string{"add"},
+		Short:       "Create a local SQLite workspace",
+		Annotations: agentAnnotations("workspace-create", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
 		Args:        cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := workspacePathArg(args)
+			root, err := workspacePathArg(args)
 			if err != nil {
 				return err
 			}
-			root, err := config.AddWorkspaceRoot(path)
+			root, err = filepath.Abs(root)
 			if err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), root)
+			if err = os.MkdirAll(root, 0o755); err != nil {
+				return err
+			}
+			recoveryPublicKey, created, err := openOrCreateRecoveryKey(recoveryKey)
+			if err != nil {
+				return err
+			}
+			node, err := syncnode.OpenNode()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = node.Close() }()
+			workspace := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}
+			createdWorkspace, err := node.Import(cmd.Context(), name, root, workspace, recoveryPublicKey)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s id=%s head=%s root=%s\n", createdWorkspace.Name, createdWorkspace.ID, createdWorkspace.Head, createdWorkspace.Root)
+			if created {
+				fmt.Fprintf(cmd.OutOrStdout(), "recovery key created at %s; move it off this node before enabling peer sync\n", recoveryKey)
+			}
 			return nil
 		},
 	}
-}
-
-func newWorkspaceRemoveCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:         "rm [path]",
-		Aliases:     []string{"remove"},
-		Short:       "Remove a workspace root from this machine",
-		Annotations: agentAnnotations("workspace-unregister", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "path", "0,1"),
-		Args:        cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := workspacePathArg(args)
-			if err != nil {
-				return err
-			}
-			root, err := config.RemoveWorkspaceRoot(path)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), root)
-			return nil
-		},
-	}
+	cmd.Flags().StringVar(&name, "name", "", "local workspace name")
+	cmd.Flags().StringVar(&recoveryKey, "recovery-key", "", "offline recovery key path (created when missing)")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("recovery-key")
+	return cmd
 }
 
 func newWorkspaceListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:         "list",
-		Short:       "List workspace roots registered on this machine",
+		Short:       "List local SQLite workspaces",
 		Annotations: agentAnnotations("workspace-list", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "lines", "0,1"),
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			roots, err := config.ListWorkspaceRoots()
+			node, err := syncnode.OpenNode()
 			if err != nil {
 				return err
 			}
-			for _, root := range roots {
-				fmt.Fprintln(cmd.OutOrStdout(), root)
+			defer func() { _ = node.Close() }()
+			workspaces, err := node.List(cmd.Context())
+			if err != nil {
+				return err
+			}
+			for _, workspace := range workspaces {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", workspace.Name, workspace.Root, workspace.Head)
 			}
 			return nil
 		},

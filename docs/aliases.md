@@ -1,8 +1,8 @@
 # Shell aliases
 
 `ws alias` generates short shell aliases that `cd` into any project,
-group, or the workspace root. Aliases live in `workspace.toml` and
-sync between machines via the workspace's git repo.
+group, or the workspace root. Aliases live in the SQLite workspace registry
+and will transfer between machines once peer sync is implemented.
 
 ## Interactive flow
 

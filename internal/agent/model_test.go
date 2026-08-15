@@ -56,9 +56,7 @@ func TestLoadWorkspaceIncludesPlainCheckoutInventoryAndCommitRecency(t *testing.
 	ws := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{
 		"alpha": {Path: "alpha", Status: config.StatusActive},
 	}, Groups: map[string]config.Group{}}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, ws)
 
 	loaded, diagnostics := loadOneWorkspace(root)
 	if len(diagnostics) != 0 {
@@ -79,9 +77,7 @@ func TestReloadProjectMetadataMakesRebuildUseLiveRegistryRecency(t *testing.T) {
 	ws := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{
 		"alpha": {Path: "alpha", DefaultBranch: "trunk", Branches: []config.BranchMeta{{Name: "feat/live", Machines: []string{"arch"}, LastActiveAt: active.Format(time.RFC3339), LastActiveMachine: "arch"}}},
 	}, Groups: map[string]config.Group{}}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, ws)
 	m := &Model{workspaces: []WorkspaceData{{Root: root, Projects: []Project{{ID: "alpha", Name: "alpha", WorkspaceRoot: root}}}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache()}
 	if err := m.reloadProjectMetadata(root, "alpha"); err != nil {
 		t.Fatal(err)

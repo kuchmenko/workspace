@@ -251,8 +251,12 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 			ctx.progress(branch)
 			machine, err := explorerMachineName()
 			if err == nil {
-				options = repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Project: projectID, Branch: branch, Machine: machine}
-				addResult, err = repo.AddWorktreeCheckout(options)
+				var workspace *config.Workspace
+				workspace, err = loadRegistryWorkspace(wsRoot)
+				if err == nil {
+					options = repo.WorktreeAddOptions{WorkspaceRoot: wsRoot, Workspace: workspace, Project: projectID, Branch: branch, Machine: machine}
+					addResult, err = repo.AddWorktreeCheckout(options)
+				}
 			}
 			if err != nil {
 				if addResult != nil {
@@ -265,7 +269,12 @@ func (m *Model) executeNewWorktree() (tui.Model, tui.Cmd) {
 			}
 			ctx.withRegistry(wsRoot, func() {
 				if outcome.Kind == targetSuccess {
-					if err := repo.RegisterWorktree(options, addResult); err != nil {
+					err := mutateRegistryWorkspace(wsRoot, func(workspace *config.Workspace) error {
+						options.Workspace = workspace
+						options.Save = func(*config.Workspace) error { return nil }
+						return repo.RegisterWorktree(options, addResult)
+					})
+					if err != nil {
 						outcome = targetOutcome{Target: branch, Kind: targetPartial, Detail: err.Error()}
 					}
 				}

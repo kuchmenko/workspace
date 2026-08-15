@@ -15,11 +15,10 @@ piping / scripts get help instead of a TUI prompt.
 
 ## What you see
 
-The explorer reads `workspace_roots` from `~/.config/ws/config.toml`,
-walks each root for projects, groups, and worktrees,
-and renders a pinned quick-nav header above a scrollable tree. Manage
-the roots with `ws workspace add/rm/list`. The current workspace is a
-fallback when no roots are registered.
+The explorer reads every workspace from the node SQLite database, walks each
+root for projects, groups, and worktrees, and renders a pinned quick-nav header
+above a scrollable tree. Manage workspaces with `ws workspace create`,
+`import`, `export`, and `list`.
 
 ```text
 *1.myapp 2m  2.api 1h    3.docs 3h  4.experiments 1d  5.utils 2d
@@ -94,8 +93,7 @@ Per-row actions:
   project or group when invoked there, or globally when invoked from home.
 - `f` — on a project row, toggle favorite. Equivalent to
   `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
-  persisted to `workspace.toml` and reaches other machines on the next
-  explicit `ws sync` on each side.
+  persisted as a signed SQLite revision.
 
 Search:
 
@@ -141,10 +139,8 @@ and re-renders so the new entry appears immediately.
 
 ## Project edit
 
-Press `e` on a project row → group / category form. Edits update
-`workspace.toml` directly. The next `ws sync` commits and pushes the
-change. Useful when reorganizing the layout without leaving the
-explorer.
+Press `e` on a project row → group / category form. Edits create a signed
+SQLite revision. Useful when reorganizing the layout without leaving Explorer.
 
 ## Why a TUI
 
@@ -152,6 +148,5 @@ Three reasons it earns its keep:
 
 - **One key per pinned project.** Number hotkeys 1-9 beat
   remembering aliases for branches that come and go.
-- **Cross-workspace.** Roots registered with `ws workspace add` all show
-  up in one list without scheduling background work.
+- **Cross-workspace.** Every local SQLite workspace appears in one list.
 - **Directory-aware shells.** Every launch opens the user's shell with the selected project, group, or worktree as its `cwd`.

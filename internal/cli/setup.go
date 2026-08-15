@@ -316,7 +316,7 @@ func (m confirmModel) view() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(helpStyle.Render("  Write workspace.toml? "))
+	b.WriteString(helpStyle.Render("  Save workspace registry? "))
 	b.WriteString(selectedStyle.Render("y"))
 	b.WriteString(helpStyle.Render("/"))
 	b.WriteString(dimStyle.Render("n"))

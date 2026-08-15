@@ -33,6 +33,14 @@ var workspaceIndependentCommands = map[string]bool{
 
 const skipsWorkspaceAnnotation = "ws.skips-workspace"
 
+type ExitError struct {
+	Code int
+}
+
+func (e ExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.Code)
+}
+
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:               "ws",
@@ -102,23 +110,12 @@ func commandSkipsWorkspace(cmd *cobra.Command) bool {
 }
 
 func loadDoctorWorkspace() error {
-	if err := findWorkspaceRoot(); err != nil {
-		return err
-	}
-	ws, wsLoadErr = config.Load(wsRoot)
-	return nil
+	wsLoadErr = loadCurrentWorkspace()
+	return wsLoadErr
 }
 
 func loadSetupWorkspace() error {
-	var err error
-	if wsRoot == "" {
-		wsRoot, err = os.Getwd()
-		if err != nil {
-			return err
-		}
-	}
-	ws, err = config.LoadOrCreate(wsRoot)
-	return err
+	return loadCurrentWorkspace()
 }
 
 func loadCurrentWorkspace() error {
@@ -136,15 +133,7 @@ func loadCurrentWorkspace() error {
 		wsLoadErr = nil
 		return nil
 	}
-	if err = findWorkspaceRoot(); err != nil {
-		return err
-	}
-	ws, err = config.Load(wsRoot)
-	if err != nil {
-		return err
-	}
-	wsLoadErr = nil
-	return nil
+	return errors.New("no SQLite workspace found; run `ws workspace import <workspace.toml>` or `ws workspace create`")
 }
 
 func loadCurrentNodeWorkspace() (bool, error) {
@@ -163,8 +152,12 @@ func loadCurrentNodeWorkspace() (bool, error) {
 		return false, err
 	}
 	var loaded syncnode.Workspace
-	if wsRoot != "" {
-		loaded, err = store.LoadByRoot(context.Background(), wsRoot)
+	requestedRoot := wsRoot
+	if requestedRoot == "" {
+		requestedRoot = strings.TrimSpace(os.Getenv("WS_ROOT"))
+	}
+	if requestedRoot != "" {
+		loaded, err = store.LoadByRoot(context.Background(), requestedRoot)
 	} else {
 		var cwd string
 		cwd, err = os.Getwd()
@@ -216,15 +209,6 @@ func findNodeWorkspace(ctx context.Context, store *syncnode.Store, path string) 
 	return found, nil
 }
 
-func findWorkspaceRoot() error {
-	if wsRoot != "" {
-		return nil
-	}
-	var err error
-	wsRoot, err = config.FindRoot()
-	return err
-}
-
 func Execute() {
 	root := NewRootCmd()
 	started := time.Now()
@@ -262,15 +246,19 @@ func commandOutcome(err error) metrics.Outcome {
 }
 
 func saveWorkspace() error {
+	return saveWorkspaceState(ws)
+}
+
+func saveWorkspaceState(state *config.Workspace) error {
 	if nodeStore != nil && nodeState.Root == wsRoot {
-		committed, err := nodeStore.Commit(context.Background(), nodeState.Name, nodeState.Head, ws, nodeID)
+		committed, err := nodeStore.Commit(context.Background(), nodeState.Name, nodeState.Head, state, nodeID)
 		if err != nil {
 			return fmt.Errorf("saving workspace revision: %w", err)
 		}
 		nodeState = committed
 		ws = committed.State
-	} else if err := config.Save(wsRoot, ws); err != nil {
-		return fmt.Errorf("saving workspace.toml: %w", err)
+	} else {
+		return errors.New("workspace is not loaded from the SQLite node store")
 	}
 
 	if err := alias.WriteStateFile(ws, wsRoot); err != nil {

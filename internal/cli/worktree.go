@@ -110,7 +110,7 @@ EXAMPLES
 			result, err := repo.AddWorktree(repo.WorktreeAddOptions{
 				WorkspaceRoot: wsRoot,
 				Workspace:     ws,
-				Save:          func(*config.Workspace) error { return saveWorkspace() },
+				Save:          saveWorkspaceState,
 				Project:       projectName,
 				Branch:        branch,
 				Machine:       machine,
@@ -347,7 +347,7 @@ func newWorktreeRmCmd() *cobra.Command {
 				return resolveErr
 			}
 			wtPath := locateWorktreeForBranch(barePath, branch)
-			result, err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Workspace: ws, Save: func(*config.Workspace) error { return saveWorkspace() }, Project: projectName, Branch: branch, Machine: machine, Force: force})
+			result, err := repo.RemoveWorktree(repo.WorktreeRemoveOptions{WorkspaceRoot: wsRoot, Workspace: ws, Save: saveWorkspaceState, Project: projectName, Branch: branch, Machine: machine, Force: force})
 			if result.Removed {
 				fmt.Printf("removed worktree %s\n", wtPath)
 			}
