@@ -26,7 +26,7 @@ var (
 
 var workspaceIndependentCommands = map[string]bool{
 	"help": true, "completion": true, "docs": true,
-	"explorer": true, "ws": true, "workspace": true,
+	"explorer": true, "network": true, "ws": true, "workspace": true,
 }
 
 const skipsWorkspaceAnnotation = "ws.skips-workspace"
@@ -75,6 +75,7 @@ func NewRootCmd() *cobra.Command {
 		newDocsCmd(),
 		newDoctorCmd(),
 		newWorkspaceCmd(),
+		newNetworkCmd(),
 	)
 
 	return root
@@ -104,7 +105,7 @@ func commandSkipsWorkspace(cmd *cobra.Command) bool {
 		return false
 	}
 	parent := cmd.Parent().Name()
-	return parent == "explorer" || parent == "workspace" || parent == "auth"
+	return parent == "explorer" || parent == "workspace" || parent == "auth" || parent == "network" || cmd.Parent().Parent() != nil && cmd.Parent().Parent().Name() == "network"
 }
 
 func loadDoctorWorkspace() error {

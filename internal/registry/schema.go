@@ -52,6 +52,23 @@ CREATE TABLE IF NOT EXISTS workspace_conflicts (
  left_value BLOB,
  right_value BLOB,
  PRIMARY KEY(workspace_id,revision_id,path)
+);
+CREATE TABLE IF NOT EXISTS networks (
+ id TEXT PRIMARY KEY,
+ epoch INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS network_events (
+ id TEXT PRIMARY KEY,
+ network_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ action TEXT NOT NULL,
+ device_id TEXT NOT NULL,
+ device_name TEXT NOT NULL,
+ device_public_key BLOB NOT NULL,
+ role TEXT NOT NULL,
+ signer_id TEXT NOT NULL,
+ signer_public_key BLOB NOT NULL,
+ signature BLOB NOT NULL
 );`
 
 func (store *Store) initialize(ctx context.Context) error {
