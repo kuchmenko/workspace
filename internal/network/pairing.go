@@ -93,26 +93,42 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	if options.Ready != nil {
 		options.Ready(code, listener.Addr().String())
 	}
-	connection, err := acceptContext(ctx, tls.NewListener(listener, pairingServerTLS(cert)))
-	if err != nil {
-		return PairResult{}, err
+	tlsListener := tls.NewListener(listener, pairingServerTLS(cert))
+	for attempts := 0; attempts < 5; attempts++ {
+		connection, acceptErr := acceptContext(ctx, tlsListener)
+		if acceptErr != nil {
+			return PairResult{}, acceptErr
+		}
+		result, retry, pairErr := acceptPairConnection(ctx, connection, code, options)
+		_ = connection.Close()
+		if retry {
+			continue
+		}
+		return result, pairErr
 	}
-	defer func() { _ = connection.Close() }()
+	return PairResult{}, errors.New("pairing attempt limit reached")
+}
+
+func acceptPairConnection(ctx context.Context, connection net.Conn, code string, options PairOptions) (PairResult, bool, error) {
 	tlsConnection := connection.(*tls.Conn)
-	if err = tlsConnection.HandshakeContext(ctx); err != nil {
-		return PairResult{}, err
+	if err := tlsConnection.HandshakeContext(ctx); err != nil {
+		return PairResult{}, true, err
 	}
 	peerKey, peerCertificateName, err := peerPublicKey(tlsConnection.ConnectionState())
 	if err != nil {
-		return PairResult{}, err
+		return PairResult{}, true, err
 	}
 	var request joinRequest
 	if err = json.NewDecoder(connection).Decode(&request); err != nil {
-		return PairResult{}, err
+		return PairResult{}, true, err
 	}
-	if request.Version != 1 || request.Code != code || !request.Confirmed {
+	if request.Version != 1 || request.Code != code {
+		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "pairing code is invalid"})
+		return PairResult{}, true, errors.New("pairing code is invalid")
+	}
+	if !request.Confirmed {
 		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "joining device did not confirm pairing"})
-		return PairResult{}, errors.New("joining device did not confirm pairing")
+		return PairResult{}, false, errors.New("joining device did not confirm pairing")
 	}
 	peerName := request.Name
 	if peerName == "" {
@@ -121,29 +137,29 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	authentication := authenticationString(options.Identity.PublicKey(), peerKey)
 	confirmed, err := options.Confirm(peerName, authentication)
 	if err != nil {
-		return PairResult{}, err
+		return PairResult{}, false, err
 	}
 	if !confirmed {
 		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "pairing rejected"})
-		return PairResult{}, errors.New("pairing rejected")
+		return PairResult{}, false, errors.New("pairing rejected")
 	}
 	state, err := options.Store.AddNetworkDevice(ctx, peerName, peerKey, options.Role)
 	if err != nil {
 		_ = json.NewEncoder(connection).Encode(pairResponse{Error: err.Error()})
-		return PairResult{}, err
+		return PairResult{}, false, err
 	}
 	bundle, err := options.Store.ExportNetwork(ctx)
 	if err != nil {
-		return PairResult{}, err
+		return PairResult{}, false, err
 	}
 	if err = json.NewEncoder(connection).Encode(pairResponse{Accepted: true, Network: bundle}); err != nil {
-		return PairResult{}, err
+		return PairResult{}, false, err
 	}
 	peer, found := deviceRecord(state.Devices, peerKey)
 	if !found {
-		return PairResult{}, errors.New("paired device is missing from network state")
+		return PairResult{}, false, errors.New("paired device is missing from network state")
 	}
-	return PairResult{Peer: peer}, nil
+	return PairResult{Peer: peer}, false, nil
 }
 
 func Join(ctx context.Context, options JoinOptions) (PairResult, error) {

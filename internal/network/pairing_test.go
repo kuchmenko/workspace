@@ -124,6 +124,40 @@ func TestPairRejectsUnconfirmedJoinWithoutAddingDevice(t *testing.T) {
 	}
 }
 
+func TestPairAllowsCorrectCodeAfterRejectedWrongCode(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: "wrong-code",
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err == nil {
+		t.Fatal("wrong pairing code succeeded")
+	}
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func networkTestStore(t *testing.T) (*registry.Store, device.Identity) {
 	t.Helper()
 	directory := t.TempDir()
