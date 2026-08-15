@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/device"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,20 +20,28 @@ var (
 )
 
 type Workspace struct {
-	Name     string
-	Root     string
-	Revision int64
-	State    *config.Workspace
+	Name        string
+	Root        string
+	Revision    int64
+	WorkspaceID string
+	Epoch       int64
+	Head        string
+	State       *config.Workspace
 }
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db       *sql.DB
+	path     string
+	identity device.Identity
 }
 
 func Open(path string) (*Store, error) {
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return nil, err
+	}
+	identity, err := device.Load(filepath.Join(directory, "identity.key"))
+	if err != nil {
 		return nil, err
 	}
 	database, err := sql.Open("sqlite", path)
@@ -42,17 +51,15 @@ func Open(path string) (*Store, error) {
 	database.SetMaxOpenConns(1)
 	if _, err = database.Exec(`PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
-PRAGMA busy_timeout=5000;
-CREATE TABLE IF NOT EXISTS workspaces (
- name TEXT PRIMARY KEY,
- root TEXT NOT NULL UNIQUE,
- revision INTEGER NOT NULL,
- registry BLOB NOT NULL
-);`); err != nil {
+PRAGMA busy_timeout=5000;`); err != nil {
 		_ = database.Close()
 		return nil, err
 	}
-	store := &Store{db: database, path: path}
+	store := &Store{db: database, path: path, identity: identity}
+	if err = store.initialize(context.Background()); err != nil {
+		_ = database.Close()
+		return nil, err
+	}
 	if err = store.restrict(); err != nil {
 		_ = database.Close()
 		return nil, err
@@ -97,15 +104,38 @@ func (store *Store) Create(ctx context.Context, name, root string, state *config
 	if err != nil {
 		return Workspace{}, err
 	}
-	if _, err = store.db.ExecContext(ctx, `INSERT INTO workspaces(name,root,revision,registry) VALUES(?,?,1,?)`, name, canonical, body); err != nil {
+	snapshotBody, err := encodeSnapshot(state)
+	if err != nil {
+		return Workspace{}, err
+	}
+	workspaceID := newWorkspaceID()
+	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, store.identity)
+	if err != nil {
+		return Workspace{}, err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspaces(name,root,revision,registry) VALUES(?,?,1,?)`, name, canonical, body); err != nil {
 		return Workspace{}, fmt.Errorf("create workspace: %w", err)
 	}
+	if err = insertRevision(tx, genesis); err != nil {
+		return Workspace{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,1,?)`, name, workspaceID, genesis.ID); err != nil {
+		return Workspace{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Workspace{}, err
+	}
 	state.RestoreRoot(canonical)
-	return Workspace{Name: name, Root: canonical, Revision: 1, State: state}, nil
+	return Workspace{Name: name, Root: canonical, Revision: 1, WorkspaceID: workspaceID, Epoch: 1, Head: genesis.ID, State: state}, nil
 }
 
 func (store *Store) LoadByName(ctx context.Context, name string) (Workspace, error) {
-	return scanWorkspace(store.db.QueryRowContext(ctx, `SELECT name,root,revision,registry FROM workspaces WHERE name=?`, name))
+	return scanWorkspace(store.db.QueryRowContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name WHERE w.name=?`, name))
 }
 
 func (store *Store) LoadByRoot(ctx context.Context, root string) (Workspace, error) {
@@ -113,7 +143,7 @@ func (store *Store) LoadByRoot(ctx context.Context, root string) (Workspace, err
 	if err != nil {
 		return Workspace{}, err
 	}
-	workspace, err := scanWorkspace(store.db.QueryRowContext(ctx, `SELECT name,root,revision,registry FROM workspaces WHERE root=?`, canonical))
+	workspace, err := scanWorkspace(store.db.QueryRowContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name WHERE w.root=?`, canonical))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Workspace{}, fmt.Errorf("%w for root %q", ErrWorkspaceNotFound, canonical)
 	}
@@ -121,7 +151,7 @@ func (store *Store) LoadByRoot(ctx context.Context, root string) (Workspace, err
 }
 
 func (store *Store) List(ctx context.Context) ([]Workspace, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT name,root,revision,registry FROM workspaces ORDER BY name`)
+	rows, err := store.db.QueryContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name ORDER BY w.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +195,38 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 	if err != nil {
 		return Workspace{}, err
 	}
-	result, err := store.db.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, expectedRevision)
+	snapshotBody, err := encodeSnapshot(state)
+	if err != nil {
+		return Workspace{}, err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var workspaceID, head string
+	var epoch int64
+	if err = tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=? AND w.revision=?`, name, expectedRevision).Scan(&workspaceID, &epoch, &head); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			exists, queryErr := workspaceExists(tx, name)
+			if queryErr != nil {
+				return Workspace{}, queryErr
+			}
+			if !exists {
+				return Workspace{}, fmt.Errorf("%w: %q", ErrWorkspaceNotFound, name)
+			}
+			return Workspace{}, ErrStaleRevision
+		}
+		return Workspace{}, err
+	}
+	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, nil, store.identity)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if err = insertRevision(tx, revision); err != nil {
+		return Workspace{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, expectedRevision)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("update workspace: %w", err)
 	}
@@ -174,13 +235,13 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 		return Workspace{}, err
 	}
 	if affected != 1 {
-		var exists int
-		if queryErr := store.db.QueryRowContext(ctx, `SELECT 1 FROM workspaces WHERE name=?`, name).Scan(&exists); errors.Is(queryErr, sql.ErrNoRows) {
-			return Workspace{}, fmt.Errorf("%w: %q", ErrWorkspaceNotFound, name)
-		} else if queryErr != nil {
-			return Workspace{}, queryErr
-		}
 		return Workspace{}, ErrStaleRevision
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, revision.ID, name, head); err != nil {
+		return Workspace{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Workspace{}, err
 	}
 	return store.LoadByName(ctx, name)
 }
@@ -203,7 +264,7 @@ type scanner interface {
 func scanWorkspace(row scanner) (Workspace, error) {
 	var workspace Workspace
 	var body []byte
-	if err := row.Scan(&workspace.Name, &workspace.Root, &workspace.Revision, &body); err != nil {
+	if err := row.Scan(&workspace.Name, &workspace.Root, &workspace.Revision, &workspace.WorkspaceID, &workspace.Epoch, &workspace.Head, &body); err != nil {
 		return workspace, err
 	}
 	state, err := config.DecodeStoredWorkspace(body)
