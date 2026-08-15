@@ -3,46 +3,38 @@ package agent
 import (
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
 )
 
-func TestWorkspaceRootsUsesMachineConfig(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	registered := []string{t.TempDir(), t.TempDir()}
-	sort.Strings(registered)
-	if err := config.SaveMachineConfig(&config.MachineConfig{WorkspaceRoots: registered}); err != nil {
-		t.Fatal(err)
+func TestLoadWorkspacesUsesSQLiteRegistry(t *testing.T) {
+	first := workspaceFixtureRoot(t)
+	second := workspaceFixtureRoot(t)
+	workspaces, diagnostics := LoadWorkspaces("")
+	if len(diagnostics) != 0 || len(workspaces) != 2 {
+		t.Fatalf("workspaces = %#v, diagnostics = %#v", workspaces, diagnostics)
 	}
-	fallback := workspaceFixtureRoot(t)
-
-	got := workspaceRoots(fallback)
-	if !reflect.DeepEqual(got, registered) {
-		t.Fatalf("workspaceRoots = %v, want registered roots %v", got, registered)
+	roots := map[string]bool{workspaces[0].Root: true, workspaces[1].Root: true}
+	if !roots[first] || !roots[second] {
+		t.Fatalf("loaded roots = %#v", roots)
 	}
 }
 
-func TestWorkspaceRootsFallsBackToCurrentRootWhenRegistryEmpty(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	fallback := workspaceFixtureRoot(t)
-
-	got := workspaceRoots(filepath.Join(fallback, "nested"))
-	if !reflect.DeepEqual(got, []string{fallback}) {
-		t.Fatalf("workspaceRoots = %v, want fallback [%s]", got, fallback)
+func TestLoadWorkspacesReportsEmptyRegistry(t *testing.T) {
+	isolateRegistryFixture(t)
+	workspaces, diagnostics := LoadWorkspaces("")
+	if len(workspaces) != 0 || len(diagnostics) != 1 {
+		t.Fatalf("workspaces = %#v, diagnostics = %#v", workspaces, diagnostics)
 	}
 }
 
 func workspaceFixtureRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "workspace.toml"), []byte("[meta]\nversion = 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.Mkdir(filepath.Join(root, "nested"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	saveRegistryFixture(t, root, &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}})
 	return root
 }

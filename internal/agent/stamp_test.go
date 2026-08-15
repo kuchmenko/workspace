@@ -42,10 +42,7 @@ func TestStampLaunchFromPath_BumpsActivityOnMainBranch(t *testing.T) {
 		t.Fatalf("StampLaunchFromPath: %v", err)
 	}
 
-	got, err := config.Load(wsRoot)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
+	got := loadRegistryFixture(t, wsRoot)
 	alpha := got.Projects["alpha"]
 	if len(alpha.Branches) != 1 {
 		t.Fatalf("expected 1 branch entry after stamp, got %d: %+v", len(alpha.Branches), alpha.Branches)
@@ -111,7 +108,7 @@ func TestStampLaunchFromPath_UpdatesExistingBranch(t *testing.T) {
 		t.Fatalf("StampLaunchFromPath: %v", err)
 	}
 
-	got, _ := config.Load(wsRoot)
+	got := loadRegistryFixture(t, wsRoot)
 	alpha := got.Projects["alpha"]
 	if len(alpha.Branches) != 1 {
 		t.Fatalf("expected branch count unchanged, got %d: %+v", len(alpha.Branches), alpha.Branches)
@@ -154,7 +151,7 @@ func TestStampLaunchFromPath_FindRootFrom_HandlesSubpath(t *testing.T) {
 	if err := StampLaunchFromPath(deep); err != nil {
 		t.Fatalf("StampLaunchFromPath: %v", err)
 	}
-	got, _ := config.Load(wsRoot)
+	got := loadRegistryFixture(t, wsRoot)
 	if len(got.Projects["alpha"].Branches) != 1 {
 		t.Errorf("expected branch entry, got %+v", got.Projects["alpha"].Branches)
 	}
@@ -169,9 +166,7 @@ func seedWorkspace(t *testing.T, root string, projects map[string]config.Project
 		Meta:     config.Meta{Version: 1, Root: root},
 		Projects: projects,
 	}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatalf("seed Save: %v", err)
-	}
+	saveRegistryFixture(t, root, ws)
 }
 
 // seedMachine writes ~/.config/ws/config.toml under the test's

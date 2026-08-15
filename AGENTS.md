@@ -15,12 +15,12 @@ operations.
 
 The core invariants are:
 
-1. **One shared registry per workspace.** `workspace.toml` travels through
-   the workspace repository. A registry change reaches another machine
-   only after explicit sync on both sides.
-2. **Machine-local workspace discovery.** Each machine stores its own
-   canonical `workspace_roots` in `~/.config/ws/config.toml`. This list is
-   for the explorer; it does not schedule synchronization.
+1. **SQLite is runtime authority.** `$XDG_STATE_HOME/ws/registry.db` is the
+   authoritative runtime registry. `workspace.toml` is import/export and
+   migration interchange only; normal commands do not use it as runtime state.
+2. **Named local workspaces.** Each SQLite workspace has a unique name and
+   canonical root. Commands select the longest containing root unless an exact
+   root is supplied. Explorer reads every workspace in the SQLite registry.
 3. **Foreground-only synchronization.** `ws sync` performs preflight,
    review, confirmation, execution, and summary. There is no background
    service, watcher, timer, IPC channel, or retry scheduler.
@@ -39,29 +39,24 @@ hidden branch publication as a convenience.
 
 ## Architecture
 
-### Shared and Local Sources of Truth
+### Runtime and Interchange State
 
-`workspace.toml` is the shared source of truth for project registration,
-groups, aliases, mirrors, explorer preferences, and branch metadata. Paths
-inside it are relative to the workspace root. It is committed in the
-workspace's own git repository.
+`$XDG_STATE_HOME/ws/registry.db` stores named workspaces, roots, project
+registration, groups, aliases, mirrors, explorer preferences, and branch
+metadata. Paths inside a workspace registry are relative to its root.
 
-Explicit sync installs a `merge=union` rule for `workspace.toml` in the
-owning repository's `.gitattributes`. Concurrent additions usually merge
-cleanly; duplicate branch metadata is validated and surfaced as a conflict.
+`workspace.toml` is accepted by `ws workspace import` and emitted by
+`ws workspace export`. It is not read or written during normal operation and
+is never synchronized by `ws sync`.
 
 `~/.config/ws/config.toml` is machine-local:
 
 ```toml
 machine_name = "linux"
-workspace_roots = ["/home/user/dev", "/home/user/work"]
 ```
 
-`ws workspace add/rm/list` owns `workspace_roots`. Roots are canonicalized,
-deduplicated, and sorted. `ws setup` registers the workspace it creates.
-Loading machine config performs a one-time migration from the removed legacy
-`daemon.toml`; this compatibility path is historical data migration, not a
-runtime architecture dependency.
+Machine-specific preferences remain in this file. Workspace names, roots, and
+registry contents live in SQLite.
 
 ### On-Disk Project Layout
 
@@ -128,8 +123,6 @@ Selection (interactive run-only choices or strict headless all-target run)
 Runner.RunContext (frozen plan, sequential execution)
       |
       +-> selected origin conversions
-      +-> workspace registry synchronization
-      +-> registry reload and validation
       +-> selected project origin/fetch/mirrors/worktrees/orphans
       +-> metadata save and typed Report/Event stream
 ```
@@ -140,14 +133,14 @@ Runner.RunContext (frozen plan, sequential execution)
 branch, and mirrors. It classifies disk state as `present`, `missing`,
 `needs-migration`, or `blocked`.
 
-Targets are the workspace registry origin when configured, every active
-project origin, and configured mirrors. Exact URL duplicates share one
+Targets are every active project origin and configured mirror. Exact URL
+duplicates share one
 endpoint. Endpoints are grouped by source identity for review. Ordering is
 deterministic.
 
-The snapshot is a safety boundary. Execution reloads `workspace.toml`; a
-project whose sync-relevant fields changed after preflight is skipped with
-`plan-changed`. Active projects introduced after preflight are also skipped.
+The snapshot is a safety boundary. A project whose sync-relevant SQLite fields
+changed after preflight is skipped with `plan-changed`. Active projects
+introduced after preflight are also skipped.
 
 #### Probe
 
@@ -163,7 +156,7 @@ succeeds. Mirrors are not conversion targets.
 #### Selection and UI
 
 Accessible targets begin selected. In the TUI, users may exclude sources,
-projects, the workspace target, or mirrors for this invocation only.
+projects or mirrors for this invocation only.
 Excluding a project excludes its mirrors. These choices are ephemeral and
 must not become persisted sync preferences.
 
@@ -177,13 +170,11 @@ Exit codes are `0` success, `1` preflight/execution/conflict failure, and
 
 #### Runner
 
-`Runner.RunContext` checks live sidecars, applies selected verified origin
-conversions, synchronizes the workspace repository, reloads and validates
-the registry, then processes projects sequentially in sorted order.
+`Runner.RunContext` checks live sidecars, applies selected verified project
+origin conversions, then processes projects sequentially in sorted order.
 
-Project conversion updates both the local repository origin and
-`workspace.toml`; a failed registry save rolls repository origins back.
-Workspace conversion updates the workspace repository origin. Conversions
+Project conversion updates both the local repository origin and SQLite
+registry; a failed registry save rolls repository origins back. Conversions
 are always explicit interactive choices backed by successful probes.
 
 For each selected project:
@@ -210,21 +201,10 @@ cancellation for live progress and final summary.
 There is no background retry, cooldown, backoff, auto-bootstrap setting, or
 per-project `auto_sync` field. Fix failures and invoke `ws sync` again.
 
-### Workspace Registry Synchronization
+### Workspace Registry Storage
 
-`internal/sync/toml.go` resolves a symlinked `workspace.toml`, finds its git
-repository, and no-ops when no origin/upstream exists. Otherwise it:
-
-1. Ensures the union merge rule.
-2. Fetches the workspace repository.
-3. Commits dirty `workspace.toml` under
-   `ws: auto-sync workspace.toml from <machine>`.
-4. Rebases the workspace repository when behind.
-5. Validates the registry and pushes.
-
-It may amend the immediately preceding matching auto-sync commit to coalesce
-local registry edits. This history manipulation is restricted to the
-workspace repository. It is never applied to project repositories.
+SQLite is the runtime authority. Import and export are explicit interchange
+operations; project Git sync does not transfer registry state.
 
 ### Sidecars
 
@@ -279,8 +259,8 @@ records and clears observed conditions. Records deduplicate on
 editor, retry a mirror push, or apply branch-metadata actions selected by the
 user. It never automatically merges or rebases project work.
 
-Conflict kinds currently include `toml-merge`, `toml-push-failed`,
-`main-divergence`, `needs-migration`, `needs-bootstrap`, `path-blocked`,
+Conflict kinds currently include `main-divergence`, `needs-migration`,
+`needs-bootstrap`, `path-blocked`,
 `clone-failed`, `branch-duplicate`, `branch-orphan`, and
 `mirror-push-failed`.
 
@@ -300,7 +280,7 @@ activity classifier.
 
 ## Workspace Fields
 
-The `[agent]` block is shared through `workspace.toml`:
+The `[agent]` block is stored in each SQLite workspace and represented in TOML exports:
 
 ```toml
 [agent]
@@ -356,15 +336,16 @@ configuration is migrated to branch metadata on load and removed on save.
 | `ws scan` | Find unregistered repositories while ignoring bare/worktree siblings. |
 | `ws path [project]` | Print the workspace or project path for scripts. |
 | `ws doctor [name] [--fix] [--json] [--skip-remote]` | Check system and project health; apply only safe fixes. |
-| `ws favorite add/rm/list <project>` | Manage explorer favorites stored in `workspace.toml`. |
+| `ws favorite add/rm/list <project>` | Manage explorer favorites stored in SQLite. |
 
-### Machine Workspace Registry
+### Workspace Registry
 
 | Command | Purpose |
 |---|---|
-| `ws workspace add [path]` | Add a canonical root to local `workspace_roots`; defaults to cwd. |
-| `ws workspace rm [path]` | Remove a root from local discovery without deleting files. |
-| `ws workspace list` | Print locally registered workspace roots. |
+| `ws workspace create [path] --name <name>` | Create an empty named SQLite workspace; path defaults to cwd. |
+| `ws workspace import <workspace.toml> --name <name> --root <path>` | Import TOML interchange data into a named SQLite workspace. |
+| `ws workspace export <name>` | Export a workspace as TOML. |
+| `ws workspace list` | List named local workspaces and roots. |
 
 These commands do not synchronize anything.
 
@@ -399,10 +380,9 @@ These commands do not synchronize anything.
 
 ## Runtime Files
 
-- `<wsRoot>/workspace.toml`: shared workspace registry.
-- `<wsRoot>/.gitattributes`: union merge rule installed by explicit sync.
-- `~/.config/ws/config.toml`: `machine_name` and local
-  `workspace_roots`.
+- `$XDG_STATE_HOME/ws/registry.db`: authoritative runtime workspace registry.
+- `workspace.toml`: optional import/export and migration interchange data.
+- `~/.config/ws/config.toml`: machine-local settings including `machine_name`.
 - `~/.config/ws/token`: GitHub discovery token.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,
@@ -415,7 +395,7 @@ There are no service, socket, pid, log, watcher, or IPC runtime files.
 
 ## Conventions
 
-- All `workspace.toml` paths are relative to the workspace root.
+- Paths in SQLite registries and exported `workspace.toml` are relative to the workspace root.
 - Synchronization and command recovery paths must be safe to re-run.
 - No secrets belong in this repository.
 - **No comments in production Go by default.** Prefer names, types, control
@@ -424,9 +404,10 @@ There are no service, socket, pid, log, watcher, or IPC runtime files.
   `TODO`/`FIXME`/`HACK` markers. Tests may explain invariants.
 - **TUI consumers import `internal/tui` only.** Direct Charmbracelet imports
   outside `internal/tui` are regressions.
-- Normal operation may change `workspace.toml`, `.gitattributes`, conflict
-  state, command sidecars, machine config, and generated alias state according
-  to the invoked command. Nothing runs in the background.
+- Normal operation may change `registry.db`, conflict state, command sidecars,
+  machine config, and generated alias state according to the invoked command.
+  Only explicit import/export commands touch `workspace.toml`. Nothing runs in
+  the background.
 - `ws sync` never pushes project branches to origin or performs project
   merge, rebase, reset, force, or deletion.
 - Do not hand-edit `[[projects.X.branches]]` except to resolve a confirmed
@@ -476,7 +457,7 @@ Current coverage locations include:
 - `internal/repo/bootstrap_test.go`: bootstrap planning.
 - `internal/sidecar/sidecar_test.go`: lifecycle and active/stale behavior.
 - `internal/sync/*_test.go`: plans, parallel probes, selections,
-  conversions, registry sync, projects, mirrors, cancellation, and reports.
+  conversions, projects, mirrors, cancellation, and reports.
 - `internal/cli/sync_*_test.go`: strict headless output/exit behavior and TUI
   model transitions.
 - `internal/config/machine_test.go`: local workspace-root registry and legacy
@@ -597,7 +578,7 @@ Changes that do require approval include:
 ## Other Agent Conventions
 
 - Use `ws` for workspace operations: `ws status`, `ws sync`,
-  `ws sync resolve`, `ws workspace add/rm/list`, and
+  `ws sync resolve`, `ws workspace create/import/export/list`, and
   `ws worktree add/list/push/rm`.
 - Start non-trivial work with
   `ws worktree add workspace <type>/<kebab-topic>`; do not branch in main.

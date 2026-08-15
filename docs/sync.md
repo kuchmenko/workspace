@@ -1,12 +1,12 @@
 # Sync
 
 `ws sync` is the only synchronization entry point. It is an explicit,
-foreground operation: nothing watches `workspace.toml`, runs on a timer,
+foreground operation: nothing watches the SQLite registry, runs on a timer,
 or changes repositories in the background.
 
 The command separates discovery from mutation:
 
-1. Load a fresh `workspace.toml` and build a deterministic plan.
+1. Load the selected workspace from `$XDG_STATE_HOME/ws/registry.db` and build a deterministic plan.
 2. Probe every unique remote endpoint without changing local state.
 3. In a terminal, review and adjust the run-only selection, then confirm.
 4. Freeze that selection and execute it sequentially.
@@ -14,8 +14,8 @@ The command separates discovery from mutation:
 
 ## Preflight
 
-The plan contains the workspace registry origin, every active project's
-origin, and every configured project mirror. Exact duplicate URLs become
+The plan contains every active project's origin and every configured project
+mirror. Exact duplicate URLs become
 one endpoint, and endpoints are grouped by source identity for review.
 Project disk state is captured as `present`, `missing`,
 `needs-migration`, or `blocked`.
@@ -36,10 +36,10 @@ targets.
 
 When both stdin and stdout are terminals, `ws sync` opens an alt-screen
 TUI. The preflight view updates as probes finish. The review view groups
-the workspace registry, projects, and mirrors under their sources.
+projects and mirrors under their sources.
 
 - `j` / `k` or arrows move through the review.
-- `space` toggles a source, project, workspace origin, or mirror.
+- `space` toggles a source, project, or mirror.
 - `c` selects or removes a verified HTTPS-to-SSH origin conversion.
 - `enter` opens confirmation and starts the run after confirmation.
 - `esc` / `q` cancels before execution.
@@ -47,14 +47,14 @@ the workspace registry, projects, and mirrors under their sources.
   stop before returning.
 
 Selections are ephemeral. Excluding a source, project, or mirror affects
-only this invocation and does not write a preference to
-`workspace.toml`. An inaccessible target cannot be selected unless it
+only this invocation and does not write a preference to SQLite. An
+inaccessible target cannot be selected unless it
 has a verified SSH conversion. Excluding a project also excludes its
 mirrors.
 
-After confirmation, the plan and selection are frozen. The runner reloads
-`workspace.toml` before mutation and again after registry synchronization.
-If a project's sync-relevant fields changed since preflight, that project
+After confirmation, the plan and selection are frozen. The runner compares
+the current SQLite registry before mutation. If a project's sync-relevant
+fields changed since preflight, that project
 is skipped with `plan-changed` rather than executing against assumptions
 that are no longer true.
 
@@ -62,19 +62,15 @@ that are no longer true.
 
 Execution is sequential and cancellation-aware:
 
-1. Apply selected verified origin conversions. Workspace conversion
-   updates its git origin. Project conversion updates the local repository
-   origin and `workspace.toml`; failed saves roll repository origins back.
-2. Synchronize the workspace repository: ensure the union merge rule,
-   fetch, commit local `workspace.toml` changes, rebase when behind, and
-   push. Registry conflicts become `toml-merge` or `toml-push-failed`.
-3. Reload and validate `workspace.toml`.
-4. Process selected active projects in deterministic name order.
-5. For each project, clone a missing checkout or fetch the existing bare
+1. Apply selected verified project-origin conversions. Each conversion
+   updates the local repository origin and SQLite; failed saves roll the
+   repository origin back.
+2. Process selected active projects in deterministic name order.
+3. For each project, clone a missing checkout or fetch the existing bare
    repository, push selected mirrors, inspect worktrees, fast-forward a
    clean behind-only main worktree, refresh local-ahead branch activity,
    and detect deleted remote branches.
-6. Save refreshed project metadata once after project processing.
+4. Save refreshed project metadata once after project processing.
 
 `ws sync` never pushes project branches to origin. Publish those explicitly
 with `ws worktree push <project> <branch>` or plain `git push`.
@@ -135,10 +131,6 @@ reader and mutator for manual resolution.
 
 Current conflict kinds:
 
-- `toml-merge`: the workspace repository could not rebase its registry
-  changes.
-- `toml-push-failed`: the workspace repository push still failed after a
-  fetch/rebase retry.
 - `main-divergence`: a main worktree cannot fast-forward.
 - `needs-migration`: a project is a plain checkout; run
   `ws migrate <name>`.
@@ -163,58 +155,39 @@ same-command exclusion. A foreground sync checks for a live sidecar before
 execution and skips rather than racing an in-progress operation. Sidecars
 do not coordinate with a background process because none exists.
 
-## Workspace Roots
+## Workspace Registry
 
-The machine-local `workspace_roots` list is stored in
-`~/.config/ws/config.toml` and is used by the explorer, not by sync
-scheduling.
+Named local workspaces are stored in `$XDG_STATE_HOME/ws/registry.db` and used
+by commands and the explorer, not by sync scheduling.
 
 ```sh
-ws workspace add ~/dev
-ws workspace add ~/work
+ws workspace create ~/dev --name personal
+ws workspace import ~/work/workspace.toml --name work --root ~/work
+ws workspace export personal > workspace.toml
 ws workspace list
-ws workspace rm ~/work
 ```
 
-Paths are canonicalized, deduplicated, and sorted. `ws setup` registers
-the workspace it creates. Removing a root only removes it from local
-discovery; it does not delete files or alter `workspace.toml`.
-
-### Upgrading from the background service
-
-The first workspace-registry command imports roots from the removed
-`~/.config/ws/daemon.toml` and deletes that file after the new machine config
-is saved. The release installer and `just install` automatically stop,
-disable, and remove an existing `ws-daemon.service` before replacing the
-binary. If installer cleanup warns or the binary was replaced another way,
-retire the service manually before running `ws sync`:
-
-```sh
-systemctl --user disable --now ws-daemon.service
-rm -f ~/.config/systemd/user/ws-daemon.service
-systemctl --user daemon-reload
-```
-
-`ws sync` refuses to begin preflight while the legacy daemon PID file names a
-live process and prints the PID plus stop commands. This prevents the removed
-background reconciler from mutating the workspace during a foreground run.
+Names are unique and paths are canonical. TOML is explicit import/export
+interchange only; no sync run reads or writes it.
 
 ## Multi-Machine Flow
 
-Each machine registers its local workspace path and runs sync explicitly:
+Each machine creates or imports its local SQLite workspace and runs project
+sync explicitly:
 
 ```sh
 # Machine A
-ws workspace add ~/dev
+ws workspace import ./workspace.toml --name personal --root ~/dev
 ws sync
 
 # Machine B
-ws workspace add ~/dev
+ws workspace import ./workspace.toml --name personal --root ~/dev
 ws sync
 ```
 
-`workspace.toml` travels through the workspace repository. Project branch
-commits travel only after an explicit project push. A typical handoff is:
+Registry data does not travel through `ws sync`. Project branch commits travel
+only after an explicit project push. A typical handoff, once each machine has
+its local workspace registry, is:
 
 ```sh
 # Machine A
@@ -225,9 +198,6 @@ ws sync
 ws sync
 ws worktree add myapp feat/auth-refactor
 ```
-
-Symlinked `workspace.toml` files remain supported: sync resolves the real
-file and operates in the git repository that owns it.
 
 ## Health Check
 

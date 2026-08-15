@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -52,7 +54,6 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 	testutil.RunGit(t, barePath, "fetch", "--all", "--prune")
 	testutil.RunGit(t, barePath, "worktree", "add", mainPath, defaultBranch)
 
-	// Write a workspace.toml with the project registered.
 	wsCfg := &config.Workspace{
 		Meta:    config.Meta{Version: 1, Root: root},
 		Groups:  map[string]config.Group{},
@@ -67,23 +68,56 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 			},
 		},
 	}
-	if err := config.Save(root, wsCfg); err != nil {
-		t.Fatalf("config.Save: %v", err)
-	}
-	loaded, err := config.Load(root)
+	path, err := registry.DefaultPath()
 	if err != nil {
-		t.Fatalf("config.Load: %v", err)
+		t.Fatal(err)
+	}
+	store, err := registry.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imported, err := store.Create(context.Background(), "personal", root, wsCfg)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	// Wire package-level globals so RunE can resolve the project.
 	wsRoot = root
-	ws = loaded
+	ws = imported.State
+	registryStore = store
+	registryState = imported
 	t.Cleanup(func() {
+		_ = store.Close()
 		wsRoot = ""
 		ws = nil
+		registryStore = nil
+		registryState = registry.Workspace{}
 	})
 
 	return root
+}
+
+func loadCLIRegistryState(t *testing.T, root string) registry.Workspace {
+	t.Helper()
+	path, err := registry.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := registry.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspace
+}
+
+func loadCLIRegistry(t *testing.T, root string) *config.Workspace {
+	t.Helper()
+	return loadCLIRegistryState(t, root).State
 }
 
 func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
@@ -104,10 +138,7 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 	}
 
 	// workspace.toml should have a [[branches]] entry for feat/foo.
-	reloaded, err := config.Load(root)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	reloaded := loadCLIRegistry(t, root)
 	proj := reloaded.Projects["myapp"]
 	meta := proj.LookupBranch("feat/foo")
 	if meta == nil {
@@ -122,6 +153,28 @@ func TestWorktreeAdd_HappyPath_NewBranchFromMain(t *testing.T) {
 	}
 	if meta.LastActiveMachine != "linux" {
 		t.Errorf("LastActiveMachine: want linux, got %q", meta.LastActiveMachine)
+	}
+}
+
+func TestWorktreeAddCommitsDatabaseRevisionWithoutChangingTOML(t *testing.T) {
+	root := setupTestWorkspace(t, "linux", "myapp", "main")
+	imported := registryState
+	tomlPath := filepath.Join(root, "workspace.toml")
+	if _, err := os.Stat(tomlPath); !os.IsNotExist(err) {
+		t.Fatalf("workspace.toml exists before worktree add: %v", err)
+	}
+	command := NewRootCmd()
+	command.SetArgs([]string{"--root", root, "worktree", "add", "myapp", "feat/database"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(tomlPath); !os.IsNotExist(err) {
+		t.Fatalf("workspace.toml exists after worktree add: %v", err)
+	}
+	loaded := loadCLIRegistryState(t, root)
+	project := loaded.State.Projects["myapp"]
+	if loaded.Revision == imported.Revision || project.LookupBranch("feat/database") == nil {
+		t.Fatalf("worktree metadata was not committed: %#v", loaded)
 	}
 }
 
@@ -144,7 +197,7 @@ func TestWorktreeAdd_AttachesToExistingLocalBranch(t *testing.T) {
 	if _, err := os.Stat(wantDir); err != nil {
 		t.Errorf("re-registration worktree dir missing: %v", err)
 	}
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	proj := reloaded.Projects["myapp"]
 	if proj.LookupBranch("wt/linux/legacy-foo") == nil {
 		t.Errorf("legacy branch was not registered in [[branches]]")
@@ -234,7 +287,7 @@ func TestWorktreeAdd_ReRegistersExistingCheckout(t *testing.T) {
 		t.Errorf("existing worktree was removed: %v", err)
 	}
 	// Metadata must be repaired.
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	rp := reloaded.Projects["myapp"]
 	meta := rp.LookupBranch("feat/leg-foo")
 	if meta == nil {
@@ -320,7 +373,7 @@ func TestWorktreeRm_ReleasesMachine(t *testing.T) {
 	}
 
 	// Reload globals so the rm cmd sees the persisted state.
-	reloaded, _ := config.Load(root)
+	reloaded := loadCLIRegistry(t, root)
 	ws = reloaded
 
 	// Then rm.
@@ -333,7 +386,7 @@ func TestWorktreeRm_ReleasesMachine(t *testing.T) {
 	}
 
 	// Empty-machines GC: entry must be gone after Save.
-	final, _ := config.Load(root)
+	final := loadCLIRegistry(t, root)
 	finalProj := final.Projects["myapp"]
 	if meta := finalProj.LookupBranch("feat/temp"); meta != nil {
 		t.Errorf("feat/temp should be GC'd after the only machine released, got %+v", meta)

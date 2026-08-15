@@ -3,10 +3,11 @@
 Workspace manager for tracking, syncing, and developing many git
 projects across multiple machines.
 
-One git-synced TOML registry per workspace, a machine-local list of
-workspace roots, and per-feature worktrees with explicit cross-machine
-metadata. Synchronization happens only when you run `ws sync`; project
-branch pushes remain a deliberate user action.
+SQLite at `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for
+named local workspaces, and per-feature worktrees carry explicit branch
+metadata. `workspace.toml` is import/export interchange only. Project Git
+synchronization happens only when you run `ws sync`; branch pushes remain
+a deliberate user action.
 
 ## Install
 
@@ -27,7 +28,9 @@ just install            # binary lands at ~/.local/bin/ws
 ## Quick start
 
 ```sh
-mkdir ~/dev && cd ~/dev
+mkdir ~/dev
+ws workspace create ~/dev --name personal
+cd ~/dev
 ws auth login            # GitHub device flow (or `--pat` for a token)
 ws setup                 # TUI: pick repos, organize into groups
 ws sync                  # preflight, review, then synchronize explicitly
@@ -41,9 +44,10 @@ ws worktree add myapp feat/auth-refactor   # new worktree on a literal branch
 ws worktree push myapp feat/auth-refactor  # explicit publish + metadata stamp
 ```
 
-`ws setup` registers the new root in this machine's
-`~/.config/ws/config.toml`. Register additional existing workspaces with
-`ws workspace add <path>` and inspect them with `ws workspace list`.
+Import an existing TOML registry with
+`ws workspace import ./workspace.toml --name personal --root ~/dev`, export
+one with `ws workspace export personal`, and inspect local workspaces with
+`ws workspace list`.
 
 For everyday navigation, run bare `ws` in a terminal. It opens the
 [Explorer TUI](docs/explorer.md) across every registered workspace and
@@ -85,6 +89,5 @@ Pre-1.0; breaking changes happen between minor versions when the
 design pressure is real. Single-user tool by design — the
 multi-machine sync model assumes one human, several machines.
 
-Current main removes the background daemon and its commands; use
-`ws workspace add/rm/list` for local workspace discovery and invoke
-`ws sync` explicitly.
+Workspace commands are `create`, `import`, `export`, and `list`. They do not
+synchronize registry data; invoke `ws sync` explicitly for project Git state.

@@ -267,7 +267,6 @@ func waitForFile(t *testing.T, path string) {
 func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {
 	wsRoot := t.TempDir()
 
-	// Seed workspace.toml so config.Save has a real file to rewrite.
 	proj, barePath := makeProjectBare(t, wsRoot, "demo", "main")
 	proj.DefaultBranch = "" // simulate drift/missing field
 
@@ -275,11 +274,9 @@ func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {
 		Meta:     config.Meta{Version: 1, Root: wsRoot},
 		Projects: map[string]config.Project{"demo": proj},
 	}
-	if err := config.Save(wsRoot, ws); err != nil {
-		t.Fatalf("config.Save seed: %v", err)
-	}
+	setTestRegistryWorkspace(t, wsRoot, ws)
 
-	r := &Runner{WsRoot: wsRoot, WS: ws, SkipRemote: true}
+	r := &Runner{WsRoot: wsRoot, WS: registryState.State, SkipRemote: true}
 
 	f := r.checkDefaultBranch("demo", proj, barePath)
 	if f.Severity != Warn {
@@ -292,10 +289,11 @@ func TestCheckDefaultBranch_DetectAndPersist(t *testing.T) {
 		t.Fatalf("Fix: %v", err)
 	}
 
-	reloaded, err := config.Load(wsRoot)
+	reloadedState, err := registryStore.LoadByRoot(context.Background(), wsRoot)
 	if err != nil {
-		t.Fatalf("config.Load: %v", err)
+		t.Fatal(err)
 	}
+	reloaded := reloadedState.State
 	if got := reloaded.Projects["demo"].DefaultBranch; got != "main" {
 		t.Fatalf("persisted default_branch=%q want main", got)
 	}

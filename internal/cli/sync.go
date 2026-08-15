@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
@@ -15,19 +14,19 @@ import (
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "sync",
-		Short:       "Synchronize workspace and project state",
+		Short:       "Synchronize registered project repositories",
 		Annotations: agentAnnotations("sync", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectWrite, "text", "0,1,130"),
 		Args:        cobra.NoArgs,
 		Long: `Synchronize this workspace right now.
 
 Before changing anything, builds a fresh plan and probes every unique
-workspace, project, and mirror endpoint noninteractively. In a terminal,
+project and mirror endpoint noninteractively. In a terminal,
 review sources and targets, optionally exclude them for this run, and choose
 only verified known-provider HTTPS-to-SSH origin conversions. With redirected
 input or output, every endpoint must pass or no changes are made.
 
-After confirmation, synchronizes workspace.toml, clones or fetches selected
-active projects, pushes selected mirrors, fast-forwards eligible main
+After confirmation, clones or fetches selected active projects, pushes
+selected mirrors, fast-forwards eligible main
 worktrees, refreshes last_active_* for local-ahead registered branches, and
 detects origin-deleted branches as branch-orphan conflicts.
 
@@ -111,7 +110,7 @@ func printConflictList(conflicts []conflict.Conflict) {
 
 func conflictListLabel(c conflict.Conflict) string {
 	if c.Project == "" {
-		return string(c.Kind) + " — workspace.toml"
+		return string(c.Kind) + " — workspace"
 	}
 	label := string(c.Kind) + " — " + c.Project
 	if c.Branch != "" {
@@ -155,8 +154,6 @@ func openConflictStore() (*conflict.Store, error) {
 func handleConflict(c conflict.Conflict) (bool, error) {
 	printConflictHeader(c)
 	switch c.Kind {
-	case conflict.KindTOMLMerge, conflict.KindTOMLPushFailed:
-		return resolveTOMLConflict(c)
 	case conflict.KindMainDivergence:
 		return resolveProjectConflict(c)
 	case conflict.KindBranchDuplicate:
@@ -234,24 +231,9 @@ func resolveCloneFailed(c conflict.Conflict) (bool, error) {
 }
 
 func resolveBranchDuplicate(c conflict.Conflict) (bool, error) {
-	return runPromptLoop([]promptAction{
-		{"e", "open workspace.toml in $EDITOR — pick which entry to keep",
-			func() (bool, error) { return editWorkspaceForDuplicate(c) }},
-	}, "k", "")
-}
-
-func editWorkspaceForDuplicate(c conflict.Conflict) (bool, error) {
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
-	if err := runInTerm(c.Workspace, editor, "workspace.toml"); err != nil {
-		return false, err
-	}
-	fmt.Println("returned from editor. Mark conflict resolved? (y/N)")
-	if strings.EqualFold(strings.TrimSpace(readLine()), "y") {
-		return true, nil
-	}
+	fmt.Println("Resolve the duplicate branch metadata through the relevant worktree command, then re-run `ws sync`.")
+	fmt.Println("Press enter to continue.")
+	_ = readLine()
 	return false, nil
 }
 
@@ -334,7 +316,7 @@ func dropOrphanEntry(c conflict.Conflict, wtPath string) (bool, error) {
 		}
 	}
 	if err := removeBranchFromWorkspace(c.Project, c.Branch); err != nil {
-		fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+		fmt.Printf("warning: workspace registry save failed: %v\n", err)
 		return false, nil
 	}
 	return true, nil
@@ -349,7 +331,7 @@ func removeBranchFromWorkspace(project, branch string) error {
 		return nil
 	}
 	ws.Projects[project] = proj
-	return saveWorkspace()
+	return saveWorkspaceState(ws)
 }
 
 func keepOrphanLocal(c conflict.Conflict) (bool, error) {
@@ -367,8 +349,8 @@ func keepOrphanLocal(c conflict.Conflict) (bool, error) {
 	meta.LastPushedAt = ""
 	meta.LastPushedMachine = ""
 	ws.Projects[c.Project] = proj
-	if err := saveWorkspace(); err != nil {
-		fmt.Printf("warning: workspace.toml save failed: %v\n", err)
+	if err := saveWorkspaceState(ws); err != nil {
+		fmt.Printf("warning: workspace registry save failed: %v\n", err)
 		return false, nil
 	}
 	return true, nil

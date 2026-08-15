@@ -27,7 +27,7 @@ func newAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add [remote-url...]",
 		Short: "Register and clone new projects",
-		Long: `Register one or more git repositories in workspace.toml and clone them
+		Long: `Register one or more git repositories in the workspace registry and clone them
 into the bare+worktree layout used by every other ws command.
 
 Three input modes:
@@ -85,7 +85,7 @@ so new projects land directly in <path>.bare + <path> form. No follow-up
 				Mode:      mode,
 				WsRoot:    wsRoot,
 				Workspace: ws,
-				Save:      func(*config.Workspace) error { return saveWorkspace() },
+				Save:      saveWorkspaceState,
 			})
 			if err != nil {
 				return err

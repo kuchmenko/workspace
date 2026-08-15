@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -361,7 +360,7 @@ func revalidateWorktreeArchiveCandidate(c worktreeCandidate, threshold time.Dura
 	if err := validateReviewedWorktree(&c.Worktree, fresh); err != nil {
 		return nil, "changed after review: " + err.Error(), nil
 	}
-	ws, err := config.Load(c.WorkspaceRoot)
+	ws, err := loadRegistryWorkspace(c.WorkspaceRoot)
 	if err != nil {
 		return nil, "", fmt.Errorf("registry reload failed: %w", err)
 	}
@@ -462,7 +461,7 @@ func revalidateLifecycleWorktree(root string, reviewedProject *Project, reviewed
 	if reviewedProject == nil || reviewedWorktree == nil {
 		return nil, nil, fmt.Errorf("worktree is unavailable")
 	}
-	ws, err := config.Load(root)
+	ws, err := loadRegistryWorkspace(root)
 	if err != nil {
 		return nil, nil, err
 	}

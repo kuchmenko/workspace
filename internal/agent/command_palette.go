@@ -797,21 +797,16 @@ func (m *Model) toggleFavoriteGroup(root, group string) tui.Cmd {
 	return m.submitJob("favorite @"+group, 1, func(ctx *jobContext) jobResult {
 		var outcome targetOutcome
 		ctx.withRegistry(root, func() {
-			ws, err := config.Load(root)
+			err := mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
+				current, ok := workspace.Groups[group]
+				if !ok {
+					return fmt.Errorf("group is not declared in workspace registry")
+				}
+				current.Favorite = !current.Favorite
+				workspace.Groups[group] = current
+				return nil
+			})
 			if err != nil {
-				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: err.Error()}
-				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
-				return
-			}
-			current, ok := ws.Groups[group]
-			if !ok {
-				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: "group is not declared in workspace.toml"}
-				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
-				return
-			}
-			current.Favorite = !current.Favorite
-			ws.Groups[group] = current
-			if err := config.Save(root, ws); err != nil {
 				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: err.Error()}
 			} else {
 				outcome = targetOutcome{Target: group, Kind: targetSuccess, Detail: "saved"}
@@ -833,21 +828,16 @@ func (m *Model) toggleFavoriteFor(proj *Project) tui.Cmd {
 	return m.submitJob("favorite "+name, 1, func(ctx *jobContext) jobResult {
 		var outcome targetOutcome
 		ctx.withRegistry(root, func() {
-			ws, err := config.Load(root)
+			err := mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
+				project, ok := workspace.Projects[projectID]
+				if !ok {
+					return fmt.Errorf("project is missing from workspace registry")
+				}
+				project.SetFavorite(!project.Favorite)
+				workspace.Projects[projectID] = project
+				return nil
+			})
 			if err != nil {
-				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
-				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
-				return
-			}
-			p, ok := ws.Projects[projectID]
-			if !ok {
-				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: "project is missing from workspace.toml"}
-				ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}}, false)
-				return
-			}
-			p.SetFavorite(!p.Favorite)
-			ws.Projects[projectID] = p
-			if err := config.Save(root, ws); err != nil {
 				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
 			} else {
 				outcome = targetOutcome{Target: name, Kind: targetSuccess, Detail: "saved"}

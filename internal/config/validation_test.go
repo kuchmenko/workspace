@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidate_DetectsDuplicateBranchNames(t *testing.T) {
 	ws := &Workspace{
@@ -39,5 +42,12 @@ func TestValidate_NoDuplicates_ReturnsEmpty(t *testing.T) {
 	}
 	if got := ws.Validate(); len(got) != 0 {
 		t.Errorf("want empty, got %+v", got)
+	}
+}
+
+func TestDecodeWorkspaceRejectsUnknownFields(t *testing.T) {
+	_, err := DecodeWorkspace([]byte("[meta]\nversion = 1\ntyop = true\n"))
+	if err == nil || !strings.Contains(err.Error(), "unknown fields: [meta.tyop]") {
+		t.Fatalf("error = %v", err)
 	}
 }

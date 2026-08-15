@@ -37,14 +37,8 @@ func TestSameNamedGroupsStayIndependentAcrossWorkspaces(t *testing.T) {
 	}
 
 	runExplorerJob(t, m, m.toggleFavoriteGroup(rootB, "shared"))
-	loadedA, err := config.Load(rootA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	loadedB, err := config.Load(rootB)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loadedA := loadRegistryFixture(t, rootA)
+	loadedB := loadRegistryFixture(t, rootB)
 	if loadedA.Groups["shared"].Favorite || !loadedB.Groups["shared"].Favorite {
 		t.Fatal("favorite mutation targeted the wrong workspace")
 	}
@@ -85,21 +79,13 @@ func TestExplorerLaunchContracts(t *testing.T) {
 
 func TestProjectFavoritePersists(t *testing.T) {
 	root := explorerWorkspace(t, "favorite")
-	workspace, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	workspace := loadRegistryFixture(t, root)
 	workspace.Projects["project"] = config.Project{Path: "project", Status: config.StatusActive}
-	if err := config.Save(root, workspace); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, workspace)
 	p := &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: filepath.Join(root, "project")}
 	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{*p}}})
 	runExplorerJob(t, m, m.toggleFavoriteFor(p))
-	loaded, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	loaded := loadRegistryFixture(t, root)
 	if !loaded.Projects["project"].Favorite {
 		t.Fatal("project favorite was not persisted")
 	}
@@ -107,15 +93,10 @@ func TestProjectFavoritePersists(t *testing.T) {
 
 func TestLoadWorkspaceSkipsPathsOutsideRoot(t *testing.T) {
 	root := explorerWorkspace(t, "unsafe")
-	workspace, err := config.Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	workspace := loadRegistryFixture(t, root)
 	workspace.Groups["../outside"] = config.Group{}
 	workspace.Projects["unsafe"] = config.Project{Path: "../outside", Status: config.StatusActive}
-	if err := config.Save(root, workspace); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, workspace)
 	loaded, diagnostics := loadOneWorkspace(root)
 	if loaded == nil {
 		t.Fatal("workspace was not loaded")
@@ -154,9 +135,7 @@ func explorerWorkspace(t *testing.T, name string) string {
 		Groups:   map[string]config.Group{"shared": {}},
 		Projects: map[string]config.Project{},
 	}
-	if err := config.Save(root, workspace); err != nil {
-		t.Fatal(err)
-	}
+	saveRegistryFixture(t, root, workspace)
 	return root
 }
 

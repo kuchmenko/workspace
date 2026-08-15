@@ -11,17 +11,6 @@ import (
 
 func TestBuildPlanStatesOrderTargetsAndDeduplication(t *testing.T) {
 	root := t.TempDir()
-	registryRemote := testutil.InitFakeRemote(t, "registry", "main")
-	registry := filepath.Join(t.TempDir(), "registry")
-	testutil.RunGit(t, filepath.Dir(registry), "clone", registryRemote, registry)
-	registryTOML := filepath.Join(registry, "workspace.toml")
-	if err := os.WriteFile(registryTOML, []byte("[meta]\nversion = 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(registryTOML, filepath.Join(root, "workspace.toml")); err != nil {
-		t.Fatal(err)
-	}
-
 	sharedRemote := testutil.InitFakeRemote(t, "shared", "main")
 	if err := os.MkdirAll(filepath.Join(root, "personal", "present.bare"), 0o755); err != nil {
 		t.Fatal(err)
@@ -51,9 +40,6 @@ func TestBuildPlanStatesOrderTargetsAndDeduplication(t *testing.T) {
 		if got := plan.Projects[index].State; got != want {
 			t.Errorf("%s state = %s, want %s", plan.Projects[index].Name, got, want)
 		}
-	}
-	if plan.WorkspaceRepository != registry || plan.WorkspaceTargetID == "" {
-		t.Fatalf("workspace repository = %q, target = %q", plan.WorkspaceRepository, plan.WorkspaceTargetID)
 	}
 	if got := countEndpointURL(plan, sharedRemote); got != 1 {
 		t.Fatalf("shared URL endpoints = %d, want 1", got)

@@ -26,7 +26,6 @@ type syncRowKind int
 
 const (
 	syncSourceRow syncRowKind = iota
-	syncWorkspaceRow
 	syncProjectRow
 	syncMirrorRow
 )
@@ -285,8 +284,6 @@ func buildSyncRows(plan workspacesync.Plan) []syncReviewRow {
 func syncTargetRow(plan workspacesync.Plan, target workspacesync.Target, source string) syncReviewRow {
 	row := syncReviewRow{id: target.ID, sourceKey: source}
 	switch target.Role {
-	case workspacesync.TargetWorkspaceOrigin:
-		row.kind, row.label = syncWorkspaceRow, "workspace registry"
 	case workspacesync.TargetProjectOrigin:
 		row.kind, row.label = syncProjectRow, target.Project
 		for _, project := range plan.Projects {
@@ -327,7 +324,7 @@ func (m *syncModel) toggleConversion() {
 		return
 	}
 	row := m.rows[m.cursor]
-	if row.kind != syncProjectRow && row.kind != syncWorkspaceRow {
+	if row.kind != syncProjectRow {
 		return
 	}
 	if _, selected := m.selection.Conversion(row.id); selected {

@@ -29,6 +29,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	if opts.Workspace == nil {
 		return nil, errors.New("add.Run: nil Workspace")
 	}
+	if opts.Save == nil {
+		return nil, errors.New("add.Run: nil Save")
+	}
 
 	useTUI := false
 	switch opts.Mode {
@@ -68,7 +71,7 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 		Context:       ctx,
 		WsRoot:        opts.WsRoot,
 		Workspace:     opts.Workspace,
-		Save:          resolveSaveFn(opts),
+		Save:          opts.Save,
 		Sources:       sources,
 		GatherTimeout: 10 * time.Second,
 		Standalone:    true,
@@ -157,15 +160,6 @@ func ownerRepoFromRemote(remote string) string {
 	return ""
 }
 
-func resolveSaveFn(opts Options) func(*config.Workspace) error {
-	if opts.Save != nil {
-		return opts.Save
-	}
-	return func(ws *config.Workspace) error {
-		return config.Save(opts.WsRoot, ws)
-	}
-}
-
 func runHeadless(ctx context.Context, opts Options) (*Result, error) {
 	res := &Result{}
 	for _, url := range opts.URLs {
@@ -212,6 +206,9 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 	}
 	if opts.Workspace == nil {
 		return nil, errors.New("register: nil Workspace")
+	}
+	if opts.Save == nil {
+		return nil, errors.New("register: nil Save")
 	}
 
 	name := opts.Name
@@ -267,22 +264,16 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 	}
 	opts.Workspace.Projects[name] = proj
 
-	saveFn := opts.Save
-	if saveFn == nil {
-		saveFn = func(ws *config.Workspace) error {
-			return config.Save(opts.WsRoot, ws)
-		}
-	}
-	if err := saveFn(opts.Workspace); err != nil {
+	if err := opts.Save(opts.Workspace); err != nil {
 		delete(opts.Workspace.Projects, name)
 		if projectsWasNil {
 			opts.Workspace.Projects = nil
 		}
 		if cloned {
 			mainPath := filepath.Join(opts.WsRoot, proj.Path)
-			return nil, fmt.Errorf("save workspace.toml: %w; completed layout remains on disk at %s and %s", err, mainPath, filepath.Clean(mainPath+".bare"))
+			return nil, fmt.Errorf("save workspace registry: %w; completed layout remains on disk at %s and %s", err, mainPath, filepath.Clean(mainPath+".bare"))
 		}
-		return nil, fmt.Errorf("save workspace.toml: %w", err)
+		return nil, fmt.Errorf("save workspace registry: %w", err)
 	}
 
 	return &RegisterResult{Project: proj, Name: name, Cloned: cloned}, nil

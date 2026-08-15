@@ -17,6 +17,8 @@ import (
 
 type WorktreeAddOptions struct {
 	WorkspaceRoot string
+	Workspace     *config.Workspace
+	Save          func(*config.Workspace) error
 	Project       string
 	Branch        string
 	Machine       string
@@ -34,6 +36,8 @@ type WorktreeAddResult struct {
 
 type WorktreeRemoveOptions struct {
 	WorkspaceRoot string
+	Workspace     *config.Workspace
+	Save          func(*config.Workspace) error
 	Project       string
 	Branch        string
 	Machine       string
@@ -54,7 +58,7 @@ func AddWorktree(options WorktreeAddOptions) (*WorktreeAddResult, error) {
 		if result.ReRegistered {
 			return result, fmt.Errorf("registry update failed: %w", err)
 		}
-		return result, fmt.Errorf("worktree created but workspace.toml save failed: %w", err)
+		return result, fmt.Errorf("worktree created but registry save failed: %w", err)
 	}
 	return result, nil
 }
@@ -70,7 +74,7 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 	if err := validateWorktreeBranch(branch); err != nil {
 		return nil, err
 	}
-	_, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
+	_, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project, options.Workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -129,13 +133,16 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 }
 
 func RegisterWorktree(options WorktreeAddOptions, result *WorktreeAddResult) error {
-	workspace, project, _, _, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
+	if options.Save == nil {
+		return errors.New("workspace registry save is required")
+	}
+	workspace, project, _, _, err := loadWorktreeProject(options.WorkspaceRoot, options.Project, options.Workspace)
 	if err != nil {
 		return err
 	}
 	setAddMetadata(&project, strings.TrimSpace(options.Branch), options.Machine, result.Source == "fetched", result)
 	workspace.Projects[options.Project] = project
-	return config.Save(options.WorkspaceRoot, workspace)
+	return options.Save(workspace)
 }
 
 func addWorktreeSource(localExists, remoteExists bool) string {
@@ -156,7 +163,7 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 	if options.Machine == "" {
 		return result, errors.New("machine name is required")
 	}
-	workspace, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project)
+	workspace, project, mainPath, barePath, err := loadWorktreeProject(options.WorkspaceRoot, options.Project, options.Workspace)
 	if err != nil {
 		return result, err
 	}
@@ -189,25 +196,28 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 	}
 	if changed, _ := project.ReleaseBranch(options.Branch, options.Machine); changed {
 		workspace.Projects[options.Project] = project
-		if err := config.Save(options.WorkspaceRoot, workspace); err != nil {
+		if options.Save == nil {
+			return result, errors.New("workspace registry save is required")
+		}
+		saveErr := options.Save(workspace)
+		if saveErr != nil {
 			if result.Removed {
-				return result, fmt.Errorf("worktree removed but workspace.toml ownership release failed: %w", err)
+				return result, fmt.Errorf("worktree removed but registry ownership release failed: %w", saveErr)
 			}
-			return result, fmt.Errorf("workspace.toml ownership release failed: %w", err)
+			return result, fmt.Errorf("registry ownership release failed: %w", saveErr)
 		}
 		result.MetadataReleased = true
 	}
 	return result, nil
 }
 
-func loadWorktreeProject(root, name string) (*config.Workspace, config.Project, string, string, error) {
-	workspace, err := config.Load(root)
-	if err != nil {
-		return nil, config.Project{}, "", "", err
+func loadWorktreeProject(root, name string, workspace *config.Workspace) (*config.Workspace, config.Project, string, string, error) {
+	if workspace == nil {
+		return nil, config.Project{}, "", "", errors.New("workspace registry is required")
 	}
 	project, ok := workspace.Projects[name]
 	if !ok {
-		return nil, config.Project{}, "", "", fmt.Errorf("project %q not found in workspace.toml", name)
+		return nil, config.Project{}, "", "", fmt.Errorf("project %q not found in workspace registry", name)
 	}
 	mainPath, err := layout.ProjectPath(root, project.Path)
 	if err != nil {

@@ -12,7 +12,7 @@ the workspace-root auto-detection.
 ### `ws setup`
 
 Interactive onboarding TUI. Lists every repo you have access to on
-GitHub, lets you pick / group them, writes `workspace.toml`. See
+GitHub, lets you pick / group them, and writes the SQLite registry. See
 [Getting started](getting-started.md#ws-setup--interactive).
 
 ### `ws sync` / `ws sync resolve`
@@ -27,7 +27,7 @@ mirror endpoints before any mutation. With terminal stdin and stdout it
 opens an interactive source/project/mirror review, supports run-only
 exclusions and verified known-provider HTTPS-to-SSH origin conversion,
 then asks for confirmation. The frozen selection executes sequentially:
-registry sync, project clone/fetch, selected mirror pushes, safe main
+project clone/fetch, selected mirror pushes, safe main
 worktree fast-forwards, branch metadata refresh, and orphan detection.
 
 With redirected stdin or stdout it emits ANSI-free text and requires every
@@ -78,7 +78,7 @@ Requires `gh auth login` (separate from `ws auth login`). Holds a
 
 ### `ws bootstrap [name]`
 
-Clone projects listed in `workspace.toml` that are missing on this
+Clone projects listed in the selected SQLite workspace that are missing on this
 machine. TUI by default; `--dry-run` shows the plan without cloning.
 Holds a `bootstrap/<sha>.toml` sidecar.
 
@@ -108,7 +108,7 @@ counts extra worktrees), or `missing`.
 ### `ws scan`
 
 Find git repos under the workspace's category / group directories
-that are not registered in `workspace.toml`. Ignores `*.bare/` and
+that are not registered in SQLite. Ignores `*.bare/` and
 `*-wt-*/` siblings so the worktree layout doesn't show up as
 orphans.
 
@@ -128,7 +128,7 @@ Exit codes:
 - `0` — success.
 - `1` — outside any workspace, or project registered but checkout
   doesn't exist on disk (hint: `ws bootstrap`).
-- `2` — project name not in `workspace.toml`. Lists registered names
+- `2` — project name not in the selected registry. Lists registered names
   if there are < 5; otherwise just the error.
 - `64` — usage error (more than one positional arg).
 
@@ -196,7 +196,7 @@ ws worktree push <project> <branch>
 ```
 
 Wraps `git push -u origin <branch>` and stamps `last_pushed_*` /
-`last_active_*` in `workspace.toml`. Refuses branches missing from
+`last_active_*` in SQLite. Refuses branches missing from
 `[[branches]]` — that's a sign of out-of-band creation; user
 should re-register via `ws worktree add`.
 
@@ -218,7 +218,7 @@ Generated aliases land at `$XDG_STATE_HOME/ws/aliases.zsh` (default
 
 `ws` keeps bounded usage counters in `$XDG_STATE_HOME/ws/metrics.json`
 (default `~/.local/state/ws/metrics.json`). This machine-local file is never
-written to `workspace.toml` or synchronized. Its fixed schema contains only
+written to the workspace registry or synchronized. Its fixed schema contains only
 command-family, terminal-mode, outcome, duration-bucket, and fixed workflow
 counters. It does not contain names, paths, URLs, branches, arguments,
 searches, diagnostics, credentials, machine identity, timestamps, history, or
@@ -229,15 +229,15 @@ not record metrics when invoked.
 ## Workspace Registry
 
 ```sh
-ws workspace add [path]       # register a root; defaults to cwd
-ws workspace rm [path]        # unregister; does not delete anything
-ws workspace list             # canonical roots, one per line
+ws workspace create [path] --name <name>                     # path defaults to cwd
+ws workspace import <workspace.toml> --name <name> --root <path>
+ws workspace export <name>                                   # TOML on stdout
+ws workspace list                                            # names and roots
 ```
 
-These commands edit the machine-local `workspace_roots` array in
-`~/.config/ws/config.toml`. The explorer uses the list for discovery.
-Registration does not schedule synchronization; run `ws sync` from each
-workspace explicitly.
+Create and import write `$XDG_STATE_HOME/ws/registry.db`; export is the only
+command that emits TOML. These commands do not schedule or synchronize
+anything; run `ws sync` for project Git state.
 
 ## Authentication
 

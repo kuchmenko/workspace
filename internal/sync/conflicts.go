@@ -36,34 +36,3 @@ func (r *Runner) clearProjectConflict(project, branch string, kind conflict.Kind
 	}
 	return r.store.Clear(r.root, project, branch, kind)
 }
-
-func (r *Runner) recordTOMLConflict(workspace string, kind conflict.Kind, cause error) {
-	if r.store == nil {
-		return
-	}
-	diagnostic := git.RedactDiagnostic(cause.Error())
-	details, _ := json.Marshal(map[string]string{"error": diagnostic})
-	c := conflict.Conflict{
-		Workspace: workspace,
-		Kind:      kind,
-		Details:   details,
-	}
-	created, err := r.store.Record(c)
-	if err != nil {
-		r.logger.Printf("sync: record conflict: %v", err)
-		return
-	}
-	if created {
-		r.logger.Printf("sync: new conflict %s in %s: %s", kind, workspace, diagnostic)
-	}
-}
-
-func (r *Runner) clearTOMLConflicts() error {
-	if r.store == nil {
-		return nil
-	}
-	for _, kind := range []conflict.Kind{conflict.KindTOMLMerge, conflict.KindTOMLPushFailed} {
-		_ = r.store.Clear(r.root, "", "", kind)
-	}
-	return nil
-}

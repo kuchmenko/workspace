@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
@@ -50,22 +49,7 @@ func (n *syncConflictNotifier) notifyNew() {
 }
 
 func syncNotificationWorkspaces(root string) map[string]bool {
-	identities := map[string]bool{cleanAbsolutePath(root): true}
-	tomlPath, err := filepath.EvalSymlinks(filepath.Join(root, "workspace.toml"))
-	if err != nil {
-		return identities
-	}
-	for dir := filepath.Dir(tomlPath); ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			identities[cleanAbsolutePath(dir)] = true
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-	}
-	return identities
+	return map[string]bool{cleanAbsolutePath(root): true}
 }
 
 func cleanAbsolutePath(path string) string {
@@ -78,7 +62,7 @@ func cleanAbsolutePath(path string) string {
 
 func notifySyncConflict(stored conflict.Conflict) {
 	title := fmt.Sprintf("ws: new sync conflict (%s)", stored.Kind)
-	body := "workspace.toml; run 'ws sync resolve'"
+	body := "workspace registry; run 'ws sync resolve'"
 	if stored.Project != "" {
 		body = fmt.Sprintf("%s/%s; run 'ws sync resolve'", stored.Project, stored.Branch)
 	}

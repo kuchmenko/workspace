@@ -101,7 +101,7 @@ Migration progress is stored in a sidecar at ~/.local/state/ws/migrate/.`,
 			for _, name := range targets {
 				proj, ok := ws.Projects[name]
 				if !ok {
-					fmt.Printf("  skip   %s: not in workspace.toml\n", name)
+					fmt.Printf("  skip   %s: not in workspace registry\n", name)
 					continue
 				}
 				if proj.Status != config.StatusActive {
@@ -187,13 +187,13 @@ func runMigrateCheck(args []string) error {
 		sort.Strings(names)
 	}
 	if len(names) == 0 {
-		fmt.Println("No projects registered in workspace.toml.")
+		fmt.Println("No projects registered in the workspace registry.")
 		return nil
 	}
 	for _, name := range names {
 		proj, ok := ws.Projects[name]
 		if !ok {
-			fmt.Printf("  ?      %s: not in workspace.toml\n", name)
+			fmt.Printf("  ?      %s: not in workspace registry\n", name)
 			continue
 		}
 		r := repo.Check(wsRoot, name, proj)
@@ -673,10 +673,10 @@ func buildMigratePlan(only []string) *migratePlan {
 }
 
 func commitMigrate(sc *repo.MigrateSidecar) error {
-	freshWS, err := config.Load(wsRoot)
-	if err != nil {
+	if err := loadCurrentWorkspace(); err != nil {
 		return err
 	}
+	freshWS := ws
 	entries, err := sc.DoneEntries()
 	if err != nil {
 		return err

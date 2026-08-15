@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -24,9 +23,8 @@ const (
 type TargetRole string
 
 const (
-	TargetWorkspaceOrigin TargetRole = "workspace-origin"
-	TargetProjectOrigin   TargetRole = "project-origin"
-	TargetMirror          TargetRole = "mirror"
+	TargetProjectOrigin TargetRole = "project-origin"
+	TargetMirror        TargetRole = "mirror"
 )
 
 type ProjectSnapshot struct {
@@ -84,19 +82,15 @@ type SourceGroup struct {
 }
 
 type Plan struct {
-	Root                string
-	WorkspaceRepository string
-	WorkspaceBranch     string
-	WorkspaceTargetID   string
-	Projects            []ProjectPlan
-	Targets             []Target
-	Endpoints           []Endpoint
-	SourceGroups        []SourceGroup
+	Root         string
+	Projects     []ProjectPlan
+	Targets      []Target
+	Endpoints    []Endpoint
+	SourceGroups []SourceGroup
 }
 
 func BuildPlan(root string, ws *config.Workspace) Plan {
 	plan := Plan{Root: root}
-	plan.addWorkspaceTarget()
 	for _, name := range slices.Sorted(maps.Keys(ws.Projects)) {
 		project := ws.Projects[name]
 		if project.Status != config.StatusActive {
@@ -106,25 +100,6 @@ func BuildPlan(root string, ws *config.Workspace) Plan {
 	}
 	plan.buildEndpoints()
 	return plan
-}
-
-func (p *Plan) addWorkspaceTarget() {
-	tomlPath, err := filepath.EvalSymlinks(filepath.Join(p.Root, "workspace.toml"))
-	if err != nil {
-		return
-	}
-	repository := findGitRoot(filepath.Dir(tomlPath))
-	if repository == "" {
-		return
-	}
-	remote, err := git.ConfiguredRemoteURL(repository, "origin")
-	if err != nil || remote == "" {
-		return
-	}
-	p.WorkspaceRepository = repository
-	p.WorkspaceBranch, _ = git.CurrentBranch(repository)
-	p.WorkspaceTargetID = "workspace:origin"
-	p.Targets = append(p.Targets, newTarget(p.WorkspaceTargetID, TargetWorkspaceOrigin, "", "", remote, repository, repository))
 }
 
 func (p *Plan) addProject(name string, project config.Project) {

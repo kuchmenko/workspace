@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 	"golang.org/x/term"
@@ -20,26 +19,10 @@ const (
 	syncExitCanceled = 130
 )
 
-type ExitError struct {
-	Code int
-}
-
-func (e ExitError) Error() string {
-	return fmt.Sprintf("exit status %d", e.Code)
-}
-
 func runSync(parent context.Context, root string, stdin io.Reader, stdout, stderr io.Writer) error {
-	if err := config.EnsureLegacyDaemonStopped(); err != nil {
-		return err
-	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	fresh, err := config.Load(root)
-	if err != nil {
-		return err
-	}
-	plan := workspacesync.BuildPlan(root, fresh)
+	plan := workspacesync.BuildPlan(root, ws)
 	if syncTerminal(stdin) && syncTerminal(stdout) {
 		return runSyncTUI(ctx, root, plan, stdout)
 	}

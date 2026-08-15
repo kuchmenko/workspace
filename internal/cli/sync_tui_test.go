@@ -25,8 +25,8 @@ func TestSyncModelTransitionsFromProbeToReview(t *testing.T) {
 	if model.stage != syncReview {
 		t.Fatalf("stage = %v, want review", model.stage)
 	}
-	if len(model.rows) != 4 {
-		t.Fatalf("rows = %d, want 4", len(model.rows))
+	if len(model.rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(model.rows))
 	}
 	if !model.selection.ProjectSelected("app") {
 		t.Fatal("accessible project was not selected")
@@ -238,20 +238,16 @@ func syncModelFixture() (workspacesync.Plan, workspacesync.ProbeReport) {
 		Targets: []workspacesync.Target{
 			{ID: "project:app:origin", Role: workspacesync.TargetProjectOrigin, Project: "app", URL: "file:///repo", EndpointID: "project-endpoint", SourceKey: "local", Executable: true},
 			{ID: "project:app:mirror:backup", Role: workspacesync.TargetMirror, Project: "app", Mirror: "backup", URL: "file:///mirror", EndpointID: "mirror-endpoint", SourceKey: "local", Executable: true},
-			{ID: "workspace:origin", Role: workspacesync.TargetWorkspaceOrigin, URL: "file:///workspace", EndpointID: "workspace-endpoint", SourceKey: "local", Executable: true},
 		},
 		Endpoints: []workspacesync.Endpoint{
 			{ID: "project-endpoint", URL: "file:///repo", SourceKey: "local", Executable: true, TargetIDs: []string{"project:app:origin"}},
 			{ID: "mirror-endpoint", URL: "file:///mirror", SourceKey: "local", Executable: true, TargetIDs: []string{"project:app:mirror:backup"}},
-			{ID: "workspace-endpoint", URL: "file:///workspace", SourceKey: "local", Executable: true, TargetIDs: []string{"workspace:origin"}},
 		},
-		SourceGroups:      []workspacesync.SourceGroup{{Key: "local", EndpointIDs: []string{"project-endpoint", "mirror-endpoint", "workspace-endpoint"}, TargetIDs: []string{"project:app:origin", "project:app:mirror:backup", "workspace:origin"}}},
-		WorkspaceTargetID: "workspace:origin",
+		SourceGroups: []workspacesync.SourceGroup{{Key: "local", EndpointIDs: []string{"project-endpoint", "mirror-endpoint"}, TargetIDs: []string{"project:app:origin", "project:app:mirror:backup"}}},
 	}
 	probes := workspacesync.ProbeReport{Results: []workspacesync.ProbeResult{
 		{EndpointID: "project-endpoint", URL: "file:///repo", Status: workspacesync.ProbeSuccess},
 		{EndpointID: "mirror-endpoint", URL: "file:///mirror", Status: workspacesync.ProbeSuccess},
-		{EndpointID: "workspace-endpoint", URL: "file:///workspace", Status: workspacesync.ProbeSuccess},
 	}}
 	return plan, probes
 }

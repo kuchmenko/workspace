@@ -288,7 +288,7 @@ func (m ManagerModel) viewConfirm() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(fmt.Sprintf("  Save %d aliases to workspace.toml? ", len(aliases))))
+	b.WriteString(helpStyle.Render(fmt.Sprintf("  Save %d aliases to the workspace registry? ", len(aliases))))
 	b.WriteString(selectedStyle.Render("y"))
 	b.WriteString(helpStyle.Render("/"))
 	b.WriteString(dimStyle.Render("n"))

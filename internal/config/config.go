@@ -191,7 +191,7 @@ func (w *Workspace) SetGroupFavorite(name string, fav bool) bool {
 
 type Meta struct {
 	Version int    `toml:"version"`
-	Root    string `toml:"root"`
+	Root    string `toml:"root,omitempty"`
 }
 
 type Workspace struct {

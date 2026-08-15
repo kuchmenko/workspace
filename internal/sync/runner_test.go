@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -163,25 +165,6 @@ func TestRunContextFetchesOnlyDeclaredProjectOrigin(t *testing.T) {
 	}
 }
 
-func TestRunContextSkipsWorkspaceWithoutPlannedOrigin(t *testing.T) {
-	root := newTestWorkspace(t)
-	testutil.RunGit(t, root, "init", "--initial-branch=main")
-	workspace := &config.Workspace{Projects: map[string]config.Project{}}
-	saveTestWorkspace(t, root, workspace)
-	testutil.RunGit(t, root, "add", "workspace.toml")
-	testutil.RunGit(t, root, "commit", "-m", "workspace")
-	testutil.RunGit(t, root, "remote", "add", "backup", filepath.Join(t.TempDir(), "missing.git"))
-	plan := BuildPlan(root, workspace)
-	if plan.WorkspaceTargetID != "" {
-		t.Fatalf("workspace target = %q", plan.WorkspaceTargetID)
-	}
-
-	report := newTestRunner(t, root).RunContext(context.Background(), NewSelection(plan, Probe(context.Background(), plan, nil)), nil)
-	if len(report.Workspace) != 1 || report.Workspace[0].Status != ResultSkipped || report.Workspace[0].Reason != SkipState {
-		t.Fatalf("workspace results = %+v", report.Workspace)
-	}
-}
-
 func TestRunContextSkipsPlanChangedProject(t *testing.T) {
 	root := newTestWorkspace(t)
 	remote := testutil.InitFakeRemote(t, "original", "main")
@@ -315,15 +298,41 @@ func newTestWorkspace(t *testing.T) string {
 
 func saveTestWorkspace(t *testing.T, root string, workspace *config.Workspace) {
 	t.Helper()
+	workspace.Meta.Version = 1
 	if workspace.Groups == nil {
 		workspace.Groups = map[string]config.Group{}
 	}
 	if workspace.Aliases == nil {
 		workspace.Aliases = map[string]string{}
 	}
-	if err := config.Save(root, workspace); err != nil {
+	store, err := registry.OpenDefault()
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = store.Close() }()
+	loaded, err := store.LoadByRoot(context.Background(), root)
+	if errors.Is(err, registry.ErrWorkspaceNotFound) {
+		_, err = store.Create(context.Background(), filepath.Base(root), root, workspace)
+	} else if err == nil {
+		_, err = store.Update(context.Background(), loaded.Name, loaded.Revision, workspace)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func loadTestWorkspace(t *testing.T, root string) *config.Workspace {
+	t.Helper()
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workspace.State
 }
 
 func newTestRunner(t *testing.T, root string) *Runner {

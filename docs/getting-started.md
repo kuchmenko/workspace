@@ -1,9 +1,10 @@
 # Getting started
 
-A workspace is a directory that holds many git projects and a single
-`workspace.toml` registry. Synchronization is explicit: `ws sync`
-preflights the current workspace, lets you review the run in a terminal,
-and changes remote state only after confirmation.
+A workspace is a named local registry in `$XDG_STATE_HOME/ws/registry.db`
+with a canonical root directory that holds many Git projects.
+`workspace.toml` is import/export interchange only. Project synchronization
+is explicit: `ws sync` preflights the current workspace, lets you review the
+run in a terminal, and changes remote Git state only after confirmation.
 
 ## Install
 
@@ -28,22 +29,17 @@ If not, the installer prints a reminder.
 ## First-time setup (interactive)
 
 ```sh
-mkdir ~/dev && cd ~/dev
+mkdir ~/dev
+ws workspace create ~/dev --name personal
+cd ~/dev
 ws auth login            # GitHub device flow (or `--pat` for a token)
-ws setup                 # TUI: pick repos, organize into groups, write workspace.toml
+ws setup                 # TUI: pick repos and organize them into groups
 ws sync                  # preflight, review, clone/fetch, and ff-pull safely
 ```
 
-`ws setup` also adds the new root to this machine's local
-`workspace_roots` list. The list is used by the explorer and does not
-schedule synchronization. There is no background service.
-
-When upgrading from a release that installed `ws-daemon.service`, the release
-installer and `just install` retire the old unit automatically. If cleanup
-warns or the binary was replaced another way, use the manual commands in
-[Sync: upgrading from the background
-service](sync.md#upgrading-from-the-background-service) before running
-`ws sync`.
+To migrate an existing TOML registry instead, run
+`ws workspace import /path/to/workspace.toml --name personal --root ~/dev`.
+Normal commands use SQLite afterward and do not modify the imported file.
 
 That's enough for one machine. For cross-machine workflow see
 [Multi-machine sync](sync.md#multi-machine-flow).
@@ -74,16 +70,15 @@ by name, multi-select.
   ↑↓ navigate  space select  ctrl+a toggle all  enter next  esc quit
 ```
 
-**Step 2 — Confirm.** Review the planned `workspace.toml` shape — groups
+**Step 2 — Confirm.** Review the planned registry shape — groups
 (usually GitHub orgs) and per-project category (`personal` / `work` is
 auto-detected from org ownership; you can override).
 
-**Step 3 — Write.** `ws setup` writes `workspace.toml` and exits. Run
-`ws sync` to clone everything; the result is a directory tree like:
+**Step 3 — Write.** `ws setup` writes the selected SQLite workspace and exits.
+Run `ws sync` to clone everything; the result is a directory tree like:
 
 ```text
 ~/dev/
-├── workspace.toml              ← source of truth (committed)
 ├── acme-corp/                  ← work group (gitignored)
 │   ├── api-gateway/
 │   └── web-dashboard/
@@ -110,27 +105,24 @@ ws create --owner me --name foo
 ws migrate <name>                  # converts to bare+worktree layout
 ```
 
-All three end at the same place: an entry in `workspace.toml` plus a
+All three end at the same place: an entry in the SQLite registry plus a
 project laid out as `<name>/` (main worktree) + `<name>.bare/` (bare
 repo) under the chosen group/category directory.
 
-## Registering workspace roots
+## Managing workspaces
 
-The explorer can show multiple workspaces on one machine. Their canonical
-absolute paths live in `workspace_roots` inside
-`~/.config/ws/config.toml`:
+The explorer can show multiple named workspaces from the local SQLite registry:
 
 ```sh
-ws workspace add ~/dev      # defaults to cwd when path is omitted
-ws workspace add ~/work
+ws workspace create ~/dev --name personal
+ws workspace import ~/work/workspace.toml --name work --root ~/work
+ws workspace export personal > workspace.toml
 ws workspace list
-ws workspace rm ~/work      # unregister only; never deletes the directory
 ```
 
-Roots are machine-local, sorted, and deduplicated. `workspace.toml`
-remains per-workspace and git-synced; `workspace_roots` is not shared
-between machines. If no roots are registered, the explorer can still use
-the workspace containing the current directory as a fallback.
+Names are unique and roots are canonical. Commands use an exact `--root` when
+provided; otherwise they select the workspace with the longest containing
+root. TOML export is explicit and is never a runtime fallback.
 
 ## Authentication
 

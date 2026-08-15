@@ -5,24 +5,38 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/metrics"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
 var (
-	wsRoot    string
-	ws        *config.Workspace
-	wsLoadErr error
+	wsRoot        string
+	ws            *config.Workspace
+	wsLoadErr     error
+	registryStore *registry.Store
+	registryState registry.Workspace
 )
 
 var workspaceIndependentCommands = map[string]bool{
 	"help": true, "completion": true, "docs": true,
 	"explorer": true, "ws": true, "workspace": true,
+}
+
+const skipsWorkspaceAnnotation = "ws.skips-workspace"
+
+type ExitError struct {
+	Code int
+}
+
+func (e ExitError) Error() string {
+	return fmt.Sprintf("exit status %d", e.Code)
 }
 
 func NewRootCmd() *cobra.Command {
@@ -80,6 +94,9 @@ func prepareCommand(cmd *cobra.Command, _ []string) error {
 }
 
 func commandSkipsWorkspace(cmd *cobra.Command) bool {
+	if cmd.Annotations[skipsWorkspaceAnnotation] == "true" {
+		return true
+	}
 	if workspaceIndependentCommands[cmd.Name()] {
 		return true
 	}
@@ -91,45 +108,73 @@ func commandSkipsWorkspace(cmd *cobra.Command) bool {
 }
 
 func loadDoctorWorkspace() error {
-	if err := findWorkspaceRoot(); err != nil {
-		return err
-	}
-	ws, wsLoadErr = config.Load(wsRoot)
-	return nil
+	wsLoadErr = loadCurrentWorkspace()
+	return wsLoadErr
 }
 
 func loadSetupWorkspace() error {
-	var err error
-	if wsRoot == "" {
-		wsRoot, err = os.Getwd()
-		if err != nil {
-			return err
-		}
-	}
-	ws, err = config.LoadOrCreate(wsRoot)
-	return err
+	return loadCurrentWorkspace()
 }
 
 func loadCurrentWorkspace() error {
-	if err := findWorkspaceRoot(); err != nil {
-		return err
+	if registryStore != nil {
+		_ = registryStore.Close()
+		registryStore = nil
+		registryState = registry.Workspace{}
 	}
-	var err error
-	ws, err = config.Load(wsRoot)
+	loaded, err := loadCurrentRegistryWorkspace()
 	if err != nil {
 		return err
 	}
-	wsLoadErr = nil
-	return nil
-}
-
-func findWorkspaceRoot() error {
-	if wsRoot != "" {
+	if loaded {
+		wsLoadErr = nil
 		return nil
 	}
-	var err error
-	wsRoot, err = config.FindRoot()
-	return err
+	return errors.New("no SQLite workspace found; run `ws workspace import <workspace.toml>` or `ws workspace create`")
+}
+
+func loadCurrentRegistryWorkspace() (bool, error) {
+	path, err := registry.DefaultPath()
+	if err != nil {
+		return false, err
+	}
+	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	store, err := registry.Open(path)
+	if err != nil {
+		return false, err
+	}
+	var loaded registry.Workspace
+	requestedRoot := wsRoot
+	if requestedRoot == "" {
+		requestedRoot = strings.TrimSpace(os.Getenv("WS_ROOT"))
+	}
+	if requestedRoot != "" {
+		loaded, err = store.LoadByRoot(context.Background(), requestedRoot)
+	} else {
+		var cwd string
+		cwd, err = os.Getwd()
+		if err == nil {
+			loaded, err = store.Find(context.Background(), cwd)
+		}
+	}
+	if errors.Is(err, registry.ErrWorkspaceNotFound) {
+		_ = store.Close()
+		return false, nil
+	}
+	if err != nil {
+		_ = store.Close()
+		return false, err
+	}
+	registryStore = store
+	registryState = loaded
+	wsRoot = loaded.Root
+	ws = loaded.State
+	return true, nil
 }
 
 func Execute() {
@@ -169,8 +214,19 @@ func commandOutcome(err error) metrics.Outcome {
 }
 
 func saveWorkspace() error {
-	if err := config.Save(wsRoot, ws); err != nil {
-		return fmt.Errorf("saving workspace.toml: %w", err)
+	return saveWorkspaceState(ws)
+}
+
+func saveWorkspaceState(state *config.Workspace) error {
+	if registryStore != nil && registryState.Root == wsRoot {
+		committed, err := registryStore.Update(context.Background(), registryState.Name, registryState.Revision, state)
+		if err != nil {
+			return fmt.Errorf("saving workspace registry: %w", err)
+		}
+		registryState = committed
+		ws = committed.State
+	} else {
+		return errors.New("workspace is not loaded from the SQLite node store")
 	}
 
 	if err := alias.WriteStateFile(ws, wsRoot); err != nil {

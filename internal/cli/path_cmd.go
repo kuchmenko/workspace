@@ -38,7 +38,7 @@ Designed for shell substitution, e.g.:
 Exit codes:
   0   success
   1   outside any workspace OR project registered but not cloned
-  2   project name not present in workspace.toml
+  2   project name not present in the workspace registry
   64  usage error (more than one argument)`,
 		Annotations: agentAnnotations("path", AgentInteractionNone, AgentApprovalNone, AgentEffectNone, AgentEffectNone, "path", "0,1,2,64"),
 

@@ -6,22 +6,24 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/kuchmenko/workspace/internal/config"
 )
 
-func TestWorkspaceCommandsAddListAndRemove(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+func TestWorkspaceCommandsCreateAndList(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
 	workspace := t.TempDir()
 	cmd := newWorkspaceCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"add", workspace})
+	cmd.SetArgs([]string{"create", workspace, "--name", "personal"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("workspace add: %v", err)
+		t.Fatalf("workspace create: %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != workspace {
-		t.Fatalf("workspace add output = %q, want %q", got, workspace)
+	if got := out.String(); !strings.Contains(got, "workspace=personal") || !strings.Contains(got, "root="+workspace) {
+		t.Fatalf("workspace create output = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "workspace.toml")); !os.IsNotExist(err) {
+		t.Fatalf("workspace create wrote workspace.toml: %v", err)
 	}
 
 	out.Reset()
@@ -31,31 +33,14 @@ func TestWorkspaceCommandsAddListAndRemove(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("workspace list: %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != workspace {
-		t.Fatalf("workspace list output = %q, want %q", got, workspace)
-	}
-
-	out.Reset()
-	cmd = newWorkspaceCmd()
-	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"rm", workspace})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("workspace rm: %v", err)
-	}
-	if got := strings.TrimSpace(out.String()); got != workspace {
-		t.Fatalf("workspace rm output = %q, want %q", got, workspace)
-	}
-	roots, err := config.ListWorkspaceRoots()
-	if err != nil {
-		t.Fatalf("ListWorkspaceRoots: %v", err)
-	}
-	if len(roots) != 0 {
-		t.Fatalf("workspace roots after rm = %v, want empty", roots)
+	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\n") {
+		t.Fatalf("workspace list output = %q", got)
 	}
 }
 
-func TestWorkspaceAddDefaultsToCurrentDirectory(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+func TestWorkspaceCreateDefaultsToCurrentDirectory(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
 	cwd := t.TempDir()
 	oldCWD, err := os.Getwd()
 	if err != nil {
@@ -68,21 +53,25 @@ func TestWorkspaceAddDefaultsToCurrentDirectory(t *testing.T) {
 
 	cmd := newWorkspaceCmd()
 	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetArgs([]string{"add"})
+	cmd.SetArgs([]string{"create", "--name", "personal"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("workspace add: %v", err)
+		t.Fatalf("workspace create: %v", err)
 	}
-	roots, err := config.ListWorkspaceRoots()
-	if err != nil {
-		t.Fatalf("ListWorkspaceRoots: %v", err)
+	out := bytes.Buffer{}
+	cmd = newWorkspaceCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"list"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("workspace list: %v", err)
 	}
-	if len(roots) != 1 || roots[0] != cwd {
-		t.Fatalf("workspace roots = %v, want [%s]", roots, cwd)
+	if !strings.Contains(out.String(), "personal\t"+cwd+"\n") {
+		t.Fatalf("workspace list output = %q", out.String())
 	}
 }
 
 func TestRootWorkspaceListDoesNotRequireCurrentWorkspace(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("WS_ROOT", "")
 	cwd := t.TempDir()
 	oldCWD, err := os.Getwd()
@@ -114,6 +103,7 @@ func TestRootWorkspaceListDoesNotRequireCurrentWorkspace(t *testing.T) {
 
 func TestExplorerDoesNotRequireCurrentWorkspace(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("WS_ROOT", "")
 	cwd := t.TempDir()
 	oldCWD, err := os.Getwd()

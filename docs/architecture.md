@@ -10,8 +10,9 @@ The same projects, branches, and works-in-progress should be available on
 every machine the user touches without hidden repository mutation. The
 core invariants are:
 
-1. A workspace has one git-synced project registry.
-2. Each machine separately records which workspace roots it can explore.
+1. `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for named local
+   workspace registries.
+2. `workspace.toml` is used only for explicit import and export.
 3. Synchronization runs only through an explicit foreground `ws sync`.
 4. Project branches are never pushed to origin by sync.
 5. Project updates are non-destructive: clean main worktrees may
@@ -22,27 +23,24 @@ core invariants are:
 
 ## Configuration Boundaries
 
-`workspace.toml` at each workspace root is the shared source of truth for
-projects, groups, aliases, explorer preferences, mirrors, and branch
-metadata. It is committed through the workspace's own git repository.
-`ws sync` installs `workspace.toml merge=union` in that repository's
-`.gitattributes`, allowing concurrent additions on different machines to
-merge cleanly in the common case.
+`$XDG_STATE_HOME/ws/registry.db` stores named workspaces, canonical roots,
+projects, groups, aliases, explorer preferences, mirrors, and branch metadata.
+Paths in each registry are relative to that workspace's root. `workspace.toml`
+is accepted by `ws workspace import` and emitted by `ws workspace export`;
+normal commands do not use it as runtime state, and `ws sync` does not Git-sync
+it.
 
 `~/.config/ws/config.toml` is machine-local. It contains the machine name
-used for branch attribution and canonical workspace roots used by the
-explorer:
+used for branch attribution:
 
 ```toml
 machine_name = "linux"
-workspace_roots = ["/home/user/dev", "/home/user/work"]
 ```
 
-`ws workspace add/rm/list` is the supported writer for
-`workspace_roots`. Roots are canonicalized, sorted, and deduplicated.
-They do not schedule sync. Loading machine config performs a one-time
-migration of roots from the removed legacy `daemon.toml`, then deletes
-that legacy file after the new config saves successfully.
+`ws workspace create/import/export/list` manages SQLite workspaces. Workspace
+names are unique, roots are canonical, and commands select the longest
+path-boundary-safe root containing the current directory unless `--root`
+selects an exact root. Explorer reads all workspaces from SQLite.
 
 ## Project Model
 
@@ -115,8 +113,6 @@ Selection (interactive and run-only, or strict all-target headless)
 Runner.RunContext (frozen plan, sequential mutation)
       |
       +-> origin conversions
-      +-> workspace registry sync
-      +-> config reload + validation
       +-> project origin/fetch/mirrors/worktrees/orphans
       +-> metadata save + Report/Event stream
 ```
@@ -125,13 +121,12 @@ Runner.RunContext (frozen plan, sequential mutation)
 
 `BuildPlan` snapshots every active project's sync-relevant fields and
 classifies local layout as `present`, `missing`, `needs-migration`, or
-`blocked`. Targets include the workspace repository origin when one is
-configured, project origins, and project mirrors. Exact URL matches are
-deduplicated into endpoints, then grouped by source identity.
+`blocked`. Targets include project origins and project mirrors. Exact URL
+matches are deduplicated into endpoints, then grouped by source identity.
 
-The snapshot is a safety boundary. Execution reloads `workspace.toml` and
-skips a project with `plan-changed` if its remote, path, status, default
-branch, or mirrors differ from preflight. Projects introduced after
+The snapshot is a safety boundary. Execution compares the current SQLite
+registry and skips a project with `plan-changed` if its remote, path, status,
+default branch, or mirrors differ from preflight. Projects introduced after
 preflight are also skipped.
 
 ### Probe
@@ -159,10 +154,10 @@ failure produces no mutation.
 ### Runner
 
 `Runner.RunContext` first refuses to race a live command sidecar. It then
-applies selected origin conversions, synchronizes the workspace registry,
-reloads and validates config, and processes planned projects in sorted
-order. Events report operation starts and outcomes to either the TUI or
-plain text renderer.
+applies selected project-origin conversions and processes planned projects in
+sorted order. A conversion updates the repository origin and SQLite registry;
+failed registry saves roll the repository origin back. Events report operation
+starts and outcomes to either the TUI or plain text renderer.
 
 Project processing repairs the fetch refspec when needed, fetches origin,
 pushes selected mirrors, examines worktrees, fast-forwards eligible main
@@ -176,18 +171,12 @@ failed, skipped, conflict, conversion, and cancellation results.
 
 See [Sync](sync.md) for the user-facing flow and exit codes.
 
-## Registry Sync
+## Registry Storage
 
-The workspace registry may be a regular file or a symlink. Sync resolves
-the real file, finds its owning git repository, and no-ops when that
-repository has no origin or upstream.
-
-With an upstream, sync fetches first, commits local `workspace.toml`
-changes under `ws: auto-sync workspace.toml from <machine>`, rebases when
-behind, validates the registry, and pushes. It may amend the immediately
-preceding matching auto-sync commit to coalesce local registry edits. This
-history manipulation occurs only in the workspace repository, never in a
-project repository.
+SQLite is the only runtime registry authority. `ws workspace import` creates a
+named local workspace from TOML interchange data, and `ws workspace export`
+emits TOML. Project Git sync neither transfers registry data nor treats TOML as
+a fallback.
 
 ## Branch Metadata
 
@@ -259,17 +248,16 @@ mocks. `internal/testutil/gitfixture.go` provides fake remotes, plain
 checkouts, deterministic git execution, dirty state, and stash helpers.
 
 Important sync coverage lives in `internal/sync/*_test.go`; CLI preflight,
-TUI, and headless behavior lives in `internal/cli/sync_*_test.go`; machine
-workspace registry coverage lives in `internal/config/machine_test.go` and
-`internal/agent/workspaces_test.go`. CI runs
+TUI, and headless behavior lives in `internal/cli/sync_*_test.go`; SQLite
+registry and multi-workspace coverage lives in `internal/registry/*_test.go`,
+`internal/cli/workspace_*_test.go`, and `internal/agent/*_test.go`. CI runs
 `go test -race -timeout 5m ./...`.
 
 ## Runtime Files
 
-- `<wsRoot>/workspace.toml`: shared workspace registry.
-- `<wsRoot>/.gitattributes`: union merge rule installed by explicit sync.
-- `~/.config/ws/config.toml`: `machine_name` and machine-local
-  `workspace_roots`.
+- `$XDG_STATE_HOME/ws/registry.db`: authoritative runtime workspace registry.
+- `workspace.toml`: optional import/export interchange data.
+- `~/.config/ws/config.toml`: machine-local settings such as `machine_name`.
 - `~/.config/ws/token`: GitHub token used by `ws auth`.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars.

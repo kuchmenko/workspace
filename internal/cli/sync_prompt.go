@@ -62,15 +62,6 @@ func dispatchPromptChoice(choice string, actions []promptAction) (bool, error) {
 	return false, nil
 }
 
-func resolveTOMLConflict(c conflict.Conflict) (bool, error) {
-	return runPromptLoop([]promptAction{
-		{"s", "open shell in workspace repo — fix manually, exit shell to return",
-			func() (bool, error) { return shellAndConfirm(c.Workspace) }},
-		{"d", "show git status",
-			func() (bool, error) { return false, runInTerm(c.Workspace, "git", "status") }},
-	}, "k", "")
-}
-
 func shellAndConfirm(dir string) (bool, error) {
 	if err := openShell(dir); err != nil {
 		return false, err
@@ -118,7 +109,7 @@ func findWorktreePath(workspace, project, branch string) (string, error) {
 	}
 	proj, ok := ws.Projects[project]
 	if !ok {
-		return "", fmt.Errorf("project %s not in workspace.toml", project)
+		return "", fmt.Errorf("project %s not in workspace registry", project)
 	}
 	mainPath := workspace + string(os.PathSeparator) + proj.Path
 	if branch == "" {

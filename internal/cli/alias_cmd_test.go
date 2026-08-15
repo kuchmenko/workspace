@@ -52,18 +52,10 @@ func setAliasTestWorkspace(t *testing.T, aliases map[string]string) {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	wsRoot = root
-	ws = &config.Workspace{
+	setTestRegistryWorkspace(t, root, &config.Workspace{
 		Meta:     config.Meta{Version: 1, Root: root},
 		Projects: map[string]config.Project{"project": {}, "other": {}},
 		Groups:   map[string]config.Group{},
 		Aliases:  aliases,
-	}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		wsRoot = ""
-		ws = nil
 	})
 }

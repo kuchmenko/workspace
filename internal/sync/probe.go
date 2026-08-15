@@ -190,7 +190,7 @@ enqueue:
 func endpointHasOrigin(plan Plan, endpoint Endpoint) bool {
 	for _, targetID := range endpoint.TargetIDs {
 		for _, target := range plan.Targets {
-			if target.ID == targetID && (target.Role == TargetWorkspaceOrigin || target.Role == TargetProjectOrigin) {
+			if target.ID == targetID && target.Role == TargetProjectOrigin {
 				return true
 			}
 		}

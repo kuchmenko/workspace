@@ -20,22 +20,16 @@ func EditProjectMetadata(wsRoot, projID, group string, category config.Category)
 		return fmt.Errorf("category must be %q or %q", config.CategoryPersonal, config.CategoryWork)
 	}
 
-	ws, err := config.Load(wsRoot)
-	if err != nil {
-		return fmt.Errorf("load workspace.toml: %w", err)
-	}
-	proj, ok := ws.Projects[projID]
-	if !ok {
-		return fmt.Errorf("project %q not found in workspace.toml", projID)
-	}
-	proj.Group = strings.TrimSpace(group)
-	proj.Category = category
-	ws.Projects[projID] = proj
-
-	if err := config.Save(wsRoot, ws); err != nil {
-		return fmt.Errorf("save workspace.toml: %w", err)
-	}
-	return nil
+	return mutateRegistryWorkspace(wsRoot, func(workspace *config.Workspace) error {
+		project, ok := workspace.Projects[projID]
+		if !ok {
+			return fmt.Errorf("project %q not found in workspace registry", projID)
+		}
+		project.Group = strings.TrimSpace(group)
+		project.Category = category
+		workspace.Projects[projID] = project
+		return nil
+	})
 }
 
 func existingGroups(workspaces []WorkspaceData) []string {

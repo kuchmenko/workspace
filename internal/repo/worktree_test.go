@@ -40,7 +40,33 @@ func setupWorktreeProject(t *testing.T, defaultBranch string) (string, string, s
 }
 
 func addOptions(root, branch string) WorktreeAddOptions {
-	return WorktreeAddOptions{WorkspaceRoot: root, Project: "app", Branch: branch, Machine: "linux"}
+	workspace, err := config.Load(root)
+	if err != nil {
+		panic(err)
+	}
+	return WorktreeAddOptions{
+		WorkspaceRoot: root,
+		Workspace:     workspace,
+		Save:          func(state *config.Workspace) error { return config.Save(root, state) },
+		Project:       "app",
+		Branch:        branch,
+		Machine:       "linux",
+	}
+}
+
+func removeOptions(root, branch string) WorktreeRemoveOptions {
+	workspace, err := config.Load(root)
+	if err != nil {
+		panic(err)
+	}
+	return WorktreeRemoveOptions{
+		WorkspaceRoot: root,
+		Workspace:     workspace,
+		Save:          func(state *config.Workspace) error { return config.Save(root, state) },
+		Project:       "app",
+		Branch:        branch,
+		Machine:       "linux",
+	}
 }
 
 func TestValidateWorktreeBranch(t *testing.T) {
@@ -167,7 +193,7 @@ func TestRemoveWorktreeRejectsDirty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(result.Path, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/dirty", Machine: "linux"})
+	_, err = RemoveWorktree(removeOptions(root, "feat/dirty"))
 	if err == nil || !strings.Contains(err.Error(), "is dirty") {
 		t.Fatalf("error = %v", err)
 	}
@@ -188,7 +214,7 @@ func TestRemoveWorktreeRejectsAhead(t *testing.T) {
 	}
 	testutil.RunGit(t, result.Path, "add", "ahead.txt")
 	testutil.RunGit(t, result.Path, "commit", "-m", "ahead")
-	_, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/ahead", Machine: "linux"})
+	_, err = RemoveWorktree(removeOptions(root, "feat/ahead"))
 	if err == nil || !strings.Contains(err.Error(), "unpushed commits") {
 		t.Fatalf("error = %v", err)
 	}
@@ -203,7 +229,9 @@ func TestRemoveWorktreeForceReleasesRegistry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(result.Path, "dirty.txt"), []byte("dirty"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	removeResult, err := RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/force", Machine: "linux", Force: true})
+	options := removeOptions(root, "feat/force")
+	options.Force = true
+	removeResult, err := RemoveWorktree(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,8 +267,9 @@ func TestRemoveWorktreeRetryReleasesMetadataAfterSaveFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	result, err := RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/retry", Machine: "linux"})
-	if err == nil || !strings.Contains(err.Error(), "worktree removed but workspace.toml ownership release failed") {
+	options := removeOptions(root, "feat/retry")
+	result, err := RemoveWorktree(options)
+	if err == nil || !strings.Contains(err.Error(), "worktree removed but registry ownership release failed") {
 		t.Fatalf("error = %v", err)
 	}
 	if !result.Removed || result.MetadataReleased {
@@ -255,7 +284,7 @@ func TestRemoveWorktreeRetryReleasesMetadataAfterSaveFailure(t *testing.T) {
 	if err := os.Rename(tomlBackup, tomlPath); err != nil {
 		t.Fatal(err)
 	}
-	result, err = RemoveWorktree(WorktreeRemoveOptions{WorkspaceRoot: root, Project: "app", Branch: "feat/retry", Machine: "linux"})
+	result, err = RemoveWorktree(removeOptions(root, "feat/retry"))
 	if err != nil {
 		t.Fatal(err)
 	}

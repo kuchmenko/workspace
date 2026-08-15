@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -31,9 +30,7 @@ func writeTestWorkspace(t *testing.T) string {
 		},
 		Groups: map[string]config.Group{},
 	}
-	if err := config.Save(root, ws); err != nil {
-		t.Fatalf("seed Save: %v", err)
-	}
+	saveRegistryFixture(t, root, ws)
 	return root
 }
 
@@ -44,10 +41,7 @@ func TestEditProjectMetadata_SetsGroupAndCategory(t *testing.T) {
 		t.Fatalf("EditProjectMetadata: %v", err)
 	}
 
-	got, err := config.Load(root)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
+	got := loadRegistryFixture(t, root)
 	p := got.Projects["alpha"]
 	if p.Group != "personal" {
 		t.Errorf("group = %q, want %q", p.Group, "personal")
@@ -64,10 +58,7 @@ func TestEditProjectMetadata_ClearsGroup(t *testing.T) {
 		t.Fatalf("EditProjectMetadata: %v", err)
 	}
 
-	got, err := config.Load(root)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
+	got := loadRegistryFixture(t, root)
 	if g := got.Projects["beta"].Group; g != "" {
 		t.Errorf("group = %q, want empty", g)
 	}
@@ -104,17 +95,10 @@ func TestEditProjectMetadata_PreservesOtherProjects(t *testing.T) {
 		t.Fatalf("edit: %v", err)
 	}
 
-	got, err := config.Load(root)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
+	got := loadRegistryFixture(t, root)
 	beta := got.Projects["beta"]
 	if beta.Group != "org" || beta.Category != config.CategoryWork {
 		t.Errorf("beta mutated: group=%q category=%q", beta.Group, beta.Category)
-	}
-	// Confirm the on-disk file is the workspace.toml (sanity check).
-	if _, err := filepath.Abs(filepath.Join(root, "workspace.toml")); err != nil {
-		t.Fatalf("abs path: %v", err)
 	}
 }
 

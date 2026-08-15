@@ -11,6 +11,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/registry"
 	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
@@ -32,29 +33,16 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 			},
 		},
 	}
-	if err := config.Save(root, workspace); err != nil {
-		t.Fatal(err)
-	}
-	before, err := os.ReadFile(filepath.Join(root, "workspace.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	registerSyncTestWorkspace(t, root, workspace)
 	plan := workspacesync.BuildPlan(root, workspace)
 	var stdout, stderr bytes.Buffer
-	err = runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
+	err := runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != syncExitFailed {
 		t.Fatalf("error = %v, want exit %d", err, syncExitFailed)
 	}
 	if _, err := os.Stat(filepath.Join(root, "personal/app")); !os.IsNotExist(err) {
 		t.Fatalf("project path was mutated: %v", err)
-	}
-	after, err := os.ReadFile(filepath.Join(root, "workspace.toml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) {
-		t.Fatal("workspace.toml changed after failed preflight")
 	}
 	output := stdout.String() + stderr.String()
 	if strings.Contains(output, "\x1b[") {
@@ -67,11 +55,8 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 
 func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	workspaceRemote := testutil.InitFakeRemote(t, "workspace", "main")
 	projectRemote := testutil.InitFakeRemote(t, "app", "main")
-	parent := t.TempDir()
-	root := filepath.Join(parent, "workspace")
-	testutil.RunGit(t, parent, "clone", workspaceRemote, root)
+	root := t.TempDir()
 	workspace := &config.Workspace{
 		Groups:  map[string]config.Group{},
 		Aliases: map[string]string{},
@@ -85,9 +70,7 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 			},
 		},
 	}
-	if err := config.Save(root, workspace); err != nil {
-		t.Fatal(err)
-	}
+	registerSyncTestWorkspace(t, root, workspace)
 	plan := workspacesync.BuildPlan(root, workspace)
 	var stdout, stderr bytes.Buffer
 	if err := runSyncHeadless(context.Background(), root, plan, &stdout, &stderr); err != nil {
@@ -103,9 +86,23 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	if strings.Contains(stdout.String()+stderr.String(), "\x1b[") {
 		t.Fatal("headless output contains ANSI")
 	}
-	if !strings.Contains(stdout.String(), "start: workspace-sync") || !strings.Contains(stdout.String(), "start: project-sync app") {
+	if strings.Contains(stdout.String(), "start: workspace-sync") || !strings.Contains(stdout.String(), "start: project-sync app") {
 		t.Fatalf("missing execution progress:\n%s", stdout.String())
 	}
+}
+
+func registerSyncTestWorkspace(t *testing.T, root string, workspace *config.Workspace) {
+	t.Helper()
+	workspace.Meta.Version = 1
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(context.Background(), filepath.Base(root), root, workspace); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
 }
 
 func TestClassifySyncReport(t *testing.T) {

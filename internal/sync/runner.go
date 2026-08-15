@@ -3,21 +3,22 @@ package sync
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"maps"
 	"slices"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
-	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
 type Runner struct {
-	root   string
-	logger *log.Logger
-	store  *conflict.Store
+	root      string
+	logger    *log.Logger
+	store     *conflict.Store
+	registry  *registry.Store
+	workspace registry.Workspace
 }
 
 func NewRunner(root string, logger *log.Logger) *Runner {
@@ -41,35 +42,22 @@ func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent fu
 		r.cancelReport(&report, err, onEvent)
 		return report
 	}
-	ws, err := config.Load(r.root)
+	local, err := registry.OpenDefault()
 	if err != nil {
 		r.addWorkspaceFailure(&report, "load", err, onEvent)
 		return report
 	}
-	if err := frozenWorkspaceBranch(selection.plan); err != nil {
-		r.addWorkspaceFailure(&report, "workspace-sync", err, onEvent)
-		return report
-	}
-	converted := r.applyWorkspaceConversion(ctx, &selection, &report, onEvent)
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	for targetID, candidate := range r.applyProjectConversions(ctx, &selection, ws, &report, onEvent) {
-		converted[targetID] = candidate
-	}
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	r.syncSelectedWorkspace(ctx, selection, &report, onEvent)
-	if ctx.Err() != nil {
-		r.cancelReport(&report, ctx.Err(), onEvent)
-		return report
-	}
-	ws, err = config.Load(r.root)
+	defer func() { _ = local.Close() }()
+	r.workspace, err = local.LoadByRoot(ctx, r.root)
 	if err != nil {
-		r.addWorkspaceFailure(&report, "reload", err, onEvent)
+		r.addWorkspaceFailure(&report, "load", err, onEvent)
+		return report
+	}
+	r.registry = local
+	ws := r.workspace.State
+	converted := r.applyProjectConversions(ctx, &selection, ws, &report, onEvent)
+	if ctx.Err() != nil {
+		r.cancelReport(&report, ctx.Err(), onEvent)
 		return report
 	}
 	r.recordValidationIssues(ws, &report, onEvent)
@@ -77,56 +65,12 @@ func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent fu
 	return report
 }
 
-func frozenWorkspaceBranch(plan Plan) error {
-	if plan.WorkspaceRepository == "" {
-		return nil
+func (r *Runner) saveRegistry(workspace *config.Workspace) error {
+	updated, err := r.registry.Update(context.Background(), r.workspace.Name, r.workspace.Revision, workspace)
+	if err == nil {
+		r.workspace = updated
 	}
-	branch, err := git.CurrentBranch(plan.WorkspaceRepository)
-	if err != nil {
-		return nil
-	}
-	if branch != plan.WorkspaceBranch {
-		return fmt.Errorf("workspace branch changed after preflight: got %q, want %q", branch, plan.WorkspaceBranch)
-	}
-	return nil
-}
-
-func (r *Runner) syncSelectedWorkspace(ctx context.Context, selection Selection, report *Report, onEvent func(Event)) {
-	if selection.plan.WorkspaceTargetID == "" {
-		result := OperationResult{Status: ResultSkipped, Operation: "workspace-sync", Reason: SkipState, Diagnostic: "workspace origin was not planned"}
-		report.Workspace = append(report.Workspace, result)
-		report.add(Event{Kind: EventSkipped, Status: ResultSkipped, Operation: result.Operation, Reason: result.Reason, Diagnostic: result.Diagnostic}, onEvent)
-		return
-	}
-	if !selection.TargetSelected(selection.plan.WorkspaceTargetID) {
-		result := OperationResult{Status: ResultSkipped, Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID, Reason: SkipExcluded}
-		report.Workspace = append(report.Workspace, result)
-		report.add(Event{Kind: EventSkipped, Status: ResultSkipped, Operation: result.Operation, TargetID: result.TargetID, Reason: result.Reason}, onEvent)
-		return
-	}
-	report.start(Event{Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID}, onEvent)
-	target, _ := selection.target(selection.plan.WorkspaceTargetID)
-	expectedURL := target.ConfigURL
-	remoteURL := target.URL
-	if candidate, converted := selection.Conversion(target.ID); converted {
-		expectedURL = candidate
-		remoteURL = candidate
-	}
-	_, err := r.syncTOMLContext(ctx, selection.plan.WorkspaceRepository, expectedURL, remoteURL, selection.plan.WorkspaceBranch)
-	status := ResultSuccess
-	reason := SkipReason("")
-	diagnostic := ""
-	if err != nil {
-		status = ResultFailed
-		if ctx.Err() != nil {
-			status = ResultCanceled
-			reason = SkipCanceled
-		}
-		diagnostic = err.Error()
-	}
-	result := OperationResult{Status: status, Operation: "workspace-sync", TargetID: selection.plan.WorkspaceTargetID, Reason: reason, Diagnostic: diagnostic}
-	report.Workspace = append(report.Workspace, result)
-	report.add(Event{Kind: EventWorkspace, Status: status, Operation: result.Operation, TargetID: result.TargetID, Reason: reason, Diagnostic: diagnostic}, onEvent)
+	return err
 }
 
 func (r *Runner) runSelectedProjects(ctx context.Context, selection Selection, converted map[string]string, ws *config.Workspace, report *Report, onEvent func(Event)) {
@@ -150,7 +94,7 @@ func (r *Runner) runSelectedProjects(ctx context.Context, selection Selection, c
 		}
 	}
 	if dirty {
-		if err := config.Save(r.root, ws); err != nil {
+		if err := r.saveRegistry(ws); err != nil {
 			r.addWorkspaceFailure(report, "save-metadata", err, onEvent)
 		}
 	}
@@ -173,7 +117,7 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 		planned.OriginURL = remote
 	}
 	if !ok || !snapshotMatches(expected, project) {
-		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace.toml changed after preflight", onEvent)
+		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace registry changed after preflight", onEvent)
 		return false, false
 	}
 	touched := false
