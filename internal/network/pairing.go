@@ -45,10 +45,18 @@ type PairResult struct {
 }
 
 type joinRequest struct {
-	Version   int    `json:"version"`
-	Code      string `json:"code"`
-	Name      string `json:"name"`
-	Confirmed bool   `json:"confirmed"`
+	Version int    `json:"version"`
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+}
+
+type pairChallenge struct {
+	Accepted bool   `json:"accepted"`
+	Error    string `json:"error,omitempty"`
+}
+
+type joinConfirmation struct {
+	Confirmed bool `json:"confirmed"`
 }
 
 type pairResponse struct {
@@ -134,12 +142,11 @@ func acceptPairConnection(ctx context.Context, connection net.Conn, code string,
 		return PairResult{}, true, err
 	}
 	if request.Version != 1 || request.Code != code {
-		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "pairing code is invalid"})
+		_ = json.NewEncoder(connection).Encode(pairChallenge{Error: "pairing code is invalid"})
 		return PairResult{}, true, errors.New("pairing code is invalid")
 	}
-	if !request.Confirmed {
-		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "joining device did not confirm pairing"})
-		return PairResult{}, false, errors.New("joining device did not confirm pairing")
+	if err = json.NewEncoder(connection).Encode(pairChallenge{Accepted: true}); err != nil {
+		return PairResult{}, false, err
 	}
 	peerName := request.Name
 	if peerName == "" {
@@ -153,6 +160,14 @@ func acceptPairConnection(ctx context.Context, connection net.Conn, code string,
 	if !confirmed {
 		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "pairing rejected"})
 		return PairResult{}, false, errors.New("pairing rejected")
+	}
+	var peerConfirmation joinConfirmation
+	if err = json.NewDecoder(connection).Decode(&peerConfirmation); err != nil {
+		return PairResult{}, false, err
+	}
+	if !peerConfirmation.Confirmed {
+		_ = json.NewEncoder(connection).Encode(pairResponse{Error: "joining device did not confirm pairing"})
+		return PairResult{}, false, errors.New("joining device did not confirm pairing")
 	}
 	state, err := options.Store.AddNetworkDevice(ctx, peerName, peerKey, options.Role)
 	if err != nil {
@@ -212,11 +227,21 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	authentication := authenticationString(options.Identity.PublicKey(), peerKey)
+	if err = json.NewEncoder(connection).Encode(joinRequest{Version: 1, Code: options.Code, Name: options.Name}); err != nil {
+		return PairResult{}, err
+	}
+	var challenge pairChallenge
+	if err = json.NewDecoder(connection).Decode(&challenge); err != nil {
+		return PairResult{}, err
+	}
+	if !challenge.Accepted {
+		return PairResult{}, fmt.Errorf("pairing failed: %s", challenge.Error)
+	}
 	confirmed, err := options.Confirm(peerName, authentication)
 	if err != nil {
 		return PairResult{}, err
 	}
-	if err = json.NewEncoder(connection).Encode(joinRequest{Version: 1, Code: options.Code, Name: options.Name, Confirmed: confirmed}); err != nil {
+	if err = json.NewEncoder(connection).Encode(joinConfirmation{Confirmed: confirmed}); err != nil {
 		return PairResult{}, err
 	}
 	var response pairResponse

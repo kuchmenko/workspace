@@ -29,6 +29,8 @@ func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 	ready := make(chan pairReady, 1)
 	serverOutcome := make(chan pairOutcome, 1)
 	serverAuth := make(chan string, 1)
+	serverConfirming := make(chan struct{})
+	clientConfirming := make(chan struct{})
 	go func() {
 		result, err := Pair(ctx, PairOptions{
 			Store:            archStore,
@@ -43,6 +45,12 @@ func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 					t.Errorf("server peer name = %q", peerName)
 				}
 				serverAuth <- authentication
+				close(serverConfirming)
+				select {
+				case <-clientConfirming:
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
 				return true, nil
 			},
 		})
@@ -60,6 +68,12 @@ func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 				t.Errorf("client peer name = %q", peerName)
 			}
 			clientAuth = authentication
+			close(clientConfirming)
+			select {
+			case <-serverConfirming:
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
 			return true, nil
 		},
 	})
