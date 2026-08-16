@@ -335,6 +335,13 @@ CREATE TABLE revision_proofs(revision_id TEXT NOT NULL,device_id TEXT NOT NULL,p
 	if workspace.Head == head || policy.Mode != AccessLocal || policy.Roles[identity.ID()] != WorkspaceAdmin {
 		t.Fatalf("migrated workspace=%#v policy=%#v", workspace, policy)
 	}
+	bundle, err := store.Export(context.Background(), "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.Integrate(context.Background(), "shared", bundle); err != nil {
+		t.Fatalf("integrate migrated history: %v", err)
+	}
 }
 
 func TestIntegrateRejectsTamperedRevision(t *testing.T) {

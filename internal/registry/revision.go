@@ -181,6 +181,9 @@ func verifyStoredRevision(tx *sql.Tx, revision Revision, conflicts, access []byt
 	if err := tx.QueryRow(`SELECT workspace_id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE id=?`, revision.ID).Scan(&workspaceID, &epoch, &kind, &snapshot, &storedConflicts, &storedAccess); err != nil {
 		return err
 	}
+	if storedAccess == nil {
+		storedAccess = []byte("null")
+	}
 	if workspaceID != revision.WorkspaceID || epoch != revision.Epoch || kind != revision.Kind || string(snapshot) != string(revision.Snapshot) || string(storedConflicts) != string(conflicts) || string(storedAccess) != string(access) {
 		return errors.New("revision ID collision")
 	}
