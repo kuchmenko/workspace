@@ -20,6 +20,13 @@ func newWorkspaceCmd() *cobra.Command {
 		newWorkspaceListCmd(),
 		newWorkspaceImportCmd(),
 		newWorkspaceExportCmd(),
+		newWorkspaceShareCmd(),
+		newWorkspaceAccessCmd(),
+		newWorkspaceAvailableCmd(),
+		newWorkspaceAttachCmd(),
+		newWorkspaceSyncCmd(),
+		newWorkspaceConflictsCmd(),
+		newWorkspaceResolveCmd(),
 	)
 	return cmd
 }

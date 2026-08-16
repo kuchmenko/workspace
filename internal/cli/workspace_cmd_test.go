@@ -2,10 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/device"
+	peernetwork "github.com/kuchmenko/workspace/internal/network"
+	"github.com/kuchmenko/workspace/internal/registry"
+	"github.com/spf13/cobra"
 )
 
 func TestWorkspaceCommandsCreateAndList(t *testing.T) {
@@ -35,6 +42,170 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\n") {
 		t.Fatalf("workspace list output = %q", got)
+	}
+}
+
+func TestWorkspaceShareAndAccessCommands(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err = store.EnsureNetwork(ctx, "arch"); err != nil {
+		t.Fatal(err)
+	}
+	peer, err := device.Load(filepath.Join(directory, "peer.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AddNetworkDevice(ctx, "asahi", peer.PublicKey(), registry.NetworkMember); err != nil {
+		t.Fatal(err)
+	}
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}
+	if _, err = store.Create(ctx, "personal", t.TempDir(), state); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	command := newWorkspaceCmd()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"share", "personal", "--with", "all", "--role", "writer"})
+	if err = command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "workspace=personal mode=all epoch=1") {
+		t.Fatalf("share output = %q", output.String())
+	}
+	output.Reset()
+	command = newWorkspaceCmd()
+	command.SetOut(&output)
+	command.SetArgs([]string{"access", "personal"})
+	if err = command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "all\twriter") || !strings.Contains(output.String(), "arch\tadmin") {
+		t.Fatalf("access output = %q", output.String())
+	}
+}
+
+func TestWorkspaceNetworkCommandSelectionAndOutput(t *testing.T) {
+	available := []peernetwork.AvailableWorkspace{
+		{WorkspaceSummary: registry.WorkspaceSummary{WorkspaceID: "alpha-id", Name: "personal"}, DeviceName: "arch"},
+		{WorkspaceSummary: registry.WorkspaceSummary{WorkspaceID: "beta-id", Name: "work"}, DeviceName: "asahi"},
+	}
+	selected, err := selectAvailableWorkspace(available, "alpha")
+	if err != nil || selected.Name != "personal" {
+		t.Fatalf("selected=%#v error=%v", selected, err)
+	}
+	if _, err = selectAvailableWorkspace(available, "missing"); err == nil {
+		t.Fatal("missing workspace was selected")
+	}
+	results := []peernetwork.SyncResult{
+		{Workspace: "personal", Device: "arch", Status: "pulled"},
+		{Workspace: "personal", Device: "lxc", Status: "unavailable"},
+	}
+	command := &cobra.Command{}
+	var output bytes.Buffer
+	command.SetOut(&output)
+	if err = writeWorkspaceSyncResults(command, results, false); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "personal\tarch\tpulled\npersonal\tlxc\tunavailable\n" {
+		t.Fatalf("sync output = %q", output.String())
+	}
+	output.Reset()
+	if err = writeWorkspaceSyncResults(command, results, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"status": "pulled"`) || !strings.Contains(output.String(), `"status": "unavailable"`) {
+		t.Fatalf("sync JSON = %q", output.String())
+	}
+}
+
+func TestWorkspaceConflictCommandsListAndResolve(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
+	ctx := context.Background()
+	left, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{"editor": "vim"}}
+	if _, err = left.Create(ctx, "personal", leftRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := left.Export(ctx, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := registry.Open(filepath.Join(directory, "right", "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Attach(ctx, "personal", rightRoot, initial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.Mutate(ctx, leftRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["editor"] = "helix"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["editor"] = "nano"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rightBundle, err := right.Export(ctx, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, conflicts, integrateErr := left.Integrate(ctx, "personal", rightBundle); integrateErr != nil || len(conflicts) != 1 {
+		t.Fatalf("conflicts=%#v error=%v", conflicts, integrateErr)
+	}
+	if err = right.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = left.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	command := newWorkspaceCmd()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"conflicts", "personal"})
+	if err = command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := output.String(); !strings.Contains(got, "/aliases/editor") || !strings.Contains(got, `base="vim"`) || !strings.Contains(got, `"helix"`) || !strings.Contains(got, `"nano"`) {
+		t.Fatalf("conflict output = %q", got)
+	}
+	output.Reset()
+	command = newWorkspaceCmd()
+	command.SetOut(&output)
+	command.SetArgs([]string{"resolve", "personal", "/aliases/editor", "--value", `"zed"`})
+	if err = command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	resolvedStore, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resolvedStore.Close() }()
+	resolved, err := resolvedStore.LoadByName(ctx, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining, err := resolvedStore.Conflicts(ctx, "personal")
+	if err != nil || len(remaining) != 0 || resolved.State.Aliases["editor"] != "zed" {
+		t.Fatalf("resolved=%#v conflicts=%#v error=%v", resolved.State.Aliases, remaining, err)
 	}
 }
 
