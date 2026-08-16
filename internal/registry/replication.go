@@ -21,105 +21,260 @@ func (store *Store) Export(ctx context.Context, name string) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: []string{workspace.Head}, Revisions: revisions}, nil
+	heads, err := store.loadHeads(ctx, workspace.WorkspaceID)
+	if err != nil {
+		return Bundle{}, err
+	}
+	return Bundle{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: revisions}, nil
 }
 
 func (store *Store) Attach(ctx context.Context, name, root string, bundle Bundle) (Workspace, error) {
+	return store.attach(ctx, name, root, bundle, "", false)
+}
+
+func (store *Store) AttachFrom(ctx context.Context, name, root string, bundle Bundle, sourceID string) (Workspace, error) {
+	return store.attach(ctx, name, root, bundle, sourceID, true)
+}
+
+func (store *Store) attach(ctx context.Context, name, root string, bundle Bundle, sourceID string, authorize bool) (Workspace, error) {
+	prepared, err := store.prepareAttachment(ctx, name, root, bundle, sourceID, authorize)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if err = store.persistAttachment(ctx, prepared, bundle); err != nil {
+		return Workspace{}, err
+	}
+	return store.LoadByName(ctx, prepared.name)
+}
+
+type attachment struct {
+	name, root, head string
+	heads            []string
+	body             []byte
+}
+
+func (store *Store) prepareAttachment(ctx context.Context, name, root string, bundle Bundle, sourceID string, authorize bool) (attachment, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Workspace{}, errors.New("workspace name is required")
+		return attachment{}, errors.New("workspace name is required")
 	}
 	canonical, err := canonicalRoot(root)
 	if err != nil {
-		return Workspace{}, err
+		return attachment{}, err
 	}
-	head, err := validateBundle(bundle)
+	heads, err := store.validateBundle(ctx, bundle, authorize)
 	if err != nil {
-		return Workspace{}, err
+		return attachment{}, err
+	}
+	if len(heads) != 1 {
+		return attachment{}, errors.New("cannot attach a workspace with unresolved divergent heads")
+	}
+	head := heads[0]
+	if authorize && !store.attachmentAuthorized(ctx, bundle, head, sourceID) {
+		return attachment{}, errors.New("local device or workspace source is not authorized")
 	}
 	state, err := stateAt(bundle.Revisions, head)
 	if err != nil {
-		return Workspace{}, err
+		return attachment{}, err
 	}
 	body, err := config.EncodeWorkspace(state)
 	if err != nil {
-		return Workspace{}, err
+		return attachment{}, err
 	}
+	return attachment{name: name, root: canonical, head: head, heads: heads, body: body}, nil
+}
+
+func (store *Store) attachmentAuthorized(ctx context.Context, bundle Bundle, head, sourceID string) bool {
+	active, err := store.activeNetworkDevices(ctx)
+	if err != nil {
+		return false
+	}
+	policy := revisionPolicy(bundle.Revisions, head)
+	return policy.Role(store.identity.ID(), active[store.identity.ID()]) != "" && policy.Role(sourceID, active[sourceID]) != ""
+}
+
+func (store *Store) persistAttachment(ctx context.Context, prepared attachment, bundle Bundle) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Workspace{}, err
+		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, revision := range bundle.Revisions {
 		if err = insertRevision(tx, revision); err != nil {
-			return Workspace{}, err
+			return err
 		}
 	}
 	if err = validateStoredParents(tx, bundle.WorkspaceID); err != nil {
-		return Workspace{}, err
+		return err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO workspaces(name,root,revision,registry) VALUES(?,?,1,?)`, name, canonical, body); err != nil {
-		return Workspace{}, fmt.Errorf("attach workspace: %w", err)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspaces(name,root,revision,registry) VALUES(?,?,1,?)`, prepared.name, prepared.root, prepared.body); err != nil {
+		return fmt.Errorf("attach workspace: %w", err)
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,?,?)`, name, bundle.WorkspaceID, bundle.Epoch, head); err != nil {
-		return Workspace{}, err
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,?,?)`, prepared.name, bundle.WorkspaceID, bundle.Epoch, prepared.head); err != nil {
+		return err
 	}
-	if err = replaceConflicts(ctx, tx, bundle.WorkspaceID, head, revisionConflicts(bundle.Revisions, head)); err != nil {
-		return Workspace{}, err
+	if err = replaceHeads(ctx, tx, bundle.WorkspaceID, prepared.heads); err != nil {
+		return err
 	}
-	if err = tx.Commit(); err != nil {
-		return Workspace{}, err
+	if err = replaceConflicts(ctx, tx, bundle.WorkspaceID, prepared.head, revisionConflicts(bundle.Revisions, prepared.head)); err != nil {
+		return err
 	}
-	return store.LoadByName(ctx, name)
+	return tx.Commit()
 }
 
 func (store *Store) Integrate(ctx context.Context, name string, bundle Bundle) (Workspace, []Conflict, error) {
-	remoteHead, err := validateBundle(bundle)
-	if err != nil {
-		return Workspace{}, nil, err
-	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Workspace{}, nil, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	var workspaceID, localHead, root string
-	var epoch, revisionNumber int64
-	if err = tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id,w.root,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=?`, name).Scan(&workspaceID, &epoch, &localHead, &root, &revisionNumber); err != nil {
-		return Workspace{}, nil, err
-	}
-	if workspaceID != bundle.WorkspaceID {
-		return Workspace{}, nil, errors.New("workspace ID does not match")
-	}
-	if epoch != bundle.Epoch {
-		return Workspace{}, nil, errors.New("workspace epoch does not match")
-	}
-	for _, incoming := range bundle.Revisions {
-		if err = insertRevision(tx, incoming); err != nil {
-			return Workspace{}, nil, err
-		}
-	}
-	if err = validateStoredParents(tx, workspaceID); err != nil {
-		return Workspace{}, nil, err
-	}
+	return store.integrate(ctx, name, bundle, "", false)
+}
 
-	head, state, conflicts, err := store.integrateHeads(tx, bundle, workspaceID, epoch, localHead, remoteHead)
+func (store *Store) IntegrateFrom(ctx context.Context, name string, bundle Bundle, sourceID string) (Workspace, []Conflict, error) {
+	return store.integrate(ctx, name, bundle, sourceID, true)
+}
+
+func (store *Store) integrate(ctx context.Context, name string, bundle Bundle, sourceID string, authorize bool) (Workspace, []Conflict, error) {
+	remoteHeads, err := store.validateBundle(ctx, bundle, authorize)
 	if err != nil {
 		return Workspace{}, nil, err
 	}
-	if state != nil {
-		if err = persistIntegration(ctx, tx, state, root, name, workspaceID, localHead, head, revisionNumber, conflicts); err != nil {
-			return Workspace{}, nil, err
-		}
+	active, err := store.integrationDevices(ctx, sourceID, authorize)
+	if err != nil {
+		return Workspace{}, nil, err
 	}
-	if err = tx.Commit(); err != nil {
+	conflicts, err := store.persistIncoming(ctx, name, bundle, sourceID, authorize, active, remoteHeads)
+	if err != nil {
 		return Workspace{}, nil, err
 	}
 	workspace, err := store.LoadByName(ctx, name)
 	return workspace, conflicts, err
 }
 
-func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace, root, name, workspaceID, localHead, head string, revisionNumber int64, conflicts []Conflict) error {
+func (store *Store) integrationDevices(ctx context.Context, sourceID string, authorize bool) (map[string]bool, error) {
+	if !authorize {
+		return map[string]bool{}, nil
+	}
+	active, err := store.activeNetworkDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID == "" || !active[sourceID] {
+		return nil, errors.New("workspace source is not an active network device")
+	}
+	return active, nil
+}
+
+func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, remoteHeads []string) ([]Conflict, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	base, policy, err := prepareIncoming(ctx, tx, name, bundle, sourceID, authorize, active)
+	if err != nil {
+		return nil, err
+	}
+	role := integrationRole(policy, store.identity.ID(), authorize, active)
+	head, state, conflicts, heads, err := store.integrateHeadSet(tx, bundle, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
+	if err != nil {
+		return nil, err
+	}
+	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
+		return nil, err
+	}
+	if err = commitIncoming(ctx, tx, base.workspaceID, heads); err != nil {
+		return nil, err
+	}
+	return conflicts, nil
+}
+
+func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool) (incomingBase, AccessPolicy, error) {
+	base, err := loadIncomingBase(ctx, tx, name)
+	if err != nil {
+		return base, AccessPolicy{}, err
+	}
+	if base.workspaceID != bundle.WorkspaceID {
+		return base, AccessPolicy{}, errors.New("workspace ID does not match")
+	}
+	policy, err := policyAtTx(tx, base.head)
+	if err != nil {
+		return base, policy, err
+	}
+	if err = acceptBundleEpoch(ctx, tx, bundle, sourceID, authorize, base.epoch); err != nil {
+		return base, policy, err
+	}
+	if err = requireAuthorizedSource(policy, sourceID, authorize, active); err != nil {
+		return base, policy, err
+	}
+	err = insertIncomingRevisions(tx, base.workspaceID, bundle.Revisions)
+	return base, policy, err
+}
+
+func requireAuthorizedSource(policy AccessPolicy, sourceID string, authorize bool, active map[string]bool) error {
+	if authorize && policy.Role(sourceID, active[sourceID]) == "" {
+		return errors.New("workspace source is not authorized")
+	}
+	return nil
+}
+
+func persistIncomingState(ctx context.Context, tx *sql.Tx, state *config.Workspace, base incomingBase, name, head string, epoch int64, conflicts []Conflict) error {
+	if state == nil {
+		return nil
+	}
+	return persistIntegration(ctx, tx, state, base.root, name, base.workspaceID, base.head, head, epoch, base.revision, conflicts)
+}
+
+func commitIncoming(ctx context.Context, tx *sql.Tx, workspaceID string, heads []string) error {
+	if err := replaceHeads(ctx, tx, workspaceID, heads); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type incomingBase struct {
+	workspaceID string
+	head        string
+	root        string
+	epoch       int64
+	revision    int64
+}
+
+func loadIncomingBase(ctx context.Context, tx *sql.Tx, name string) (incomingBase, error) {
+	var base incomingBase
+	err := tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id,w.root,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=?`, name).Scan(&base.workspaceID, &base.epoch, &base.head, &base.root, &base.revision)
+	return base, err
+}
+
+func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID string, authorize bool, localEpoch int64) error {
+	if bundle.Epoch >= localEpoch {
+		return nil
+	}
+	if !authorize {
+		return errors.New("workspace epoch is stale")
+	}
+	if err := quarantineBundle(ctx, tx, bundle, sourceID, "workspace epoch is stale"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return errors.New("workspace epoch is stale")
+}
+
+func integrationRole(policy AccessPolicy, localID string, authorize bool, active map[string]bool) string {
+	if authorize {
+		return policy.Role(localID, active[localID])
+	}
+	return policy.Role(localID, true)
+}
+
+func insertIncomingRevisions(tx *sql.Tx, workspaceID string, revisions []Revision) error {
+	for _, incoming := range revisions {
+		if err := insertRevision(tx, incoming); err != nil {
+			return err
+		}
+	}
+	return validateStoredParents(tx, workspaceID)
+}
+
+func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace, root, name, workspaceID, localHead, head string, epoch, revisionNumber int64, conflicts []Conflict) error {
 	state.RestoreRoot(root)
 	body, err := config.EncodeWorkspace(state)
 	if err != nil {
@@ -128,10 +283,44 @@ func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace
 	if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, head, name, localHead); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, head, name, localHead); err != nil {
 		return err
 	}
 	return replaceConflicts(ctx, tx, workspaceID, head, conflicts)
+}
+
+func (store *Store) integrateHeadSet(tx *sql.Tx, bundle Bundle, workspaceID string, epoch int64, localHead string, remoteHeads []string, role string) (string, *config.Workspace, []Conflict, []string, error) {
+	current := localHead
+	var state *config.Workspace
+	var conflicts []Conflict
+	for _, remoteHead := range remoteHeads {
+		if role == WorkspaceReplica {
+			continue
+		}
+		next, nextState, nextConflicts, err := store.integrateHeads(tx, bundle, workspaceID, epoch, current, remoteHead)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		current = next
+		if nextState != nil {
+			state, conflicts = nextState, nextConflicts
+		}
+	}
+	if role != WorkspaceReplica {
+		return current, state, conflicts, []string{current}, nil
+	}
+	heads, err := reduceHeads(tx, append(remoteHeads, localHead))
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	if len(heads) == 1 && heads[0] != localHead {
+		state, err = loadRevisionState(tx, heads[0])
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		return heads[0], state, revisionConflicts(bundle.Revisions, heads[0]), heads, nil
+	}
+	return localHead, nil, nil, heads, nil
 }
 
 func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
@@ -151,6 +340,17 @@ func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string
 }
 
 func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	leftPolicy, err := policyAtTx(tx, localHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	rightPolicy, err := policyAtTx(tx, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !equalPolicy(leftPolicy, rightPolicy) {
+		return "", nil, nil, errors.New("divergent workspace access policies require admin resolution")
+	}
 	base, found, err := commonAncestor(tx, localHead, remoteHead)
 	if err != nil {
 		return "", nil, nil, err
@@ -160,15 +360,7 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	}
 	parents := []string{localHead, remoteHead}
 	sort.Strings(parents)
-	baseBody, err := loadRevisionSnapshot(tx, base)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	leftBody, err := loadRevisionSnapshot(tx, parents[0])
-	if err != nil {
-		return "", nil, nil, err
-	}
-	rightBody, err := loadRevisionSnapshot(tx, parents[1])
+	baseBody, leftBody, rightBody, err := loadMergeSnapshots(tx, base, parents)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -176,7 +368,7 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	if err != nil {
 		return "", nil, nil, err
 	}
-	merged, err := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, conflicts, store.identity)
+	merged, err := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, conflicts, leftPolicy, store.identity)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -187,31 +379,29 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	return merged.ID, state, conflicts, err
 }
 
+func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []byte, []byte, error) {
+	baseBody, err := loadRevisionSnapshot(tx, base)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	leftBody, err := loadRevisionSnapshot(tx, parents[0])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	rightBody, err := loadRevisionSnapshot(tx, parents[1])
+	return baseBody, leftBody, rightBody, err
+}
+
 func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Revision, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
+	rows, err := store.db.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
-	var revisions []Revision
-	for rows.Next() {
-		var revision Revision
-		var conflicts []byte
-		revision.WorkspaceID = workspaceID
-		if err = rows.Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if err = json.Unmarshal(conflicts, &revision.Conflicts); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		revisions = append(revisions, revision)
+	revisions, err := scanRevisions(rows, workspaceID)
+	if closeErr := rows.Close(); err == nil {
+		err = closeErr
 	}
-	if err = rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	if err = rows.Close(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 	for index := range revisions {
@@ -225,6 +415,30 @@ func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Re
 		}
 	}
 	return revisions, nil
+}
+
+func scanRevisions(rows *sql.Rows, workspaceID string) ([]Revision, error) {
+	var revisions []Revision
+	for rows.Next() {
+		var revision Revision
+		var conflicts, access []byte
+		revision.WorkspaceID = workspaceID
+		if err := rows.Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts, &access); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(conflicts, &revision.Conflicts); err != nil {
+			return nil, err
+		}
+		if len(access) > 0 && string(access) != "null" {
+			var policy AccessPolicy
+			if err := json.Unmarshal(access, &policy); err != nil {
+				return nil, err
+			}
+			revision.Access = &policy
+		}
+		revisions = append(revisions, revision)
+	}
+	return revisions, rows.Err()
 }
 
 func (store *Store) loadParents(ctx context.Context, revisionID string) ([]string, error) {
@@ -259,156 +473,4 @@ func (store *Store) loadProofs(ctx context.Context, revisionID string) ([]Proof,
 		proofs = append(proofs, proof)
 	}
 	return proofs, rows.Err()
-}
-
-func validateBundle(bundle Bundle) (string, error) {
-	if bundle.WorkspaceID == "" || bundle.Epoch < 1 {
-		return "", errors.New("bundle workspace identity is invalid")
-	}
-	if len(bundle.Heads) != 1 || bundle.Heads[0] == "" {
-		return "", errors.New("bundle must contain exactly one head")
-	}
-	known := make(map[string]bool, len(bundle.Revisions))
-	for _, revision := range bundle.Revisions {
-		if revision.WorkspaceID != bundle.WorkspaceID || revision.Epoch != bundle.Epoch {
-			return "", errors.New("bundle contains a revision for another workspace or epoch")
-		}
-		if err := verifyRevision(revision); err != nil {
-			return "", err
-		}
-		known[revision.ID] = true
-	}
-	if !known[bundle.Heads[0]] {
-		return "", errors.New("bundle does not contain its head revision")
-	}
-	return bundle.Heads[0], nil
-}
-
-func stateAt(revisions []Revision, id string) (*config.Workspace, error) {
-	for _, revision := range revisions {
-		if revision.ID == id {
-			return decodeSnapshot(revision.Snapshot)
-		}
-	}
-	return nil, errors.New("revision not found")
-}
-
-func revisionConflicts(revisions []Revision, id string) []Conflict {
-	for _, revision := range revisions {
-		if revision.ID == id {
-			return append([]Conflict(nil), revision.Conflicts...)
-		}
-	}
-	return nil
-}
-
-func replaceConflicts(ctx context.Context, tx *sql.Tx, workspaceID, revisionID string, conflicts []Conflict) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_conflicts WHERE workspace_id=?`, workspaceID); err != nil {
-		return err
-	}
-	for _, conflict := range conflicts {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_conflicts(workspace_id,revision_id,path,base,left_value,right_value) VALUES(?,?,?,?,?,?)`, workspaceID, revisionID, conflict.Path, conflict.Base, conflict.Left, conflict.Right); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateStoredParents(tx *sql.Tx, workspaceID string) error {
-	var missing int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM revision_parents p JOIN revisions child ON child.id=p.revision_id LEFT JOIN revisions parent ON parent.id=p.parent_id WHERE child.workspace_id=? AND (parent.id IS NULL OR parent.workspace_id<>child.workspace_id)`, workspaceID).Scan(&missing); err != nil {
-		return err
-	}
-	if missing != 0 {
-		return errors.New("revision history contains a missing or foreign parent")
-	}
-	return nil
-}
-
-func isAncestor(tx *sql.Tx, ancestor, descendant string) (bool, error) {
-	if ancestor == descendant {
-		return true, nil
-	}
-	distances, err := ancestorDistances(tx, descendant)
-	if err != nil {
-		return false, err
-	}
-	_, found := distances[ancestor]
-	return found, nil
-}
-
-func commonAncestor(tx *sql.Tx, left, right string) (string, bool, error) {
-	leftDistances, err := ancestorDistances(tx, left)
-	if err != nil {
-		return "", false, err
-	}
-	rightDistances, err := ancestorDistances(tx, right)
-	if err != nil {
-		return "", false, err
-	}
-	best := ""
-	bestDistance := int(^uint(0) >> 1)
-	for candidate, leftDistance := range leftDistances {
-		rightDistance, found := rightDistances[candidate]
-		if !found {
-			continue
-		}
-		distance := max(leftDistance, rightDistance)
-		if distance < bestDistance || distance == bestDistance && candidate < best {
-			best, bestDistance = candidate, distance
-		}
-	}
-	return best, best != "", nil
-}
-
-func ancestorDistances(tx *sql.Tx, head string) (map[string]int, error) {
-	distances := map[string]int{head: 0}
-	queue := []string{head}
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		parents, err := revisionParents(tx, current)
-		if err != nil {
-			return nil, err
-		}
-		for _, parent := range parents {
-			if _, found := distances[parent]; found {
-				continue
-			}
-			distances[parent] = distances[current] + 1
-			queue = append(queue, parent)
-		}
-	}
-	return distances, nil
-}
-
-func revisionParents(tx *sql.Tx, revisionID string) ([]string, error) {
-	rows, err := tx.Query(`SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var parents []string
-	for rows.Next() {
-		var parent string
-		if err = rows.Scan(&parent); err != nil {
-			return nil, err
-		}
-		parents = append(parents, parent)
-	}
-	return parents, rows.Err()
-}
-
-func loadRevisionSnapshot(tx *sql.Tx, id string) ([]byte, error) {
-	var body []byte
-	err := tx.QueryRow(`SELECT snapshot FROM revisions WHERE id=?`, id).Scan(&body)
-	return body, err
-}
-
-func loadRevisionState(tx *sql.Tx, id string) (*config.Workspace, error) {
-	body, err := loadRevisionSnapshot(tx, id)
-	if err != nil {
-		return nil, err
-	}
-	return decodeSnapshot(body)
 }

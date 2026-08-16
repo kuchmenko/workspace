@@ -109,7 +109,7 @@ func (store *Store) Create(ctx context.Context, name, root string, state *config
 		return Workspace{}, err
 	}
 	workspaceID := newWorkspaceID()
-	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, store.identity)
+	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, localPolicy(store.identity.ID()), store.identity)
 	if err != nil {
 		return Workspace{}, err
 	}
@@ -125,6 +125,9 @@ func (store *Store) Create(ctx context.Context, name, root string, state *config
 		return Workspace{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,1,?)`, name, workspaceID, genesis.ID); err != nil {
+		return Workspace{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, workspaceID, genesis.ID); err != nil {
 		return Workspace{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -199,40 +202,94 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 	if err != nil {
 		return Workspace{}, err
 	}
+	localActive, networkPresent := store.localNetworkPresence(ctx)
+	if err = store.persistUpdate(ctx, name, expectedRevision, body, snapshotBody, localActive, networkPresent); err != nil {
+		return Workspace{}, err
+	}
+	return store.LoadByName(ctx, name)
+}
+
+func (store *Store) persistUpdate(ctx context.Context, name string, expectedRevision int64, body, snapshotBody []byte, localActive, networkPresent bool) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Workspace{}, err
+		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	workspaceID, epoch, head, err := updateBase(ctx, tx, name, expectedRevision)
 	if err != nil {
-		return Workspace{}, err
+		return err
 	}
-	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, nil, store.identity)
+	policy, err := policyAtTx(tx, head)
 	if err != nil {
-		return Workspace{}, err
+		return err
+	}
+	if err = requireLocalWriter(policy, store.identity.ID(), localActive, networkPresent); err != nil {
+		return err
+	}
+	if err = validateSharedUpdate(policy, store.identity.ID(), snapshotBody); err != nil {
+		return err
+	}
+	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, nil, policy, store.identity)
+	if err != nil {
+		return err
 	}
 	if err = insertRevision(tx, revision); err != nil {
-		return Workspace{}, err
+		return err
 	}
+	if err = persistWorkspaceUpdate(ctx, tx, name, expectedRevision, body, head, revision.ID); err != nil {
+		return err
+	}
+	if err = replaceHeads(ctx, tx, workspaceID, []string{revision.ID}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func validateSharedUpdate(policy AccessPolicy, localID string, snapshot []byte) error {
+	if !policySharedWithOtherDevice(policy, localID) {
+		return nil
+	}
+	return validateShareableSnapshot(snapshot)
+}
+
+func persistWorkspaceUpdate(ctx context.Context, tx *sql.Tx, name string, expectedRevision int64, body []byte, head, revisionID string) error {
 	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, expectedRevision)
 	if err != nil {
-		return Workspace{}, fmt.Errorf("update workspace: %w", err)
+		return fmt.Errorf("update workspace: %w", err)
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
-		return Workspace{}, err
+		return err
 	}
 	if affected != 1 {
-		return Workspace{}, ErrStaleRevision
+		return ErrStaleRevision
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, revision.ID, name, head); err != nil {
-		return Workspace{}, err
+	_, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, revisionID, name, head)
+	return err
+}
+
+func (store *Store) localNetworkPresence(ctx context.Context) (bool, bool) {
+	network, err := store.Network(ctx)
+	if err != nil {
+		return true, false
 	}
-	if err = tx.Commit(); err != nil {
-		return Workspace{}, err
+	for _, record := range network.Devices {
+		if record.ID == store.identity.ID() {
+			return record.Active, true
+		}
 	}
-	return store.LoadByName(ctx, name)
+	return false, true
+}
+
+func requireLocalWriter(policy AccessPolicy, deviceID string, active, networkPresent bool) error {
+	role := policy.Role(deviceID, active)
+	if !networkPresent && role == "" {
+		role = WorkspaceWriter
+	}
+	if role != WorkspaceAdmin && role != WorkspaceWriter {
+		return errors.New("local device cannot write this workspace")
+	}
+	return nil
 }
 
 func updateBase(ctx context.Context, tx *sql.Tx, name string, expectedRevision int64) (string, int64, string, error) {

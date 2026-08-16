@@ -17,14 +17,15 @@ import (
 const protocolVersion = 1
 
 type Revision struct {
-	ID          string     `json:"id"`
-	WorkspaceID string     `json:"workspace_id"`
-	Epoch       int64      `json:"epoch"`
-	Kind        string     `json:"kind"`
-	Parents     []string   `json:"parents"`
-	Snapshot    []byte     `json:"snapshot"`
-	Conflicts   []Conflict `json:"conflicts,omitempty"`
-	Proofs      []Proof    `json:"proofs"`
+	ID          string        `json:"id"`
+	WorkspaceID string        `json:"workspace_id"`
+	Epoch       int64         `json:"epoch"`
+	Kind        string        `json:"kind"`
+	Parents     []string      `json:"parents"`
+	Snapshot    []byte        `json:"snapshot"`
+	Conflicts   []Conflict    `json:"conflicts,omitempty"`
+	Access      *AccessPolicy `json:"access,omitempty"`
+	Proofs      []Proof       `json:"proofs"`
 }
 
 type Proof struct {
@@ -41,23 +42,28 @@ type Bundle struct {
 }
 
 type revisionCore struct {
-	Protocol    int        `json:"protocol"`
-	WorkspaceID string     `json:"workspace_id"`
-	Epoch       int64      `json:"epoch"`
-	Kind        string     `json:"kind"`
-	Parents     []string   `json:"parents"`
-	Snapshot    []byte     `json:"snapshot"`
-	Conflicts   []Conflict `json:"conflicts,omitempty"`
+	Protocol    int           `json:"protocol"`
+	WorkspaceID string        `json:"workspace_id"`
+	Epoch       int64         `json:"epoch"`
+	Kind        string        `json:"kind"`
+	Parents     []string      `json:"parents"`
+	Snapshot    []byte        `json:"snapshot"`
+	Conflicts   []Conflict    `json:"conflicts,omitempty"`
+	Access      *AccessPolicy `json:"access,omitempty"`
 }
 
 func newWorkspaceID() string {
 	return uuid.NewString()
 }
 
-func makeRevision(workspaceID string, epoch int64, kind string, parents []string, snapshot []byte, conflicts []Conflict, author device.Identity) (Revision, error) {
+func makeRevision(workspaceID string, epoch int64, kind string, parents []string, snapshot []byte, conflicts []Conflict, access AccessPolicy, author device.Identity) (Revision, error) {
 	parents = append([]string(nil), parents...)
 	sort.Strings(parents)
-	core := revisionCore{Protocol: protocolVersion, WorkspaceID: workspaceID, Epoch: epoch, Kind: kind, Parents: parents, Snapshot: snapshot, Conflicts: conflicts}
+	access, err := normalizePolicy(access)
+	if err != nil {
+		return Revision{}, err
+	}
+	core := revisionCore{Protocol: protocolVersion, WorkspaceID: workspaceID, Epoch: epoch, Kind: kind, Parents: parents, Snapshot: snapshot, Conflicts: conflicts, Access: &access}
 	body, err := json.Marshal(core)
 	if err != nil {
 		return Revision{}, err
@@ -72,6 +78,7 @@ func makeRevision(workspaceID string, epoch int64, kind string, parents []string
 		Parents:     parents,
 		Snapshot:    append([]byte(nil), snapshot...),
 		Conflicts:   append([]Conflict(nil), conflicts...),
+		Access:      &access,
 		Proofs: []Proof{{
 			DeviceID:  author.ID(),
 			PublicKey: author.PublicKey(),
@@ -89,6 +96,7 @@ func verifyRevision(revision Revision) error {
 		Parents:     append([]string(nil), revision.Parents...),
 		Snapshot:    revision.Snapshot,
 		Conflicts:   revision.Conflicts,
+		Access:      revision.Access,
 	}
 	sort.Strings(core.Parents)
 	if !equalStrings(core.Parents, revision.Parents) {
@@ -127,7 +135,18 @@ func insertRevision(tx *sql.Tx, revision Revision) error {
 	if err != nil {
 		return err
 	}
-	result, err := tx.Exec(`INSERT OR IGNORE INTO revisions(id,workspace_id,epoch,kind,snapshot,conflicts) VALUES(?,?,?,?,?,?)`, revision.ID, revision.WorkspaceID, revision.Epoch, revision.Kind, revision.Snapshot, conflicts)
+	access, err := json.Marshal(revision.Access)
+	if err != nil {
+		return err
+	}
+	if err = persistRevision(tx, revision, conflicts, access); err != nil {
+		return err
+	}
+	return persistRevisionRelations(tx, revision)
+}
+
+func persistRevision(tx *sql.Tx, revision Revision, conflicts, access []byte) error {
+	result, err := tx.Exec(`INSERT OR IGNORE INTO revisions(id,workspace_id,epoch,kind,snapshot,conflicts,access) VALUES(?,?,?,?,?,?,?)`, revision.ID, revision.WorkspaceID, revision.Epoch, revision.Kind, revision.Snapshot, conflicts, access)
 	if err != nil {
 		return err
 	}
@@ -136,31 +155,33 @@ func insertRevision(tx *sql.Tx, revision Revision) error {
 		return err
 	}
 	if inserted == 0 {
-		if err = verifyStoredRevision(tx, revision, conflicts); err != nil {
-			return err
-		}
+		return verifyStoredRevision(tx, revision, conflicts, access)
 	}
+	return nil
+}
+
+func persistRevisionRelations(tx *sql.Tx, revision Revision) error {
 	for position, parent := range revision.Parents {
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO revision_parents(revision_id,parent_id,position) VALUES(?,?,?)`, revision.ID, parent, position); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO revision_parents(revision_id,parent_id,position) VALUES(?,?,?)`, revision.ID, parent, position); err != nil {
 			return err
 		}
 	}
 	for _, proof := range revision.Proofs {
-		if _, err = tx.Exec(`INSERT OR IGNORE INTO revision_proofs(revision_id,device_id,public_key,signature) VALUES(?,?,?,?)`, revision.ID, proof.DeviceID, proof.PublicKey, proof.Signature); err != nil {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO revision_proofs(revision_id,device_id,public_key,signature) VALUES(?,?,?,?)`, revision.ID, proof.DeviceID, proof.PublicKey, proof.Signature); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func verifyStoredRevision(tx *sql.Tx, revision Revision, conflicts []byte) error {
+func verifyStoredRevision(tx *sql.Tx, revision Revision, conflicts, access []byte) error {
 	var workspaceID, kind string
 	var epoch int64
-	var snapshot, storedConflicts []byte
-	if err := tx.QueryRow(`SELECT workspace_id,epoch,kind,snapshot,conflicts FROM revisions WHERE id=?`, revision.ID).Scan(&workspaceID, &epoch, &kind, &snapshot, &storedConflicts); err != nil {
+	var snapshot, storedConflicts, storedAccess []byte
+	if err := tx.QueryRow(`SELECT workspace_id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE id=?`, revision.ID).Scan(&workspaceID, &epoch, &kind, &snapshot, &storedConflicts, &storedAccess); err != nil {
 		return err
 	}
-	if workspaceID != revision.WorkspaceID || epoch != revision.Epoch || kind != revision.Kind || string(snapshot) != string(revision.Snapshot) || string(storedConflicts) != string(conflicts) {
+	if workspaceID != revision.WorkspaceID || epoch != revision.Epoch || kind != revision.Kind || string(snapshot) != string(revision.Snapshot) || string(storedConflicts) != string(conflicts) || string(storedAccess) != string(access) {
 		return errors.New("revision ID collision")
 	}
 	return nil

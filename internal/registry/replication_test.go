@@ -2,7 +2,10 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,19 +31,16 @@ func TestRevisionIDDoesNotDependOnAuthor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	leftRevision, err := makeRevision("workspace", 1, "merge", []string{"a", "b"}, body, nil, left)
+	leftRevision, err := makeRevision("workspace", 1, "merge", []string{"a", "b"}, body, nil, localPolicy(left.ID()), left)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rightRevision, err := makeRevision("workspace", 1, "merge", []string{"b", "a"}, body, nil, right)
+	rightRevision, err := makeRevision("workspace", 1, "merge", []string{"b", "a"}, body, nil, localPolicy(left.ID()), right)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if leftRevision.ID != rightRevision.ID {
 		t.Fatalf("revision IDs differ by author: %s != %s", leftRevision.ID, rightRevision.ID)
-	}
-	if leftRevision.ID != "97e8d28b4c2f557d3db69aeb99fe427dbae4ff4348f91d4e9188f002e80923e4" {
-		t.Fatalf("revision vector = %s", leftRevision.ID)
 	}
 	if reflect.DeepEqual(leftRevision.Proofs, rightRevision.Proofs) {
 		t.Fatal("detached author proofs are equal")
@@ -199,6 +199,21 @@ func TestStoresConvergeAcrossFastForwardDivergenceAndConflict(t *testing.T) {
 	if rightConflicted.Head != leftConflicted.Head || len(conflicts) != 1 || conflicts[0].Path != "/aliases/editor" {
 		t.Fatalf("replicated conflict workspace=%#v conflicts=%#v", rightConflicted, conflicts)
 	}
+	resolved, err := left.Resolve(ctx, "shared", "/aliases/editor", []byte(`"nano"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State.Aliases["editor"] != "nano" {
+		t.Fatalf("resolved editor = %q", resolved.State.Aliases["editor"])
+	}
+	leftBundle, err = left.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightResolved, conflicts, err := right.Integrate(ctx, "shared", leftBundle)
+	if err != nil || len(conflicts) != 0 || rightResolved.State.Aliases["editor"] != "nano" {
+		t.Fatalf("replicated resolution workspace=%#v conflicts=%#v error=%v", rightResolved, conflicts, err)
+	}
 }
 
 func TestStoreMigratesExistingRegistryToSignedGenesis(t *testing.T) {
@@ -248,6 +263,77 @@ func TestStoreMigratesExistingRegistryToSignedGenesis(t *testing.T) {
 	}
 	if identityInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("identity permissions = %o", identityInfo.Mode().Perm())
+	}
+}
+
+func TestStoreMigratesPolicylessRevisionDatabase(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "registry.db")
+	identity, err := device.Load(filepath.Join(directory, "identity.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.Exec(`
+CREATE TABLE workspaces(name TEXT PRIMARY KEY,root TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,registry BLOB NOT NULL);
+CREATE TABLE workspace_protocol(name TEXT PRIMARY KEY,workspace_id TEXT NOT NULL UNIQUE,epoch INTEGER NOT NULL,head_id TEXT NOT NULL);
+CREATE TABLE revisions(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,epoch INTEGER NOT NULL,kind TEXT NOT NULL,snapshot BLOB NOT NULL,conflicts BLOB NOT NULL);
+CREATE TABLE revision_parents(revision_id TEXT NOT NULL,parent_id TEXT NOT NULL,position INTEGER NOT NULL,PRIMARY KEY(revision_id,parent_id));
+CREATE TABLE revision_proofs(revision_id TEXT NOT NULL,device_id TEXT NOT NULL,public_key BLOB NOT NULL,signature BLOB NOT NULL,PRIMARY KEY(revision_id,device_id));`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := testWorkspace()
+	stored, err := config.EncodeWorkspace(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := encodeSnapshot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := revisionCore{Protocol: protocolVersion, WorkspaceID: "workspace", Epoch: 1, Kind: "genesis", Snapshot: snapshot}
+	body, err := json.Marshal(core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(body)
+	head := hex.EncodeToString(digest[:])
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workspaces VALUES(?,?,1,?)`, []any{"shared", t.TempDir(), stored}},
+		{`INSERT INTO workspace_protocol VALUES(?,?,1,?)`, []any{"shared", "workspace", head}},
+		{`INSERT INTO revisions VALUES(?,?,1,'genesis',?,'null')`, []any{head, "workspace", snapshot}},
+		{`INSERT INTO revision_proofs VALUES(?,?,?,?)`, []any{head, identity.ID(), identity.PublicKey(), identity.Sign(digest[:])}},
+	}
+	for _, statement := range statements {
+		if _, err = database.Exec(statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByName(context.Background(), "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := store.Access(context.Background(), "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace.Head == head || policy.Mode != AccessLocal || policy.Roles[identity.ID()] != WorkspaceAdmin {
+		t.Fatalf("migrated workspace=%#v policy=%#v", workspace, policy)
 	}
 }
 

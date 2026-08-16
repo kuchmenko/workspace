@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS revisions (
  epoch INTEGER NOT NULL,
  kind TEXT NOT NULL,
  snapshot BLOB NOT NULL,
- conflicts BLOB NOT NULL
+ conflicts BLOB NOT NULL,
+ access BLOB
 );
 CREATE INDEX IF NOT EXISTS revisions_workspace ON revisions(workspace_id);
 CREATE TABLE IF NOT EXISTS revision_parents (
@@ -52,6 +53,20 @@ CREATE TABLE IF NOT EXISTS workspace_conflicts (
  left_value BLOB,
  right_value BLOB,
  PRIMARY KEY(workspace_id,revision_id,path)
+);
+CREATE TABLE IF NOT EXISTS workspace_heads (
+ workspace_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ PRIMARY KEY(workspace_id,revision_id)
+);
+CREATE TABLE IF NOT EXISTS workspace_quarantine (
+ workspace_id TEXT NOT NULL,
+ source_device_id TEXT NOT NULL,
+ head_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ reason TEXT NOT NULL,
+ received_at TEXT NOT NULL,
+ PRIMARY KEY(workspace_id,source_device_id,head_id)
 );
 CREATE TABLE IF NOT EXISTS networks (
  id TEXT PRIMARY KEY,
@@ -80,6 +95,9 @@ func (store *Store) initialize(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
+	if err = ensureRevisionAccessColumn(ctx, tx); err != nil {
+		return err
+	}
 	legacy, err := loadLegacyWorkspaces(ctx, tx)
 	if err != nil {
 		return err
@@ -89,7 +107,37 @@ func (store *Store) initialize(ctx context.Context) error {
 			return err
 		}
 	}
+	if err = store.migrateWorkspacePolicies(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit()
+}
+
+func ensureRevisionAccessColumn(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(revisions)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		found = found || name == "access"
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `ALTER TABLE revisions ADD COLUMN access BLOB`)
+	return err
 }
 
 type legacyWorkspace struct {
@@ -124,7 +172,7 @@ func (store *Store) migrateLegacyWorkspace(ctx context.Context, tx *sql.Tx, work
 		return fmt.Errorf("migrate workspace %q: %w", workspace.name, err)
 	}
 	workspaceID := newWorkspaceID()
-	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, store.identity)
+	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, localPolicy(store.identity.ID()), store.identity)
 	if err != nil {
 		return err
 	}
@@ -132,6 +180,70 @@ func (store *Store) migrateLegacyWorkspace(ctx context.Context, tx *sql.Tx, work
 		return fmt.Errorf("migrate workspace %q revision: %w", workspace.name, err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,1,?)`, workspace.name, workspaceID, genesis.ID)
+	if err == nil {
+		_, err = tx.ExecContext(ctx, `INSERT INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, workspaceID, genesis.ID)
+	}
+	return err
+}
+
+type policyMigration struct {
+	name, workspaceID, head string
+	epoch                   int64
+}
+
+func (store *Store) migrateWorkspacePolicies(ctx context.Context, tx *sql.Tx) error {
+	candidates, err := loadPolicyMigrations(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, item := range candidates {
+		if err = store.migrateWorkspacePolicy(ctx, tx, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadPolicyMigrations(ctx context.Context, tx *sql.Tx) ([]policyMigration, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT name,workspace_id,epoch,head_id FROM workspace_protocol ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var candidates []policyMigration
+	for rows.Next() {
+		var item policyMigration
+		if err = rows.Scan(&item.name, &item.workspaceID, &item.epoch, &item.head); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, item)
+	}
+	return candidates, rows.Err()
+}
+
+func (store *Store) migrateWorkspacePolicy(ctx context.Context, tx *sql.Tx, item policyMigration) error {
+	var access []byte
+	if err := tx.QueryRowContext(ctx, `SELECT access FROM revisions WHERE id=?`, item.head).Scan(&access); err != nil {
+		return err
+	}
+	if len(access) == 0 || string(access) == "null" {
+		snapshot, err := loadRevisionSnapshot(tx, item.head)
+		if err != nil {
+			return err
+		}
+		anchor, err := makeRevision(item.workspaceID, item.epoch, "access", []string{item.head}, snapshot, nil, localPolicy(store.identity.ID()), store.identity)
+		if err != nil {
+			return err
+		}
+		if err = insertRevision(tx, anchor); err != nil {
+			return err
+		}
+		item.head = anchor.ID
+		if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=?`, item.head, item.name); err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, item.workspaceID, item.head)
 	return err
 }
 
