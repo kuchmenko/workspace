@@ -95,7 +95,10 @@ func (store *Store) initialize(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	if err = ensureRevisionAccessColumn(ctx, tx); err != nil {
+	if err = ensureRevisionColumn(ctx, tx, "conflicts", `ALTER TABLE revisions ADD COLUMN conflicts BLOB NOT NULL DEFAULT 'null'`); err != nil {
+		return err
+	}
+	if err = ensureRevisionColumn(ctx, tx, "access", `ALTER TABLE revisions ADD COLUMN access BLOB`); err != nil {
 		return err
 	}
 	legacy, err := loadLegacyWorkspaces(ctx, tx)
@@ -113,7 +116,7 @@ func (store *Store) initialize(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func ensureRevisionAccessColumn(ctx context.Context, tx *sql.Tx) error {
+func ensureRevisionColumn(ctx context.Context, tx *sql.Tx, wanted, alter string) error {
 	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(revisions)`)
 	if err != nil {
 		return err
@@ -128,7 +131,7 @@ func ensureRevisionAccessColumn(ctx context.Context, tx *sql.Tx) error {
 			_ = rows.Close()
 			return err
 		}
-		found = found || name == "access"
+		found = found || name == wanted
 	}
 	if err = rows.Close(); err != nil {
 		return err
@@ -136,7 +139,7 @@ func ensureRevisionAccessColumn(ctx context.Context, tx *sql.Tx) error {
 	if found {
 		return nil
 	}
-	_, err = tx.ExecContext(ctx, `ALTER TABLE revisions ADD COLUMN access BLOB`)
+	_, err = tx.ExecContext(ctx, alter)
 	return err
 }
 

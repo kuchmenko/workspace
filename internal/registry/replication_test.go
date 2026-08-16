@@ -280,7 +280,7 @@ func TestStoreMigratesPolicylessRevisionDatabase(t *testing.T) {
 	_, err = database.Exec(`
 CREATE TABLE workspaces(name TEXT PRIMARY KEY,root TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL,registry BLOB NOT NULL);
 CREATE TABLE workspace_protocol(name TEXT PRIMARY KEY,workspace_id TEXT NOT NULL UNIQUE,epoch INTEGER NOT NULL,head_id TEXT NOT NULL);
-CREATE TABLE revisions(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,epoch INTEGER NOT NULL,kind TEXT NOT NULL,snapshot BLOB NOT NULL,conflicts BLOB NOT NULL);
+CREATE TABLE revisions(id TEXT PRIMARY KEY,workspace_id TEXT NOT NULL,epoch INTEGER NOT NULL,kind TEXT NOT NULL,snapshot BLOB NOT NULL);
 CREATE TABLE revision_parents(revision_id TEXT NOT NULL,parent_id TEXT NOT NULL,position INTEGER NOT NULL,PRIMARY KEY(revision_id,parent_id));
 CREATE TABLE revision_proofs(revision_id TEXT NOT NULL,device_id TEXT NOT NULL,public_key BLOB NOT NULL,signature BLOB NOT NULL,PRIMARY KEY(revision_id,device_id));`)
 	if err != nil {
@@ -308,7 +308,7 @@ CREATE TABLE revision_proofs(revision_id TEXT NOT NULL,device_id TEXT NOT NULL,p
 	}{
 		{`INSERT INTO workspaces VALUES(?,?,1,?)`, []any{"shared", t.TempDir(), stored}},
 		{`INSERT INTO workspace_protocol VALUES(?,?,1,?)`, []any{"shared", "workspace", head}},
-		{`INSERT INTO revisions VALUES(?,?,1,'genesis',?,'null')`, []any{head, "workspace", snapshot}},
+		{`INSERT INTO revisions VALUES(?,?,1,'genesis',?)`, []any{head, "workspace", snapshot}},
 		{`INSERT INTO revision_proofs VALUES(?,?,?,?)`, []any{head, identity.ID(), identity.PublicKey(), identity.Sign(digest[:])}},
 	}
 	for _, statement := range statements {
