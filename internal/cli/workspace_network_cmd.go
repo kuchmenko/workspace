@@ -386,10 +386,6 @@ func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store
 	return results, failures, nil
 }
 
-func synchronizeWorkspacePeer(command *cobra.Command, store *registry.Store, identity device.Identity, name, workspace string, target registry.DeviceRecord, endpoint string) (peernetwork.SyncResult, string) {
-	return synchronizeWorkspacePeerContext(command.Context(), store, identity, name, workspace, target, endpoint)
-}
-
 func synchronizeWorkspacePeerContext(ctx context.Context, store *registry.Store, identity device.Identity, name, workspace string, target registry.DeviceRecord, endpoint string) (peernetwork.SyncResult, string) {
 	if endpoint == "" {
 		return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "unavailable"}, fmt.Sprintf("%s/%s: unavailable", workspace, target.Name)
