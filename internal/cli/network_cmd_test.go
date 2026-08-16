@@ -46,7 +46,7 @@ func TestNetworkCommandsDoNotRequireWorkspace(t *testing.T) {
 func TestNetworkServeUsesStablePeerPort(t *testing.T) {
 	command := newNetworkServeCmd()
 	flag := command.Flag("listen")
-	if flag == nil || flag.DefValue != ":7337" {
+	if flag == nil || flag.DefValue != ":17337" {
 		t.Fatalf("serve listen default = %v", flag)
 	}
 }

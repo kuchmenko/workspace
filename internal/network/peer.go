@@ -15,7 +15,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/registry"
 )
 
-const DefaultListenAddress = ":7337"
+const DefaultListenAddress = ":17337"
 
 type ServeOptions struct {
 	Store            *registry.Store
