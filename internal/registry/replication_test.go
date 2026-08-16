@@ -199,6 +199,21 @@ func TestStoresConvergeAcrossFastForwardDivergenceAndConflict(t *testing.T) {
 	if rightConflicted.Head != leftConflicted.Head || len(conflicts) != 1 || conflicts[0].Path != "/aliases/editor" {
 		t.Fatalf("replicated conflict workspace=%#v conflicts=%#v", rightConflicted, conflicts)
 	}
+	updateAlias(t, left, leftRoot, "shell", "zsh")
+	updated, err := left.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Head == leftConflicted.Head {
+		t.Fatal("ordinary update did not advance conflicted head")
+	}
+	conflicts, err = left.Conflicts(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 1 || conflicts[0].Path != "/aliases/editor" {
+		t.Fatalf("conflicts after ordinary update = %#v", conflicts)
+	}
 	resolved, err := left.Resolve(ctx, "shared", "/aliases/editor", []byte(`"nano"`))
 	if err != nil {
 		t.Fatal(err)
@@ -213,6 +228,59 @@ func TestStoresConvergeAcrossFastForwardDivergenceAndConflict(t *testing.T) {
 	rightResolved, conflicts, err := right.Integrate(ctx, "shared", leftBundle)
 	if err != nil || len(conflicts) != 0 || rightResolved.State.Aliases["editor"] != "nano" {
 		t.Fatalf("replicated resolution workspace=%#v conflicts=%#v error=%v", rightResolved, conflicts, err)
+	}
+}
+
+func TestThreeStoresPreserveConflictAcrossUnrelatedMerge(t *testing.T) {
+	ctx := context.Background()
+	left := openTestStore(t)
+	right := openTestStore(t)
+	third := openTestStore(t)
+	leftRoot := t.TempDir()
+	rightRoot := t.TempDir()
+	thirdRoot := t.TempDir()
+	base := testWorkspace()
+	base.Aliases["editor"] = "vim"
+	if _, err := left.Create(ctx, "shared", leftRoot, base); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := left.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Attach(ctx, "shared", rightRoot, initial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = third.Attach(ctx, "shared", thirdRoot, initial); err != nil {
+		t.Fatal(err)
+	}
+	updateAlias(t, left, leftRoot, "editor", "helix")
+	updateAlias(t, right, rightRoot, "editor", "nano")
+	rightBundle, err := right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, conflicts, integrateErr := left.Integrate(ctx, "shared", rightBundle); integrateErr != nil || len(conflicts) != 1 {
+		t.Fatalf("initial conflict = %#v, error = %v", conflicts, integrateErr)
+	}
+	updateAlias(t, third, thirdRoot, "shell", "zsh")
+	thirdBundle, err := third.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, conflicts, err := left.Integrate(ctx, "shared", thirdBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.State.Aliases["shell"] != "zsh" || len(conflicts) != 1 || conflicts[0].Path != "/aliases/editor" {
+		t.Fatalf("merged workspace = %#v, conflicts = %#v", merged, conflicts)
+	}
+	resolved, err := left.Resolve(ctx, "shared", "/aliases/editor", []byte(`"nano"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State.Aliases["editor"] != "nano" || resolved.State.Aliases["shell"] != "zsh" {
+		t.Fatalf("resolved state = %#v", resolved.State.Aliases)
 	}
 }
 

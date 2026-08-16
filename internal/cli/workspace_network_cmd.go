@@ -370,6 +370,9 @@ func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store
 	var failures []string
 	for _, workspace := range workspaces {
 		for _, target := range state.Devices {
+			if err = ctx.Err(); err != nil {
+				return nil, nil, err
+			}
 			if target.ID == identity.ID() || !target.Active {
 				continue
 			}
@@ -377,6 +380,9 @@ func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store
 				continue
 			}
 			result, failure := synchronizeWorkspacePeerContext(ctx, store, identity, name, workspace.Name, target, endpoints[target.ID])
+			if err = ctx.Err(); err != nil {
+				return nil, nil, err
+			}
 			results = append(results, result)
 			if failure != "" {
 				failures = append(failures, failure)
@@ -392,6 +398,9 @@ func synchronizeWorkspacePeerContext(ctx context.Context, store *registry.Store,
 	}
 	result, err := peernetwork.Sync(ctx, workspace, endpoint, target, store, identity, name)
 	if err != nil {
+		if peernetwork.IsUnavailable(err) {
+			return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "unavailable"}, fmt.Sprintf("%s/%s: %v", workspace, target.Name, err)
+		}
 		return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "rejected"}, fmt.Sprintf("%s/%s: %v", workspace, target.Name, err)
 	}
 	return result, ""

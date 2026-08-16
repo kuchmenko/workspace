@@ -7,7 +7,11 @@ import (
 )
 
 func (store *Store) loadHeads(ctx context.Context, workspaceID string) ([]string, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT revision_id FROM workspace_heads WHERE workspace_id=? ORDER BY revision_id`, workspaceID)
+	return loadHeadsFrom(ctx, store.db, workspaceID)
+}
+
+func loadHeadsFrom(ctx context.Context, reader sqlReader, workspaceID string) ([]string, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT revision_id FROM workspace_heads WHERE workspace_id=? ORDER BY revision_id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -76,5 +80,6 @@ func quarantineBundle(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID, 
 			return err
 		}
 	}
-	return nil
+	_, err := tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE rowid IN (SELECT rowid FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? ORDER BY received_at DESC,head_id DESC LIMIT -1 OFFSET 100)`, bundle.WorkspaceID, sourceID)
+	return err
 }

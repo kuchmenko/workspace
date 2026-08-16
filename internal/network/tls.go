@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
@@ -63,11 +64,23 @@ func pairingClientTLS(cert tls.Certificate, peer *x509.Certificate) *tls.Config 
 	}
 }
 
-func peerServerTLS(cert tls.Certificate, trusted func(string) bool) *tls.Config {
+func peerServerTLS(cert tls.Certificate, identity device.Identity, name string, trusted func(string) bool) *tls.Config {
+	var lock sync.Mutex
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS13,
-		ClientAuth:   tls.RequireAnyClientCert,
+		MinVersion: tls.VersionTLS13,
+		ClientAuth: tls.RequireAnyClientCert,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			lock.Lock()
+			defer lock.Unlock()
+			if cert.Leaf == nil || time.Until(cert.Leaf.NotAfter) < time.Hour {
+				var err error
+				cert, err = certificate(identity, name)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return &cert, nil
+		},
 		VerifyConnection: func(state tls.ConnectionState) error {
 			public, _, err := peerPublicKey(state)
 			if err != nil {

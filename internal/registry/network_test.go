@@ -21,6 +21,13 @@ func TestNetworkPairingBundleConvergesAndAuthorizesAdmins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retried, err := arch.AddNetworkDevice(ctx, "asahi", asahi.identity.PublicKey(), NetworkAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(retried, archState) {
+		t.Fatalf("idempotent add = %#v, want %#v", retried, archState)
+	}
 	bundle, err := arch.ExportNetwork(ctx)
 	if err != nil {
 		t.Fatal(err)

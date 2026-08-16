@@ -13,16 +13,24 @@ import (
 )
 
 func (store *Store) Export(ctx context.Context, name string) (Bundle, error) {
-	workspace, err := store.LoadByName(ctx, name)
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Bundle{}, err
 	}
-	revisions, err := store.loadRevisions(ctx, workspace.WorkspaceID)
+	defer func() { _ = tx.Rollback() }()
+	workspace, err := loadWorkspaceByName(ctx, tx, name)
 	if err != nil {
 		return Bundle{}, err
 	}
-	heads, err := store.loadHeads(ctx, workspace.WorkspaceID)
+	revisions, err := loadRevisionsFrom(ctx, tx, workspace.WorkspaceID)
 	if err != nil {
+		return Bundle{}, err
+	}
+	heads, err := loadHeadsFrom(ctx, tx, workspace.WorkspaceID)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return Bundle{}, err
 	}
 	return Bundle{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: revisions}, nil
@@ -178,6 +186,11 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 	}
 	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
 		return nil, err
+	}
+	if authorize {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? AND epoch<=?`, bundle.WorkspaceID, sourceID, bundle.Epoch); err != nil {
+			return nil, err
+		}
 	}
 	if err = commitIncoming(ctx, tx, base.workspaceID, heads); err != nil {
 		return nil, err
@@ -368,6 +381,18 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	if err != nil {
 		return "", nil, nil, err
 	}
+	leftConflicts, err := loadRevisionConflicts(tx, parents[0])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	rightConflicts, err := loadRevisionConflicts(tx, parents[1])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	conflicts, err = combineConflicts(leftConflicts, rightConflicts, conflicts)
+	if err != nil {
+		return "", nil, nil, err
+	}
 	merged, err := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, conflicts, leftPolicy, store.identity)
 	if err != nil {
 		return "", nil, nil, err
@@ -393,7 +418,11 @@ func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []by
 }
 
 func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Revision, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
+	return loadRevisionsFrom(ctx, store.db, workspaceID)
+}
+
+func loadRevisionsFrom(ctx context.Context, reader sqlReader, workspaceID string) ([]Revision, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -405,11 +434,11 @@ func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Re
 		return nil, err
 	}
 	for index := range revisions {
-		revisions[index].Parents, err = store.loadParents(ctx, revisions[index].ID)
+		revisions[index].Parents, err = loadParentsFrom(ctx, reader, revisions[index].ID)
 		if err != nil {
 			return nil, err
 		}
-		revisions[index].Proofs, err = store.loadProofs(ctx, revisions[index].ID)
+		revisions[index].Proofs, err = loadProofsFrom(ctx, reader, revisions[index].ID)
 		if err != nil {
 			return nil, err
 		}
@@ -442,7 +471,11 @@ func scanRevisions(rows *sql.Rows, workspaceID string) ([]Revision, error) {
 }
 
 func (store *Store) loadParents(ctx context.Context, revisionID string) ([]string, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
+	return loadParentsFrom(ctx, store.db, revisionID)
+}
+
+func loadParentsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]string, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
 	if err != nil {
 		return nil, err
 	}
@@ -459,7 +492,11 @@ func (store *Store) loadParents(ctx context.Context, revisionID string) ([]strin
 }
 
 func (store *Store) loadProofs(ctx context.Context, revisionID string) ([]Proof, error) {
-	rows, err := store.db.QueryContext(ctx, `SELECT device_id,public_key,signature FROM revision_proofs WHERE revision_id=? ORDER BY device_id`, revisionID)
+	return loadProofsFrom(ctx, store.db, revisionID)
+}
+
+func loadProofsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]Proof, error) {
+	rows, err := reader.QueryContext(ctx, `SELECT device_id,public_key,signature FROM revision_proofs WHERE revision_id=? ORDER BY device_id`, revisionID)
 	if err != nil {
 		return nil, err
 	}

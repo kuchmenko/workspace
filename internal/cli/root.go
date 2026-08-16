@@ -95,17 +95,12 @@ func prepareCommand(cmd *cobra.Command, _ []string) error {
 }
 
 func commandSkipsWorkspace(cmd *cobra.Command) bool {
-	if cmd.Annotations[skipsWorkspaceAnnotation] == "true" {
-		return true
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Annotations[skipsWorkspaceAnnotation] == "true" || workspaceIndependentCommands[current.Name()] && (current.Parent() != nil || current == cmd) {
+			return true
+		}
 	}
-	if workspaceIndependentCommands[cmd.Name()] {
-		return true
-	}
-	if cmd.Parent() == nil {
-		return false
-	}
-	parent := cmd.Parent().Name()
-	return parent == "explorer" || parent == "workspace" || parent == "auth" || parent == "network"
+	return false
 }
 
 func loadDoctorWorkspace() error {

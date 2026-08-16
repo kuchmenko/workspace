@@ -107,11 +107,16 @@ func (store *Store) Network(ctx context.Context) (NetworkState, error) {
 }
 
 func (store *Store) ExportNetwork(ctx context.Context) (NetworkBundle, error) {
-	var bundle NetworkBundle
-	if err := store.db.QueryRowContext(ctx, `SELECT id,epoch FROM networks LIMIT 1`).Scan(&bundle.ID, &bundle.Epoch); err != nil {
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
 		return NetworkBundle{}, err
 	}
-	rows, err := store.db.QueryContext(ctx, `SELECT id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature FROM network_events WHERE network_id=? ORDER BY epoch,id`, bundle.ID)
+	defer func() { _ = tx.Rollback() }()
+	var bundle NetworkBundle
+	if err = tx.QueryRowContext(ctx, `SELECT id,epoch FROM networks LIMIT 1`).Scan(&bundle.ID, &bundle.Epoch); err != nil {
+		return NetworkBundle{}, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature FROM network_events WHERE network_id=? ORDER BY epoch,id`, bundle.ID)
 	if err != nil {
 		return NetworkBundle{}, err
 	}
@@ -123,7 +128,16 @@ func (store *Store) ExportNetwork(ctx context.Context) (NetworkBundle, error) {
 		}
 		bundle.Events = append(bundle.Events, event)
 	}
-	return bundle, rows.Err()
+	if err = rows.Err(); err != nil {
+		return NetworkBundle{}, err
+	}
+	if err = rows.Close(); err != nil {
+		return NetworkBundle{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return NetworkBundle{}, err
+	}
+	return bundle, nil
 }
 
 func (store *Store) ImportNetwork(ctx context.Context, bundle NetworkBundle, inviterID string) (NetworkState, error) {
@@ -216,6 +230,12 @@ func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey
 		return NetworkState{}, errors.New("local device is not a network admin")
 	}
 	record := DeviceRecord{ID: device.IDForPublicKey(publicKey), Name: strings.TrimSpace(name), PublicKey: append([]byte(nil), publicKey...), Role: role, Active: true}
+	if existing, exists := findDevice(state.Devices, record.ID); exists {
+		if existing.Active && existing.Name == record.Name && existing.Role == record.Role && string(existing.PublicKey) == string(record.PublicKey) {
+			return state, nil
+		}
+		return NetworkState{}, errors.New("network device already exists with different attributes")
+	}
 	event, err := makeNetworkEvent(state.ID, state.Epoch, "add", record, store.identity)
 	if err != nil {
 		return NetworkState{}, err

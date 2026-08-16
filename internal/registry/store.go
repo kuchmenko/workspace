@@ -138,7 +138,11 @@ func (store *Store) Create(ctx context.Context, name, root string, state *config
 }
 
 func (store *Store) LoadByName(ctx context.Context, name string) (Workspace, error) {
-	return scanWorkspace(store.db.QueryRowContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name WHERE w.name=?`, name))
+	return loadWorkspaceByName(ctx, store.db, name)
+}
+
+func loadWorkspaceByName(ctx context.Context, reader sqlReader, name string) (Workspace, error) {
+	return scanWorkspace(reader.QueryRowContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name WHERE w.name=?`, name))
 }
 
 func (store *Store) LoadByRoot(ctx context.Context, root string) (Workspace, error) {
@@ -248,7 +252,11 @@ func (store *Store) persistUpdate(ctx context.Context, name string, expectedRevi
 	if err = validateSharedUpdate(policy, store.identity.ID(), snapshotBody); err != nil {
 		return err
 	}
-	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, nil, policy, store.identity)
+	conflicts, err := loadRevisionConflicts(tx, head)
+	if err != nil {
+		return err
+	}
+	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, conflicts, policy, store.identity)
 	if err != nil {
 		return err
 	}
@@ -259,6 +267,9 @@ func (store *Store) persistUpdate(ctx context.Context, name string, expectedRevi
 		return err
 	}
 	if err = replaceHeads(ctx, tx, workspaceID, []string{revision.ID}); err != nil {
+		return err
+	}
+	if err = replaceConflicts(ctx, tx, workspaceID, revision.ID, conflicts); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -341,6 +352,11 @@ func (store *Store) Mutate(ctx context.Context, root string, mutate func(*config
 
 type scanner interface {
 	Scan(...any) error
+}
+
+type sqlReader interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func scanWorkspace(row scanner) (Workspace, error) {

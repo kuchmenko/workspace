@@ -29,6 +29,9 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	defer stop()
 	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ExitError{Code: syncExitCanceled}
+		}
 		return err
 	}
 	plan := workspacesync.BuildPlan(root, current.State)
@@ -37,6 +40,10 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 		runErr = runSyncTUI(ctx, root, plan, stdout)
 	} else {
 		runErr = runSyncHeadless(ctx, root, plan, stdout, stderr)
+	}
+	var exitErr ExitError
+	if errors.As(runErr, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return ExitError{Code: syncExitCanceled}
 	}
 	_, publishErr := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
 	if runErr != nil {

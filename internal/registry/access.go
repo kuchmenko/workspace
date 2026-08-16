@@ -140,13 +140,14 @@ func (store *Store) SetAccess(ctx context.Context, name string, policy AccessPol
 	if err = store.validatePolicyDevices(ctx, policy); err != nil {
 		return Workspace{}, err
 	}
-	if err = store.persistAccess(ctx, name, policy); err != nil {
+	localActive, _ := store.localNetworkPresence(ctx)
+	if err = store.persistAccess(ctx, name, policy, localActive); err != nil {
 		return Workspace{}, err
 	}
 	return store.LoadByName(ctx, name)
 }
 
-func (store *Store) persistAccess(ctx context.Context, name string, policy AccessPolicy) error {
+func (store *Store) persistAccess(ctx context.Context, name string, policy AccessPolicy, localActive bool) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -156,7 +157,7 @@ func (store *Store) persistAccess(ctx context.Context, name string, policy Acces
 	if err != nil {
 		return err
 	}
-	if base.policy.Role(store.identity.ID(), true) != WorkspaceAdmin {
+	if base.policy.Role(store.identity.ID(), localActive) != WorkspaceAdmin {
 		return errors.New("local device is not a workspace admin")
 	}
 	if equalPolicy(base.policy, policy) {
@@ -173,6 +174,9 @@ func (store *Store) persistAccess(ctx context.Context, name string, policy Acces
 		return err
 	}
 	if err = replaceHeads(ctx, tx, base.workspaceID, []string{revision.ID}); err != nil {
+		return err
+	}
+	if err = replaceConflicts(ctx, tx, base.workspaceID, revision.ID, revision.Conflicts); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, name, base.revision); err != nil {
@@ -208,12 +212,16 @@ func (store *Store) makeAccessRevision(tx *sql.Tx, base accessBase, policy Acces
 	if err != nil {
 		return Revision{}, 0, err
 	}
+	conflicts, err := loadRevisionConflicts(tx, base.head)
+	if err != nil {
+		return Revision{}, 0, err
+	}
 	if policySharedWithOtherDevice(policy, store.identity.ID()) {
 		if err = validateShareableHistory(tx, base.workspaceID); err != nil {
 			return Revision{}, 0, err
 		}
 	}
-	revision, err := makeRevision(base.workspaceID, epoch, "access", []string{base.head}, snapshot, nil, policy, store.identity)
+	revision, err := makeRevision(base.workspaceID, epoch, "access", []string{base.head}, snapshot, conflicts, policy, store.identity)
 	return revision, epoch, err
 }
 
@@ -371,7 +379,7 @@ func (store *Store) ReconcileNetworkAccess(ctx context.Context) error {
 		if policyErr != nil {
 			return policyErr
 		}
-		if policy.Role(store.identity.ID(), true) != WorkspaceAdmin {
+		if policy.Role(store.identity.ID(), active[store.identity.ID()]) != WorkspaceAdmin {
 			continue
 		}
 		policy, changed := reconcilePolicy(policy, active)

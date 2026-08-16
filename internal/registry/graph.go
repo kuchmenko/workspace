@@ -3,7 +3,9 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"sort"
 
 	"github.com/kuchmenko/workspace/internal/config"
 )
@@ -24,6 +26,41 @@ func revisionConflicts(revisions []Revision, id string) []Conflict {
 		}
 	}
 	return nil
+}
+
+func loadRevisionConflicts(tx *sql.Tx, id string) ([]Conflict, error) {
+	var body []byte
+	if err := tx.QueryRow(`SELECT conflicts FROM revisions WHERE id=?`, id).Scan(&body); err != nil {
+		return nil, err
+	}
+	var conflicts []Conflict
+	if err := json.Unmarshal(body, &conflicts); err != nil {
+		return nil, err
+	}
+	return conflicts, nil
+}
+
+func combineConflicts(sets ...[]Conflict) ([]Conflict, error) {
+	byPath := map[string]Conflict{}
+	for _, conflicts := range sets {
+		for _, conflict := range conflicts {
+			existing, found := byPath[conflict.Path]
+			if found && (string(existing.Base) != string(conflict.Base) || string(existing.Left) != string(conflict.Left) || string(existing.Right) != string(conflict.Right)) {
+				return nil, errors.New("divergent unresolved conflicts require resolution")
+			}
+			byPath[conflict.Path] = conflict
+		}
+	}
+	paths := make([]string, 0, len(byPath))
+	for path := range byPath {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	combined := make([]Conflict, 0, len(paths))
+	for _, path := range paths {
+		combined = append(combined, byPath[path])
+	}
+	return combined, nil
 }
 
 func replaceConflicts(ctx context.Context, tx *sql.Tx, workspaceID, revisionID string, conflicts []Conflict) error {

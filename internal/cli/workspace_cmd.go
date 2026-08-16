@@ -99,7 +99,7 @@ func newWorkspaceSetRootCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:         "set-root <workspace> <path>",
 		Short:       "Change a workspace's machine-local root",
-		Annotations: agentAnnotations("workspace-set-root", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "2"),
+		Annotations: agentAnnotations("workspace-set-root", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
 		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			local, err := registry.OpenDefault()

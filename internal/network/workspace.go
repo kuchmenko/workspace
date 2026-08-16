@@ -72,6 +72,9 @@ func syncWorkspace(ctx context.Context, store *registry.Store, peerID string, in
 	if incoming == nil {
 		return errors.New("workspace sync bundle is required")
 	}
+	if err := store.ReconcileNetworkAccess(ctx); err != nil {
+		return err
+	}
 	name, err := store.WorkspaceNameByID(ctx, incoming.WorkspaceID)
 	if err != nil {
 		return err
@@ -167,7 +170,7 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	}
 	after, conflicts, err := store.IntegrateFrom(ctx, workspaceName, *response.Workspace, target.ID)
 	if err != nil {
-		return SyncResult{}, err
+		return SyncResult{}, RejectedError{err: err}
 	}
 	status := completedSyncStatus(before.Head, after.Head, response.SyncStatus, conflicts, response.Conflicts)
 	return SyncResult{Workspace: workspaceName, Device: target.Name, Status: status, Head: after.Head, Conflicts: conflicts}, nil
@@ -241,6 +244,8 @@ func networkDevice(ctx context.Context, store *registry.Store, id string) (regis
 }
 
 func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, request peerRequest) (peerResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
+	defer cancel()
 	cert, err := certificate(identity, name)
 	if err != nil {
 		return peerResponse{}, err
@@ -252,36 +257,35 @@ func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRec
 	dialer := tls.Dialer{Config: config}
 	connection, err := dialer.DialContext(ctx, "tcp", endpoint)
 	if err != nil {
-		return peerResponse{}, err
+		return peerResponse{}, UnavailableError{err: err}
 	}
 	defer func() { _ = connection.Close() }()
+	stop := watchConnection(ctx, connection)
+	defer stop()
 	return exchangePeer(ctx, connection, target, store, request)
 }
 
 func exchangePeer(ctx context.Context, connection net.Conn, target registry.DeviceRecord, store *registry.Store, request peerRequest) (peerResponse, error) {
 	var err error
-	if deadline, present := ctx.Deadline(); present {
-		_ = connection.SetDeadline(deadline)
-	}
 	request.Network, err = store.ExportNetwork(ctx)
 	if err != nil {
 		return peerResponse{}, err
 	}
 	if err = json.NewEncoder(connection).Encode(request); err != nil {
-		return peerResponse{}, err
+		return peerResponse{}, UnavailableError{err: err}
 	}
 	var response peerResponse
-	if err = json.NewDecoder(connection).Decode(&response); err != nil {
-		return peerResponse{}, err
+	if err = decodeLimited(connection, maxPeerMessageBytes, &response); err != nil {
+		return peerResponse{}, UnavailableError{err: err}
 	}
 	if response.Error != "" {
-		return peerResponse{}, errors.New(response.Error)
+		return peerResponse{}, RejectedError{err: errors.New(response.Error)}
 	}
 	if response.Info.DeviceID != target.ID {
 		return peerResponse{}, errors.New("peer response identity does not match certificate")
 	}
 	if _, err = store.MergeNetwork(ctx, response.Network); err != nil {
-		return peerResponse{}, err
+		return peerResponse{}, RejectedError{err: err}
 	}
 	return response, nil
 }

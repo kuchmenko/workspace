@@ -2,12 +2,38 @@ package network
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
 	"github.com/kuchmenko/workspace/internal/registry"
 )
+
+func TestWatchConnectionUnblocksPartialReadOnCancellation(t *testing.T) {
+	left, right := net.Pipe()
+	defer func() { _ = right.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := watchConnection(ctx, left)
+	defer stop()
+	done := make(chan error, 1)
+	go func() {
+		var request peerRequest
+		done <- decodeLimited(left, maxPeerMessageBytes, &request)
+	}()
+	if _, err := right.Write([]byte(`{"version":`)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("partial request decoded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connection read remained blocked after cancellation")
+	}
+}
 
 func TestPeerProbeAuthenticatesPairedDevices(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)

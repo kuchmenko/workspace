@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"sort"
 	"sync"
@@ -16,6 +17,46 @@ import (
 )
 
 const DefaultListenAddress = ":17337"
+
+const (
+	peerExchangeTimeout = 10 * time.Second
+	maxPeerMessageBytes = 64 << 20
+	maxPeerConnections  = 32
+)
+
+type RejectedError struct {
+	err error
+}
+
+type UnavailableError struct {
+	err error
+}
+
+func (err RejectedError) Error() string {
+	return err.err.Error()
+}
+
+func (err RejectedError) Unwrap() error {
+	return err.err
+}
+
+func IsRejected(err error) bool {
+	var rejected RejectedError
+	return errors.As(err, &rejected)
+}
+
+func (err UnavailableError) Error() string {
+	return err.err.Error()
+}
+
+func (err UnavailableError) Unwrap() error {
+	return err.err
+}
+
+func IsUnavailable(err error) bool {
+	var unavailable UnavailableError
+	return errors.As(err, &unavailable)
+}
 
 type ServeOptions struct {
 	Store            *registry.Store
@@ -64,7 +105,7 @@ func Serve(ctx context.Context, options ServeOptions) error {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-	tlsListener := tls.NewListener(listener, peerServerTLS(cert, trustedPeer(options.Store)))
+	tlsListener := tls.NewListener(listener, peerServerTLS(cert, options.Identity, options.Name, trustedPeer(options.Store)))
 	return servePeerListener(ctx, options, self, listener, tlsListener)
 }
 
@@ -128,9 +169,16 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 	}()
 	var wait sync.WaitGroup
 	defer wait.Wait()
+	slots := make(chan struct{}, maxPeerConnections)
 	for {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return nil
+		}
 		connection, acceptErr := tlsListener.Accept()
 		if acceptErr != nil {
+			<-slots
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -139,6 +187,7 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
+			defer func() { <-slots }()
 			defer func() { _ = connection.Close() }()
 			_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
 			servePeerConnection(options.Store, self, connection)
@@ -147,6 +196,8 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 }
 
 func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) (PeerInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
+	defer cancel()
 	cert, err := certificate(identity, name)
 	if err != nil {
 		return PeerInfo{}, err
@@ -161,9 +212,8 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, s
 		return PeerInfo{}, err
 	}
 	defer func() { _ = connection.Close() }()
-	if deadline, present := ctx.Deadline(); present {
-		_ = connection.SetDeadline(deadline)
-	}
+	stop := watchConnection(ctx, connection)
+	defer stop()
 	bundle, err := store.ExportNetwork(ctx)
 	if err != nil {
 		return PeerInfo{}, err
@@ -172,7 +222,7 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, s
 		return PeerInfo{}, err
 	}
 	var response peerResponse
-	if err = json.NewDecoder(connection).Decode(&response); err != nil {
+	if err = decodeLimited(connection, maxPeerMessageBytes, &response); err != nil {
 		return PeerInfo{}, err
 	}
 	if response.Error != "" {
@@ -232,7 +282,7 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 func servePeerConnection(store *registry.Store, self registry.DeviceRecord, connection net.Conn) {
 	var request peerRequest
 	encoder := json.NewEncoder(connection)
-	if err := json.NewDecoder(connection).Decode(&request); err != nil {
+	if err := decodeLimited(connection, maxPeerMessageBytes, &request); err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
@@ -293,4 +343,23 @@ func deviceByID(devices []registry.DeviceRecord, id string) (registry.DeviceReco
 		}
 	}
 	return registry.DeviceRecord{}, false
+}
+
+func watchConnection(ctx context.Context, connection net.Conn) func() {
+	if deadline, present := ctx.Deadline(); present {
+		_ = connection.SetDeadline(deadline)
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = connection.Close()
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
+func decodeLimited(reader io.Reader, limit int64, value any) error {
+	return json.NewDecoder(io.LimitReader(reader, limit)).Decode(value)
 }

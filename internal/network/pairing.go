@@ -44,6 +44,11 @@ type PairResult struct {
 	Peer registry.DeviceRecord
 }
 
+const (
+	pairExchangeTimeout = 30 * time.Second
+	maxPairMessageBytes = 1 << 20
+)
+
 type joinRequest struct {
 	Version int    `json:"version"`
 	Code    string `json:"code"`
@@ -113,12 +118,18 @@ func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Cer
 		if acceptErr != nil {
 			return PairResult{}, acceptErr
 		}
+		attemptCtx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
+		stop := watchConnection(attemptCtx, connection)
 		if acceptErr = writePairCertificate(connection, cert); acceptErr != nil {
+			stop()
+			cancel()
 			_ = connection.Close()
 			continue
 		}
 		connection = tls.Server(connection, pairingServerTLS(cert))
-		result, retry, pairErr := acceptPairConnection(ctx, connection, code, options)
+		result, retry, pairErr := acceptPairConnection(attemptCtx, connection, code, options)
+		stop()
+		cancel()
 		_ = connection.Close()
 		if retry {
 			continue
@@ -149,7 +160,7 @@ func receivePairRequest(ctx context.Context, connection net.Conn, code string) (
 		return nil, "", true, err
 	}
 	var request joinRequest
-	if err = json.NewDecoder(connection).Decode(&request); err != nil {
+	if err = decodeLimited(connection, maxPairMessageBytes, &request); err != nil {
 		return nil, "", true, err
 	}
 	if request.Version != 1 || request.Code != code {
@@ -176,7 +187,7 @@ func confirmPairConnection(connection net.Conn, peerName, authentication string,
 		return errors.New("pairing rejected")
 	}
 	var peerConfirmation joinConfirmation
-	if err = json.NewDecoder(connection).Decode(&peerConfirmation); err != nil {
+	if err = decodeLimited(connection, maxPairMessageBytes, &peerConfirmation); err != nil {
 		return err
 	}
 	if !peerConfirmation.Confirmed {
@@ -220,6 +231,8 @@ func Join(ctx context.Context, options JoinOptions) (PairResult, error) {
 }
 
 func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (PairResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
+	defer cancel()
 	cert, err := certificate(options.Identity, options.Name)
 	if err != nil {
 		return PairResult{}, err
@@ -229,6 +242,8 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 	if err != nil {
 		return PairResult{}, err
 	}
+	stop := watchConnection(ctx, rawConnection)
+	defer stop()
 	peerCertificate, err := readPairCertificate(rawConnection)
 	if err != nil {
 		_ = rawConnection.Close()
@@ -249,7 +264,7 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	var challenge pairChallenge
-	if err = json.NewDecoder(connection).Decode(&challenge); err != nil {
+	if err = decodeLimited(connection, maxPairMessageBytes, &challenge); err != nil {
 		return PairResult{}, err
 	}
 	if !challenge.Accepted {
@@ -263,7 +278,7 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	var response pairResponse
-	if err = json.NewDecoder(connection).Decode(&response); err != nil {
+	if err = decodeLimited(connection, maxPairMessageBytes, &response); err != nil {
 		return PairResult{}, err
 	}
 	if !response.Accepted {

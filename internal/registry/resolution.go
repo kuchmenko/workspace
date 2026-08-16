@@ -33,7 +33,8 @@ func (store *Store) Conflicts(ctx context.Context, name string) ([]Conflict, err
 }
 
 func (store *Store) Resolve(ctx context.Context, name, path string, value json.RawMessage) (Workspace, error) {
-	if err := store.persistResolution(ctx, name, path, value); err != nil {
+	localActive, _ := store.localNetworkPresence(ctx)
+	if err := store.persistResolution(ctx, name, path, value, localActive); err != nil {
 		return Workspace{}, err
 	}
 	return store.LoadByName(ctx, name)
@@ -48,13 +49,13 @@ type resolution struct {
 	remaining               []Conflict
 }
 
-func (store *Store) persistResolution(ctx context.Context, name, path string, value json.RawMessage) error {
+func (store *Store) persistResolution(ctx context.Context, name, path string, value json.RawMessage, localActive bool) error {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	prepared, err := store.prepareResolution(ctx, tx, name, path, value)
+	prepared, err := store.prepareResolution(ctx, tx, name, path, value, localActive)
 	if err != nil {
 		return err
 	}
@@ -81,7 +82,7 @@ func (store *Store) persistResolution(ctx context.Context, name, path string, va
 	return tx.Commit()
 }
 
-func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, path string, value json.RawMessage) (resolution, error) {
+func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, path string, value json.RawMessage, localActive bool) (resolution, error) {
 	prepared, err := loadResolution(ctx, tx, name)
 	if err != nil {
 		return prepared, err
@@ -93,7 +94,7 @@ func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, pat
 	if err != nil {
 		return prepared, err
 	}
-	if err = requireConflictWriter(prepared.policy, store.identity.ID()); err != nil {
+	if err = requireConflictWriter(prepared.policy, store.identity.ID(), localActive); err != nil {
 		return prepared, err
 	}
 	snapshot, err := loadRevisionSnapshot(tx, prepared.head)
@@ -119,8 +120,8 @@ func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, pat
 	return prepared, nil
 }
 
-func requireConflictWriter(policy AccessPolicy, localID string) error {
-	role := policy.Role(localID, true)
+func requireConflictWriter(policy AccessPolicy, localID string, localActive bool) error {
+	role := policy.Role(localID, localActive)
 	if role != WorkspaceAdmin && role != WorkspaceWriter {
 		return errors.New("local device cannot resolve workspace conflicts")
 	}

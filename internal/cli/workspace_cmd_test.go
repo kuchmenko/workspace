@@ -251,6 +251,10 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("peer server did not stop")
 	}
+	results, failures, err = synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{pulled}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	if err != nil || len(results) != 1 || results[0].Status != "unavailable" || len(failures) != 1 {
+		t.Fatalf("offline results=%#v failures=%v error=%v", results, failures, err)
+	}
 }
 
 func TestWorkspaceConflictCommandsListAndResolve(t *testing.T) {
@@ -395,6 +399,55 @@ func TestRootWorkspaceListDoesNotRequireCurrentWorkspace(t *testing.T) {
 	root.SetArgs([]string{"workspace", "list"})
 	if err := root.Execute(); err != nil {
 		t.Fatalf("ws workspace list outside a workspace: %v", err)
+	}
+}
+
+func TestWorkspaceAccessSetDoesNotRequireCurrentWorkspace(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("WS_ROOT", "")
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err = store.EnsureNetwork(ctx, "arch"); err != nil {
+		t.Fatal(err)
+	}
+	peer, err := device.Load(filepath.Join(t.TempDir(), "peer.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.AddNetworkDevice(ctx, "asahi", peer.PublicKey(), registry.NetworkMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Create(ctx, "personal", t.TempDir(), &config.Workspace{Meta: config.Meta{Version: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cwd := t.TempDir()
+	oldCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldCWD) })
+	wsRoot = ""
+	ws = nil
+	t.Cleanup(func() {
+		wsRoot = ""
+		ws = nil
+	})
+	root := NewRootCmd()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"workspace", "access", "set", "personal", peer.ID(), registry.WorkspaceWriter})
+	if err = root.Execute(); err != nil {
+		t.Fatalf("workspace access set outside a workspace: %v", err)
 	}
 }
 

@@ -123,6 +123,20 @@ func TestRunSyncWithoutDeviceNetworkSynchronizesProjects(t *testing.T) {
 	}
 }
 
+func TestRunSyncCanceledBeforeInitialExchangeReturns130(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := t.TempDir()
+	registerSyncTestWorkspace(t, root, &config.Workspace{Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	err := runSync(ctx, root, strings.NewReader(""), &stdout, &stderr)
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != syncExitCanceled {
+		t.Fatalf("error = %v, want exit %d", err, syncExitCanceled)
+	}
+}
+
 func registerSyncTestWorkspace(t *testing.T, root string, workspace *config.Workspace) {
 	t.Helper()
 	workspace.Meta.Version = 1
