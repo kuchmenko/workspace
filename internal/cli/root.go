@@ -105,7 +105,7 @@ func commandSkipsWorkspace(cmd *cobra.Command) bool {
 		return false
 	}
 	parent := cmd.Parent().Name()
-	return parent == "explorer" || parent == "workspace" || parent == "auth" || parent == "network" || cmd.Parent().Parent() != nil && cmd.Parent().Parent().Name() == "network"
+	return parent == "explorer" || parent == "workspace" || parent == "auth" || parent == "network"
 }
 
 func loadDoctorWorkspace() error {

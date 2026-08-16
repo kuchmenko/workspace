@@ -26,7 +26,8 @@ func newNetworkCmd() *cobra.Command {
 		newNetworkJoinCmd(),
 		newNetworkStatusCmd(),
 		newNetworkServeCmd(),
-		newNetworkDeviceCmd(),
+		newNetworkRoleCmd(),
+		newNetworkRemoveCmd(),
 	)
 	return command
 }
@@ -177,13 +178,7 @@ func newNetworkServeCmd() *cobra.Command {
 	return command
 }
 
-func newNetworkDeviceCmd() *cobra.Command {
-	command := &cobra.Command{Use: "device", Short: "Manage trusted devices"}
-	command.AddCommand(newNetworkDeviceRoleCmd(), newNetworkDeviceRemoveCmd())
-	return command
-}
-
-func newNetworkDeviceRoleCmd() *cobra.Command {
+func newNetworkRoleCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "role <device> <admin|member>",
 		Short: "Change a device network role",
@@ -204,7 +199,7 @@ func newNetworkDeviceRoleCmd() *cobra.Command {
 	}
 }
 
-func newNetworkDeviceRemoveCmd() *cobra.Command {
+func newNetworkRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <device>",
 		Short: "Remove a device from the trusted network",
