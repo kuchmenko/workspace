@@ -41,13 +41,15 @@ type Status struct {
 }
 
 type peerRequest struct {
-	Version int    `json:"version"`
-	Action  string `json:"action"`
+	Version int                    `json:"version"`
+	Action  string                 `json:"action"`
+	Network registry.NetworkBundle `json:"network"`
 }
 
 type peerResponse struct {
-	Info  PeerInfo `json:"info"`
-	Error string   `json:"error,omitempty"`
+	Info    PeerInfo               `json:"info"`
+	Network registry.NetworkBundle `json:"network"`
+	Error   string                 `json:"error,omitempty"`
 }
 
 func Serve(ctx context.Context, options ServeOptions) error {
@@ -138,7 +140,7 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 	}
 }
 
-func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, identity device.Identity, name string) (PeerInfo, error) {
+func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) (PeerInfo, error) {
 	cert, err := certificate(identity, name)
 	if err != nil {
 		return PeerInfo{}, err
@@ -156,7 +158,11 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, i
 	if deadline, present := ctx.Deadline(); present {
 		_ = connection.SetDeadline(deadline)
 	}
-	if err = json.NewEncoder(connection).Encode(peerRequest{Version: 1, Action: "status"}); err != nil {
+	bundle, err := store.ExportNetwork(ctx)
+	if err != nil {
+		return PeerInfo{}, err
+	}
+	if err = json.NewEncoder(connection).Encode(peerRequest{Version: 1, Action: "status", Network: bundle}); err != nil {
 		return PeerInfo{}, err
 	}
 	var response peerResponse
@@ -168,6 +174,9 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, i
 	}
 	if response.Info.DeviceID != target.ID {
 		return PeerInfo{}, errors.New("peer response identity does not match certificate")
+	}
+	if _, err = store.MergeNetwork(ctx, response.Network); err != nil {
+		return PeerInfo{}, err
 	}
 	return response.Info, nil
 }
@@ -191,7 +200,7 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 			status.Endpoint = "local"
 		} else if endpoint := endpoints[record.ID]; endpoint != "" && record.Active {
 			probeContext, stop := context.WithTimeout(ctx, 3*time.Second)
-			_, probeErr := Probe(probeContext, endpoint, record, identity, name)
+			_, probeErr := Probe(probeContext, endpoint, record, store, identity, name)
 			stop()
 			status.Endpoint = endpoint
 			status.Online = probeErr == nil
@@ -200,6 +209,15 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 			}
 		}
 		statuses = append(statuses, status)
+	}
+	current, err := store.Network(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for index := range statuses {
+		if record, found := deviceByID(current.Devices, statuses[index].Device.ID); found {
+			statuses[index].Device = record
+		}
 	}
 	sort.Slice(statuses, func(left, right int) bool { return statuses[left].Device.Name < statuses[right].Device.Name })
 	return statuses, nil
@@ -216,17 +234,31 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		_ = encoder.Encode(peerResponse{Error: "unsupported peer request"})
 		return
 	}
+	if _, err := store.MergeNetwork(context.Background(), request.Network); err != nil {
+		_ = encoder.Encode(peerResponse{Error: err.Error()})
+		return
+	}
 	state, err := store.Network(context.Background())
 	if err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
-	_ = encoder.Encode(peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}})
+	bundle, err := store.ExportNetwork(context.Background())
+	if err != nil {
+		_ = encoder.Encode(peerResponse{Error: err.Error()})
+		return
+	}
+	_ = encoder.Encode(peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle})
 }
 
 func activeDevice(devices []registry.DeviceRecord, id string) (registry.DeviceRecord, bool) {
+	record, found := deviceByID(devices, id)
+	return record, found && record.Active
+}
+
+func deviceByID(devices []registry.DeviceRecord, id string) (registry.DeviceRecord, bool) {
 	for _, record := range devices {
-		if record.ID == id && record.Active {
+		if record.ID == id {
 			return record, true
 		}
 	}

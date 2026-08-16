@@ -135,31 +135,72 @@ func (store *Store) ImportNetwork(ctx context.Context, bundle NetworkBundle, inv
 	if !found || !inviter.Active || inviter.Role != NetworkAdmin {
 		return NetworkState{}, errors.New("pairing inviter is not a network admin")
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
+	if err = store.persistNetwork(ctx, bundle, true); err != nil {
+		return NetworkState{}, err
+	}
+	return state, nil
+}
+
+func (store *Store) MergeNetwork(ctx context.Context, incoming NetworkBundle) (NetworkState, error) {
+	local, err := store.ExportNetwork(ctx)
 	if err != nil {
 		return NetworkState{}, err
+	}
+	if local.ID != incoming.ID {
+		return NetworkState{}, errors.New("peer belongs to another network")
+	}
+	combined := combineNetworkBundles(local, incoming)
+	state, err := materializeNetwork(combined)
+	if err != nil {
+		return NetworkState{}, err
+	}
+	if err = store.persistNetwork(ctx, incoming, false); err != nil {
+		return NetworkState{}, err
+	}
+	return state, nil
+}
+
+func combineNetworkBundles(local, incoming NetworkBundle) NetworkBundle {
+	events := make(map[string]NetworkEvent, len(local.Events)+len(incoming.Events))
+	for _, event := range local.Events {
+		events[event.ID] = event
+	}
+	for _, event := range incoming.Events {
+		events[event.ID] = event
+	}
+	combined := NetworkBundle{ID: local.ID, Epoch: max(local.Epoch, incoming.Epoch), Events: make([]NetworkEvent, 0, len(events))}
+	for _, event := range events {
+		combined.Events = append(combined.Events, event)
+	}
+	return combined
+}
+
+func (store *Store) persistNetwork(ctx context.Context, bundle NetworkBundle, allowNew bool) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 	var existing string
 	err = tx.QueryRowContext(ctx, `SELECT id FROM networks LIMIT 1`).Scan(&existing)
 	if err == nil && existing != bundle.ID {
-		return NetworkState{}, errors.New("device already belongs to another network")
+		return errors.New("device already belongs to another network")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return NetworkState{}, err
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) && !allowNew {
+		return errors.New("device does not belong to a network")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO networks(id,epoch) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)`, bundle.ID, bundle.Epoch); err != nil {
-		return NetworkState{}, err
+		return err
 	}
 	for _, event := range bundle.Events {
 		if err = insertNetworkEvent(ctx, tx, event); err != nil {
-			return NetworkState{}, err
+			return err
 		}
 	}
-	if err = tx.Commit(); err != nil {
-		return NetworkState{}, err
-	}
-	return state, nil
+	return tx.Commit()
 }
 
 func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey ed25519.PublicKey, role string) (NetworkState, error) {

@@ -30,7 +30,7 @@ func TestPeerProbeAuthenticatesPairedDevices(t *testing.T) {
 	if !found {
 		t.Fatal("paired arch device not found")
 	}
-	info, err := Probe(ctx, <-endpoint, arch, asahiIdentity, "asahi")
+	info, err := Probe(ctx, <-endpoint, arch, asahiStore, asahiIdentity, "asahi")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestPeerProbeRejectsUnknownDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	arch, _ := activeDevice(state.Devices, archIdentity.ID())
-	if _, err = Probe(ctx, <-endpoint, arch, unknownIdentity, "unknown"); err == nil {
+	if _, err = Probe(ctx, <-endpoint, arch, asahiStore, unknownIdentity, "unknown"); err == nil {
 		t.Fatal("unknown device authenticated")
 	}
 	cancel()
@@ -91,8 +91,46 @@ func TestPeerProbeRejectsMismatchedPinnedIdentity(t *testing.T) {
 	}
 	arch, _ := activeDevice(state.Devices, archIdentity.ID())
 	arch.PublicKey = append([]byte(nil), otherIdentity.PublicKey()...)
-	if _, err = Probe(ctx, <-endpoint, arch, asahiIdentity, "asahi"); err == nil {
+	if _, err = Probe(ctx, <-endpoint, arch, asahiStore, asahiIdentity, "asahi"); err == nil {
 		t.Fatal("mismatched server identity authenticated")
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPeerProbeReplicatesSignedNetworkRole(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := archStore.SetNetworkRole(ctx, asahiIdentity.ID(), registry.NetworkAdmin); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	state, err := asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch, _ := activeDevice(state.Devices, archIdentity.ID())
+	if _, err = Probe(ctx, <-endpoint, arch, asahiStore, asahiIdentity, "asahi"); err != nil {
+		t.Fatal(err)
+	}
+	state, err = asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asahi, found := activeDevice(state.Devices, asahiIdentity.ID())
+	if !found || asahi.Role != registry.NetworkAdmin {
+		t.Fatalf("replicated Asahi role = %#v", asahi)
 	}
 	cancel()
 	if err = <-serverOutcome; err != nil {
