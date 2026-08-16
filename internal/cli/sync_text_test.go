@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	peernetwork "github.com/kuchmenko/workspace/internal/network"
 	"github.com/kuchmenko/workspace/internal/registry"
 	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 	"github.com/kuchmenko/workspace/internal/testutil"
@@ -48,7 +50,7 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 	if strings.Contains(output, "\x1b[") {
 		t.Fatalf("headless output contains ANSI: %q", output)
 	}
-	if !strings.Contains(stdout.String(), "no changes made") {
+	if !strings.Contains(stdout.String(), "no project changes made") {
 		t.Fatalf("missing no-mutation summary: %s", stdout.String())
 	}
 }
@@ -88,6 +90,36 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "start: workspace-sync") || !strings.Contains(stdout.String(), "start: project-sync app") {
 		t.Fatalf("missing execution progress:\n%s", stdout.String())
+	}
+}
+
+func TestRunSyncWithoutDeviceNetworkSynchronizesProjects(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	projectRemote := testutil.InitFakeRemote(t, "app", "main")
+	root := t.TempDir()
+	workspace := &config.Workspace{
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{},
+		Projects: map[string]config.Project{
+			"app": {
+				Remote:        projectRemote,
+				Path:          "personal/app",
+				Status:        config.StatusActive,
+				Category:      config.CategoryPersonal,
+				DefaultBranch: "main",
+			},
+		},
+	}
+	registerSyncTestWorkspace(t, root, workspace)
+	var stdout, stderr bytes.Buffer
+	if err := runSync(context.Background(), root, strings.NewReader(""), &stdout, &stderr); err != nil {
+		t.Fatalf("runSync: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if !git.IsRepo(filepath.Join(root, "personal/app")) {
+		t.Fatal("project was not synchronized")
+	}
+	if strings.Contains(stdout.String(), "workspace-sync:") || stderr.Len() != 0 {
+		t.Fatalf("unexpected local workspace output:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
 }
 
@@ -139,5 +171,23 @@ func TestWriteSyncSummaryIsPlainAndClassified(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "\x1b[") {
 		t.Fatal("summary contains ANSI")
+	}
+}
+
+func TestWriteTopLevelWorkspaceSyncContinuesOfflineAndRejectsInvalidHistory(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	results := []peernetwork.SyncResult{{Device: "asahi", Status: "unavailable"}}
+	if err := writeTopLevelWorkspaceSync(&stdout, &stderr, results, []string{"shared/asahi: unavailable"}); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "workspace-sync: asahi unavailable\n" || !strings.Contains(stderr.String(), "continuing offline") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	results = []peernetwork.SyncResult{{Device: "asahi", Status: "rejected"}}
+	err := writeTopLevelWorkspaceSync(&stdout, &stderr, results, []string{"shared/asahi: workspace epoch is stale"})
+	if err == nil || err.Error() != "shared/asahi: workspace epoch is stale" {
+		t.Fatalf("error = %v", err)
 	}
 }

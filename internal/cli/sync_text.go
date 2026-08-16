@@ -2,14 +2,19 @@ package cli
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/git"
+	peernetwork "github.com/kuchmenko/workspace/internal/network"
+	"github.com/kuchmenko/workspace/internal/registry"
 	workspacesync "github.com/kuchmenko/workspace/internal/sync"
 	"golang.org/x/term"
 )
@@ -22,11 +27,80 @@ const (
 func runSync(parent context.Context, root string, stdin io.Reader, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	plan := workspacesync.BuildPlan(root, ws)
-	if syncTerminal(stdin) && syncTerminal(stdout) {
-		return runSyncTUI(ctx, root, plan, stdout)
+	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	if err != nil {
+		return err
 	}
-	return runSyncHeadless(ctx, root, plan, stdout, stderr)
+	plan := workspacesync.BuildPlan(root, current.State)
+	var runErr error
+	if syncTerminal(stdin) && syncTerminal(stdout) {
+		runErr = runSyncTUI(ctx, root, plan, stdout)
+	} else {
+		runErr = runSyncHeadless(ctx, root, plan, stdout, stderr)
+	}
+	_, publishErr := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	if runErr != nil {
+		if publishErr != nil {
+			fmt.Fprintf(stderr, "workspace-sync: %v\n", publishErr)
+		}
+		return runErr
+	}
+	return publishErr
+}
+
+func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (registry.Workspace, error) {
+	store, identity, err := openNetworkNode()
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	if _, err = store.Network(ctx); errors.Is(err, sql.ErrNoRows) {
+		return workspace, nil
+	} else if err != nil {
+		return registry.Workspace{}, err
+	}
+	name, err := networkDeviceName("")
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	peers, err := peernetwork.DiscoverPeers(ctx, store, identity.ID(), 1500*time.Millisecond)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	results, failures, err := synchronizeWorkspacePeersContext(ctx, store, identity, name, []registry.Workspace{workspace}, peers)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	if err = writeTopLevelWorkspaceSync(stdout, stderr, results, failures); err != nil {
+		return registry.Workspace{}, err
+	}
+	return store.LoadByRoot(ctx, root)
+}
+
+func writeTopLevelWorkspaceSync(stdout, stderr io.Writer, results []peernetwork.SyncResult, failures []string) error {
+	failureIndex := 0
+	for _, result := range results {
+		fmt.Fprintf(stdout, "workspace-sync: %s %s\n", result.Device, result.Status)
+		switch result.Status {
+		case "unavailable":
+			fmt.Fprintf(stderr, "workspace-sync: %s is unavailable; continuing offline\n", result.Device)
+		case "rejected":
+			if failureIndex < len(failures) {
+				return errors.New(failures[failureIndex])
+			}
+			return fmt.Errorf("workspace sync with %s was rejected", result.Device)
+		case "conflicted":
+			return fmt.Errorf("workspace sync with %s has unresolved conflicts", result.Device)
+		}
+		if result.Status == "unavailable" || result.Status == "rejected" {
+			failureIndex++
+		}
+	}
+	return nil
 }
 
 func syncTerminal(stream any) bool {
@@ -53,7 +127,7 @@ func runSyncHeadless(ctx context.Context, root string, plan workspacesync.Plan, 
 		return ExitError{Code: syncExitCanceled}
 	}
 	if failed > 0 {
-		fmt.Fprintf(stdout, "summary: preflight failed=%d; no changes made\n", failed)
+		fmt.Fprintf(stdout, "summary: preflight failed=%d; no project changes made\n", failed)
 		return ExitError{Code: syncExitFailed}
 	}
 

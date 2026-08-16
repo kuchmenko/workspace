@@ -107,5 +107,5 @@ Pre-1.0; breaking changes happen between minor versions when the
 design pressure is real. Single-user tool by design — the
 multi-machine sync model assumes one human, several machines.
 
-`ws workspace sync` exchanges registry state with trusted peers. Top-level
-`ws sync` remains the separate foreground command for project Git state.
+`ws sync` exchanges registry state with trusted peers before and after its
+project Git operations. `ws workspace sync` runs only the registry exchange.

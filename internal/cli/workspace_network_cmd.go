@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -353,7 +354,11 @@ func runWorkspaceSync(command *cobra.Command, args []string, jsonOutput bool) er
 }
 
 func synchronizeWorkspacePeers(command *cobra.Command, store *registry.Store, identity device.Identity, name string, workspaces []registry.Workspace, online []peernetwork.PeerEndpoint) ([]peernetwork.SyncResult, []string, error) {
-	state, err := store.Network(command.Context())
+	return synchronizeWorkspacePeersContext(command.Context(), store, identity, name, workspaces, online)
+}
+
+func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store, identity device.Identity, name string, workspaces []registry.Workspace, online []peernetwork.PeerEndpoint) ([]peernetwork.SyncResult, []string, error) {
+	state, err := store.Network(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -368,10 +373,10 @@ func synchronizeWorkspacePeers(command *cobra.Command, store *registry.Store, id
 			if target.ID == identity.ID() || !target.Active {
 				continue
 			}
-			if _, allowed := store.ExportFor(command.Context(), workspace.Name, target.ID); allowed != nil {
+			if _, allowed := store.ExportFor(ctx, workspace.Name, target.ID); allowed != nil {
 				continue
 			}
-			result, failure := synchronizeWorkspacePeer(command, store, identity, name, workspace.Name, target, endpoints[target.ID])
+			result, failure := synchronizeWorkspacePeerContext(ctx, store, identity, name, workspace.Name, target, endpoints[target.ID])
 			results = append(results, result)
 			if failure != "" {
 				failures = append(failures, failure)
@@ -382,10 +387,14 @@ func synchronizeWorkspacePeers(command *cobra.Command, store *registry.Store, id
 }
 
 func synchronizeWorkspacePeer(command *cobra.Command, store *registry.Store, identity device.Identity, name, workspace string, target registry.DeviceRecord, endpoint string) (peernetwork.SyncResult, string) {
+	return synchronizeWorkspacePeerContext(command.Context(), store, identity, name, workspace, target, endpoint)
+}
+
+func synchronizeWorkspacePeerContext(ctx context.Context, store *registry.Store, identity device.Identity, name, workspace string, target registry.DeviceRecord, endpoint string) (peernetwork.SyncResult, string) {
 	if endpoint == "" {
 		return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "unavailable"}, fmt.Sprintf("%s/%s: unavailable", workspace, target.Name)
 	}
-	result, err := peernetwork.Sync(command.Context(), workspace, endpoint, target, store, identity, name)
+	result, err := peernetwork.Sync(ctx, workspace, endpoint, target, store, identity, name)
 	if err != nil {
 		return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "rejected"}, fmt.Sprintf("%s/%s: %v", workspace, target.Name, err)
 	}

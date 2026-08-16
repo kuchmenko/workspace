@@ -70,6 +70,6 @@ ws workspace resolve personal /aliases/editor --take right
 ws workspace sync personal
 ```
 
-`ws workspace sync` is unrelated to top-level `ws sync`. The former exchanges
-SQLite registry history between peers; the latter performs foreground project
-Git synchronization.
+Top-level `ws sync` exchanges SQLite registry history before and after its
+foreground project Git operations. Use `ws workspace sync` when only the
+registry exchange is wanted.

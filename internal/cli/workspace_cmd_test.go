@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
@@ -124,6 +125,109 @@ func TestWorkspaceNetworkCommandSelectionAndOutput(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"status": "pulled"`) || !strings.Contains(output.String(), `"status": "unavailable"`) {
 		t.Fatalf("sync JSON = %q", output.String())
+	}
+}
+
+func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
+	ctx := context.Background()
+	left, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = left.Close() }()
+	rightPath := filepath.Join(directory, "right", "registry.db")
+	right, err := registry.Open(rightPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = right.Close() }()
+	leftIdentityPath, err := device.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftIdentity, err := device.Load(leftIdentityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightIdentity, err := device.Load(filepath.Join(filepath.Dir(rightPath), "identity.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.EnsureNetwork(ctx, "arch"); err != nil {
+		t.Fatal(err)
+	}
+	leftNetwork, err := left.AddNetworkDevice(ctx, "asahi", rightIdentity.PublicKey(), registry.NetworkMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkBundle, err := left.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.ImportNetwork(ctx, networkBundle, leftIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	created, err := left.Create(ctx, "shared", leftRoot, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{leftIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err = left.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := left.ExportFor(ctx, "shared", rightIdentity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.AttachFrom(ctx, "shared", rightRoot, initial, leftIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["remote"] = "project"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	serveCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	ready := make(chan string, 1)
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- peernetwork.Serve(serveCtx, peernetwork.ServeOptions{
+			Store: right, Identity: rightIdentity, Name: "asahi", ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(endpoint string) { ready <- endpoint },
+		})
+	}()
+	endpoint := <-ready
+	var rightDevice registry.DeviceRecord
+	for _, record := range leftNetwork.Devices {
+		if record.ID == rightIdentity.ID() {
+			rightDevice = record
+		}
+	}
+	results, failures, err := synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Status != "pulled" {
+		t.Fatalf("results=%#v failures=%v error=%v", results, failures, err)
+	}
+	pulled, err := left.LoadByRoot(ctx, leftRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pulled.State.Aliases["remote"] != "project" {
+		t.Fatalf("aliases = %#v", pulled.State.Aliases)
+	}
+	stop()
+	select {
+	case err = <-serveErrors:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("peer server did not stop")
 	}
 }
 

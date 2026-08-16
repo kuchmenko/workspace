@@ -46,9 +46,10 @@ Each workspace also has a content-addressed signed revision DAG and a signed
 access policy. Device-network membership alone exposes no workspace. Policy
 selects `local`, every active device, or named devices and assigns `admin`,
 `writer`, or `replica` authority. Roots are deliberately outside replicated
-state. Authenticated TLS peers exchange complete revision bundles manually via
-`ws workspace available/attach/sync`; deterministic merges converge independent
-changes and preserve same-field conflicts for explicit resolution.
+state. Authenticated TLS peers exchange complete revision bundles via
+`ws workspace available/attach/sync`; top-level `ws sync` runs the registry
+exchange before and after project operations. Deterministic merges converge
+independent changes and preserve same-field conflicts for explicit resolution.
 
 ## Project Model
 
