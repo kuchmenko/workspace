@@ -15,6 +15,8 @@ import (
 	"github.com/kuchmenko/workspace/internal/registry"
 )
 
+const DefaultListenAddress = ":7337"
+
 type ServeOptions struct {
 	Store            *registry.Store
 	Identity         device.Identity
@@ -76,7 +78,7 @@ func preparePeerServer(ctx context.Context, options ServeOptions) (registry.Devi
 	}
 	address := options.ListenAddress
 	if address == "" {
-		address = ":0"
+		address = DefaultListenAddress
 	}
 	listener, err := net.Listen("tcp", address)
 	return self, cert, listener, err

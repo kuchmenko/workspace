@@ -174,7 +174,7 @@ func newNetworkServeCmd() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "this device name (default: hostname)")
-	command.Flags().StringVar(&listen, "listen", ":0", "peer listen address")
+	command.Flags().StringVar(&listen, "listen", peernetwork.DefaultListenAddress, "peer listen address")
 	return command
 }
 
