@@ -103,76 +103,12 @@ func (store *Store) Integrate(ctx context.Context, name string, bundle Bundle) (
 		return Workspace{}, nil, err
 	}
 
-	var head string
-	var state *config.Workspace
-	var conflicts []Conflict
-	remoteIsAncestor, ancestorErr := isAncestor(tx, remoteHead, localHead)
-	if ancestorErr != nil {
-		return Workspace{}, nil, ancestorErr
-	}
-	localIsAncestor, ancestorErr := isAncestor(tx, localHead, remoteHead)
-	if ancestorErr != nil {
-		return Workspace{}, nil, ancestorErr
-	}
-	if localHead == remoteHead || remoteIsAncestor {
-		head = localHead
-	} else if localIsAncestor {
-		head = remoteHead
-		state, err = loadRevisionState(tx, head)
-		conflicts = revisionConflicts(bundle.Revisions, head)
-	} else {
-		base, found, ancestorErr := commonAncestor(tx, localHead, remoteHead)
-		if ancestorErr != nil {
-			return Workspace{}, nil, ancestorErr
-		}
-		if !found {
-			return Workspace{}, nil, errors.New("divergent revisions have no common ancestor")
-		}
-		parents := []string{localHead, remoteHead}
-		sort.Strings(parents)
-		baseBody, loadErr := loadRevisionSnapshot(tx, base)
-		if loadErr != nil {
-			return Workspace{}, nil, loadErr
-		}
-		leftBody, loadErr := loadRevisionSnapshot(tx, parents[0])
-		if loadErr != nil {
-			return Workspace{}, nil, loadErr
-		}
-		rightBody, loadErr := loadRevisionSnapshot(tx, parents[1])
-		if loadErr != nil {
-			return Workspace{}, nil, loadErr
-		}
-		mergedBody, mergedConflicts, mergeErr := mergeSnapshots(baseBody, leftBody, rightBody)
-		if mergeErr != nil {
-			return Workspace{}, nil, mergeErr
-		}
-		merged, revisionErr := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, mergedConflicts, store.identity)
-		if revisionErr != nil {
-			return Workspace{}, nil, revisionErr
-		}
-		if err = insertRevision(tx, merged); err != nil {
-			return Workspace{}, nil, err
-		}
-		head = merged.ID
-		state, err = decodeSnapshot(mergedBody)
-		conflicts = mergedConflicts
-	}
+	head, state, conflicts, err := store.integrateHeads(tx, bundle, workspaceID, epoch, localHead, remoteHead)
 	if err != nil {
 		return Workspace{}, nil, err
 	}
 	if state != nil {
-		state.RestoreRoot(root)
-		body, encodeErr := config.EncodeWorkspace(state)
-		if encodeErr != nil {
-			return Workspace{}, nil, encodeErr
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber); err != nil {
-			return Workspace{}, nil, err
-		}
-		if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, head, name, localHead); err != nil {
-			return Workspace{}, nil, err
-		}
-		if err = replaceConflicts(ctx, tx, workspaceID, head, conflicts); err != nil {
+		if err = persistIntegration(ctx, tx, state, root, name, workspaceID, localHead, head, revisionNumber, conflicts); err != nil {
 			return Workspace{}, nil, err
 		}
 	}
@@ -181,6 +117,74 @@ func (store *Store) Integrate(ctx context.Context, name string, bundle Bundle) (
 	}
 	workspace, err := store.LoadByName(ctx, name)
 	return workspace, conflicts, err
+}
+
+func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace, root, name, workspaceID, localHead, head string, revisionNumber int64, conflicts []Conflict) error {
+	state.RestoreRoot(root)
+	body, err := config.EncodeWorkspace(state)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET head_id=? WHERE name=? AND head_id=?`, head, name, localHead); err != nil {
+		return err
+	}
+	return replaceConflicts(ctx, tx, workspaceID, head, conflicts)
+}
+
+func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	remoteIsAncestor, err := isAncestor(tx, remoteHead, localHead)
+	if err != nil || localHead == remoteHead || remoteIsAncestor {
+		return localHead, nil, nil, err
+	}
+	localIsAncestor, err := isAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if localIsAncestor {
+		state, err := loadRevisionState(tx, remoteHead)
+		return remoteHead, state, revisionConflicts(bundle.Revisions, remoteHead), err
+	}
+	return store.mergeHeads(tx, workspaceID, epoch, localHead, remoteHead)
+}
+
+func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	base, found, err := commonAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !found {
+		return "", nil, nil, errors.New("divergent revisions have no common ancestor")
+	}
+	parents := []string{localHead, remoteHead}
+	sort.Strings(parents)
+	baseBody, err := loadRevisionSnapshot(tx, base)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	leftBody, err := loadRevisionSnapshot(tx, parents[0])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	rightBody, err := loadRevisionSnapshot(tx, parents[1])
+	if err != nil {
+		return "", nil, nil, err
+	}
+	mergedBody, conflicts, err := mergeSnapshots(baseBody, leftBody, rightBody)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	merged, err := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, conflicts, store.identity)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if err = insertRevision(tx, merged); err != nil {
+		return "", nil, nil, err
+	}
+	state, err := decodeSnapshot(mergedBody)
+	return merged.ID, state, conflicts, err
 }
 
 func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Revision, error) {
@@ -363,24 +367,8 @@ func ancestorDistances(tx *sql.Tx, head string) (map[string]int, error) {
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		rows, err := tx.Query(`SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, current)
+		parents, err := revisionParents(tx, current)
 		if err != nil {
-			return nil, err
-		}
-		var parents []string
-		for rows.Next() {
-			var parent string
-			if err = rows.Scan(&parent); err != nil {
-				_ = rows.Close()
-				return nil, err
-			}
-			parents = append(parents, parent)
-		}
-		if err = rows.Err(); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		if err = rows.Close(); err != nil {
 			return nil, err
 		}
 		for _, parent := range parents {
@@ -392,6 +380,23 @@ func ancestorDistances(tx *sql.Tx, head string) (map[string]int, error) {
 		}
 	}
 	return distances, nil
+}
+
+func revisionParents(tx *sql.Tx, revisionID string) ([]string, error) {
+	rows, err := tx.Query(`SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var parents []string
+	for rows.Next() {
+		var parent string
+		if err = rows.Scan(&parent); err != nil {
+			return nil, err
+		}
+		parents = append(parents, parent)
+	}
+	return parents, rows.Err()
 }
 
 func loadRevisionSnapshot(tx *sql.Tx, id string) ([]byte, error) {

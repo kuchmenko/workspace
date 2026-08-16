@@ -49,39 +49,53 @@ type peerResponse struct {
 }
 
 func Serve(ctx context.Context, options ServeOptions) error {
+	self, cert, listener, err := preparePeerServer(ctx, options)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
+	tlsListener := tls.NewListener(listener, peerServerTLS(cert, trustedPeer(options.Store)))
+	return servePeerListener(ctx, options, self, listener, tlsListener)
+}
+
+func preparePeerServer(ctx context.Context, options ServeOptions) (registry.DeviceRecord, tls.Certificate, net.Listener, error) {
 	if options.Store == nil {
-		return errors.New("peer store is required")
+		return registry.DeviceRecord{}, tls.Certificate{}, nil, errors.New("peer store is required")
 	}
 	state, err := options.Store.Network(ctx)
 	if err != nil {
-		return err
+		return registry.DeviceRecord{}, tls.Certificate{}, nil, err
 	}
 	self, found := activeDevice(state.Devices, options.Identity.ID())
 	if !found {
-		return errors.New("local device is not active in the network")
+		return registry.DeviceRecord{}, tls.Certificate{}, nil, errors.New("local device is not active in the network")
 	}
 	cert, err := certificate(options.Identity, options.Name)
 	if err != nil {
-		return err
+		return registry.DeviceRecord{}, tls.Certificate{}, nil, err
 	}
 	address := options.ListenAddress
 	if address == "" {
 		address = ":0"
 	}
 	listener, err := net.Listen("tcp", address)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = listener.Close() }()
-	tlsListener := tls.NewListener(listener, peerServerTLS(cert, func(id string) bool {
-		current, loadErr := options.Store.Network(context.Background())
+	return self, cert, listener, err
+}
+
+func trustedPeer(store *registry.Store) func(string) bool {
+	return func(id string) bool {
+		current, loadErr := store.Network(context.Background())
 		if loadErr != nil {
 			return false
 		}
 		_, trusted := activeDevice(current.Devices, id)
 		return trusted
-	}))
+	}
+}
+
+func servePeerListener(ctx context.Context, options ServeOptions, self registry.DeviceRecord, listener net.Listener, tlsListener net.Listener) error {
 	var broadcast *advertisement
+	var err error
 	if !options.DisableDiscovery {
 		port := listener.Addr().(*net.TCPAddr).Port
 		broadcast, err = advertisePeer(discoveryInstance(self.Name, self.ID), self.ID, port)
@@ -127,7 +141,11 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, i
 	if err != nil {
 		return PeerInfo{}, err
 	}
-	dialer := tls.Dialer{Config: peerClientTLS(cert, ed25519.PublicKey(target.PublicKey))}
+	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey), target.Name)
+	if err != nil {
+		return PeerInfo{}, err
+	}
+	dialer := tls.Dialer{Config: config}
 	connection, err := dialer.DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return PeerInfo{}, err

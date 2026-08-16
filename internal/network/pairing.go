@@ -5,11 +5,14 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
@@ -93,12 +96,20 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	if options.Ready != nil {
 		options.Ready(code, listener.Addr().String())
 	}
-	tlsListener := tls.NewListener(listener, pairingServerTLS(cert))
+	return acceptPairAttempts(ctx, listener, cert, code, options)
+}
+
+func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Certificate, code string, options PairOptions) (PairResult, error) {
 	for attempts := 0; attempts < 5; attempts++ {
-		connection, acceptErr := acceptContext(ctx, tlsListener)
+		connection, acceptErr := acceptContext(ctx, listener)
 		if acceptErr != nil {
 			return PairResult{}, acceptErr
 		}
+		if acceptErr = writePairCertificate(connection, cert); acceptErr != nil {
+			_ = connection.Close()
+			continue
+		}
+		connection = tls.Server(connection, pairingServerTLS(cert))
 		result, retry, pairErr := acceptPairConnection(ctx, connection, code, options)
 		_ = connection.Close()
 		if retry {
@@ -180,14 +191,23 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 	if err != nil {
 		return PairResult{}, err
 	}
-	dialer := tls.Dialer{Config: pairingClientTLS(cert)}
-	connection, err := dialer.DialContext(ctx, "tcp", endpoint)
+	dialer := net.Dialer{}
+	rawConnection, err := dialer.DialContext(ctx, "tcp", endpoint)
 	if err != nil {
 		return PairResult{}, err
 	}
+	peerCertificate, err := readPairCertificate(rawConnection)
+	if err != nil {
+		_ = rawConnection.Close()
+		return PairResult{}, err
+	}
+	connection := tls.Client(rawConnection, pairingClientTLS(cert, peerCertificate))
+	if err = connection.HandshakeContext(ctx); err != nil {
+		_ = connection.Close()
+		return PairResult{}, err
+	}
 	defer func() { _ = connection.Close() }()
-	tlsConnection := connection.(*tls.Conn)
-	peerKey, peerName, err := peerPublicKey(tlsConnection.ConnectionState())
+	peerKey, peerName, err := peerPublicKey(connection.ConnectionState())
 	if err != nil {
 		return PairResult{}, err
 	}
@@ -215,6 +235,34 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, errors.New("inviting device is missing from network state")
 	}
 	return PairResult{Peer: peer}, nil
+}
+
+func writePairCertificate(connection net.Conn, cert tls.Certificate) error {
+	body := cert.Certificate[0]
+	if len(body) > 0xffff {
+		return errors.New("pairing certificate is too large")
+	}
+	if _, err := fmt.Fprintf(connection, "%04x", len(body)); err != nil {
+		return err
+	}
+	_, err := connection.Write(body)
+	return err
+}
+
+func readPairCertificate(connection net.Conn) (*x509.Certificate, error) {
+	var size [4]byte
+	if _, err := io.ReadFull(connection, size[:]); err != nil {
+		return nil, err
+	}
+	length, err := strconv.ParseUint(string(size[:]), 16, 16)
+	if err != nil {
+		return nil, err
+	}
+	body := make([]byte, length)
+	if _, err := io.ReadFull(connection, body); err != nil {
+		return nil, err
+	}
+	return x509.ParseCertificate(body)
 }
 
 func pairingCode() (string, error) {

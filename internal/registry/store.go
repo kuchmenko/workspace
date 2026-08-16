@@ -204,19 +204,8 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 		return Workspace{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var workspaceID, head string
-	var epoch int64
-	if err = tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=? AND w.revision=?`, name, expectedRevision).Scan(&workspaceID, &epoch, &head); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			exists, queryErr := workspaceExists(tx, name)
-			if queryErr != nil {
-				return Workspace{}, queryErr
-			}
-			if !exists {
-				return Workspace{}, fmt.Errorf("%w: %q", ErrWorkspaceNotFound, name)
-			}
-			return Workspace{}, ErrStaleRevision
-		}
+	workspaceID, epoch, head, err := updateBase(ctx, tx, name, expectedRevision)
+	if err != nil {
 		return Workspace{}, err
 	}
 	revision, err := makeRevision(workspaceID, epoch, "ordinary", []string{head}, snapshotBody, nil, store.identity)
@@ -244,6 +233,23 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 		return Workspace{}, err
 	}
 	return store.LoadByName(ctx, name)
+}
+
+func updateBase(ctx context.Context, tx *sql.Tx, name string, expectedRevision int64) (string, int64, string, error) {
+	var workspaceID, head string
+	var epoch int64
+	err := tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=? AND w.revision=?`, name, expectedRevision).Scan(&workspaceID, &epoch, &head)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return workspaceID, epoch, head, err
+	}
+	exists, err := workspaceExists(tx, name)
+	if err != nil {
+		return "", 0, "", err
+	}
+	if !exists {
+		return "", 0, "", fmt.Errorf("%w: %q", ErrWorkspaceNotFound, name)
+	}
+	return "", 0, "", ErrStaleRevision
 }
 
 func (store *Store) Mutate(ctx context.Context, root string, mutate func(*config.Workspace) error) (Workspace, error) {

@@ -136,15 +136,8 @@ func insertRevision(tx *sql.Tx, revision Revision) error {
 		return err
 	}
 	if inserted == 0 {
-		var workspaceID string
-		var epoch int64
-		var kind string
-		var snapshot, storedConflicts []byte
-		if err = tx.QueryRow(`SELECT workspace_id,epoch,kind,snapshot,conflicts FROM revisions WHERE id=?`, revision.ID).Scan(&workspaceID, &epoch, &kind, &snapshot, &storedConflicts); err != nil {
+		if err = verifyStoredRevision(tx, revision, conflicts); err != nil {
 			return err
-		}
-		if workspaceID != revision.WorkspaceID || epoch != revision.Epoch || kind != revision.Kind || string(snapshot) != string(revision.Snapshot) || string(storedConflicts) != string(conflicts) {
-			return errors.New("revision ID collision")
 		}
 	}
 	for position, parent := range revision.Parents {
@@ -156,6 +149,19 @@ func insertRevision(tx *sql.Tx, revision Revision) error {
 		if _, err = tx.Exec(`INSERT OR IGNORE INTO revision_proofs(revision_id,device_id,public_key,signature) VALUES(?,?,?,?)`, revision.ID, proof.DeviceID, proof.PublicKey, proof.Signature); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func verifyStoredRevision(tx *sql.Tx, revision Revision, conflicts []byte) error {
+	var workspaceID, kind string
+	var epoch int64
+	var snapshot, storedConflicts []byte
+	if err := tx.QueryRow(`SELECT workspace_id,epoch,kind,snapshot,conflicts FROM revisions WHERE id=?`, revision.ID).Scan(&workspaceID, &epoch, &kind, &snapshot, &storedConflicts); err != nil {
+		return err
+	}
+	if workspaceID != revision.WorkspaceID || epoch != revision.Epoch || kind != revision.Kind || string(snapshot) != string(revision.Snapshot) || string(storedConflicts) != string(conflicts) {
+		return errors.New("revision ID collision")
 	}
 	return nil
 }

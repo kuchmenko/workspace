@@ -72,37 +72,8 @@ func Merge(base, left, right *config.Workspace) (*config.Workspace, []Conflict, 
 }
 
 func mergeValue(path string, base any, hasBase bool, left any, hasLeft bool, right any, hasRight bool, conflicts *[]Conflict) (any, bool, error) {
-	if hasLeft && hasRight && reflect.DeepEqual(left, right) {
-		return left, true, nil
-	}
-	if hasBase && hasLeft && reflect.DeepEqual(base, left) {
-		return right, hasRight, nil
-	}
-	if hasBase && hasRight && reflect.DeepEqual(base, right) {
-		return left, hasLeft, nil
-	}
-	if hasBase && !hasLeft && !hasRight {
-		return nil, false, nil
-	}
-	if hasBase && !hasLeft {
-		if reflect.DeepEqual(base, right) {
-			return nil, false, nil
-		}
-		appendConflict(path, base, nil, right, conflicts)
-		return base, true, nil
-	}
-	if hasBase && !hasRight {
-		if reflect.DeepEqual(base, left) {
-			return nil, false, nil
-		}
-		appendConflict(path, base, left, nil, conflicts)
-		return base, true, nil
-	}
-	if !hasBase && !hasLeft {
-		return right, hasRight, nil
-	}
-	if !hasBase && !hasRight {
-		return left, hasLeft, nil
+	if value, present, handled := resolveMergeValue(base, hasBase, left, hasLeft, right, hasRight); handled {
+		return value, present, nil
 	}
 
 	baseMap, baseIsMap := base.(map[string]any)
@@ -112,41 +83,87 @@ func mergeValue(path string, base any, hasBase bool, left any, hasLeft bool, rig
 		return mergeObservation(path, leftMap, rightMap), true, nil
 	}
 	if leftIsMap && rightIsMap && (!hasBase || baseIsMap) {
-		keys := make(map[string]bool, len(baseMap)+len(leftMap)+len(rightMap))
-		for key := range baseMap {
-			keys[key] = true
-		}
-		for key := range leftMap {
-			keys[key] = true
-		}
-		for key := range rightMap {
-			keys[key] = true
-		}
-		ordered := make([]string, 0, len(keys))
-		for key := range keys {
-			ordered = append(ordered, key)
-		}
-		sort.Strings(ordered)
-		result := make(map[string]any, len(ordered))
-		for _, key := range ordered {
-			baseValue, basePresent := baseMap[key]
-			leftValue, leftPresent := leftMap[key]
-			rightValue, rightPresent := rightMap[key]
-			value, present, err := mergeValue(joinPath(path, key), baseValue, basePresent, leftValue, leftPresent, rightValue, rightPresent, conflicts)
-			if err != nil {
-				return nil, false, err
-			}
-			if present {
-				result[key] = value
-			}
-		}
-		return result, true, nil
+		return mergeMaps(path, baseMap, leftMap, rightMap, conflicts)
 	}
 
 	appendConflict(path, optionalValue(base, hasBase), optionalValue(left, hasLeft), optionalValue(right, hasRight), conflicts)
 	if hasBase {
 		return base, true, nil
 	}
+	return orderedMergeValue(left, right)
+}
+
+func resolveMergeValue(base any, hasBase bool, left any, hasLeft bool, right any, hasRight bool) (any, bool, bool) {
+	if hasLeft && hasRight && reflect.DeepEqual(left, right) {
+		return left, true, true
+	}
+	if hasBase && hasLeft && reflect.DeepEqual(base, left) {
+		return right, hasRight, true
+	}
+	if hasBase && hasRight && reflect.DeepEqual(base, right) {
+		return left, hasLeft, true
+	}
+	return resolveMissingMergeValue(base, hasBase, left, hasLeft, right, hasRight)
+}
+
+func resolveMissingMergeValue(base any, hasBase bool, left any, hasLeft bool, right any, hasRight bool) (any, bool, bool) {
+	if hasBase && !hasLeft && !hasRight {
+		return nil, false, true
+	}
+	if hasBase && !hasLeft {
+		if reflect.DeepEqual(base, right) {
+			return nil, false, true
+		}
+		return nil, false, false
+	}
+	if hasBase && !hasRight {
+		if reflect.DeepEqual(base, left) {
+			return nil, false, true
+		}
+		return nil, false, false
+	}
+	if !hasBase && !hasLeft {
+		return right, hasRight, true
+	}
+	if !hasBase && !hasRight {
+		return left, hasLeft, true
+	}
+	return nil, false, false
+}
+
+func mergeMaps(path string, baseMap, leftMap, rightMap map[string]any, conflicts *[]Conflict) (any, bool, error) {
+	keys := make(map[string]bool, len(baseMap)+len(leftMap)+len(rightMap))
+	for key := range baseMap {
+		keys[key] = true
+	}
+	for key := range leftMap {
+		keys[key] = true
+	}
+	for key := range rightMap {
+		keys[key] = true
+	}
+	ordered := make([]string, 0, len(keys))
+	for key := range keys {
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	result := make(map[string]any, len(ordered))
+	for _, key := range ordered {
+		baseValue, basePresent := baseMap[key]
+		leftValue, leftPresent := leftMap[key]
+		rightValue, rightPresent := rightMap[key]
+		value, present, err := mergeValue(joinPath(path, key), baseValue, basePresent, leftValue, leftPresent, rightValue, rightPresent, conflicts)
+		if err != nil {
+			return nil, false, err
+		}
+		if present {
+			result[key] = value
+		}
+	}
+	return result, true, nil
+}
+
+func orderedMergeValue(left, right any) (any, bool, error) {
 	leftBody, err := json.Marshal(left)
 	if err != nil {
 		return nil, false, err

@@ -319,80 +319,17 @@ func materializeNetwork(bundle NetworkBundle) (NetworkState, error) {
 	if bundle.ID == "" || bundle.Epoch < 1 || len(bundle.Events) == 0 {
 		return NetworkState{}, errors.New("network bundle is incomplete")
 	}
-	events := append([]NetworkEvent(nil), bundle.Events...)
-	sort.Slice(events, func(left, right int) bool {
-		if events[left].Epoch != events[right].Epoch {
-			return events[left].Epoch < events[right].Epoch
-		}
-		leftGenesis := genesisCandidate(events[left])
-		rightGenesis := genesisCandidate(events[right])
-		if leftGenesis != rightGenesis {
-			return leftGenesis
-		}
-		leftPriority := networkActionPriority(events[left].Action)
-		rightPriority := networkActionPriority(events[right].Action)
-		if leftPriority != rightPriority {
-			return leftPriority < rightPriority
-		}
-		return events[left].ID < events[right].ID
-	})
-	devices := map[string]DeviceRecord{}
-	genesisIndex := -1
-	for index, event := range events {
-		if event.NetworkID != bundle.ID || event.Epoch < 1 || event.Epoch > bundle.Epoch {
-			return NetworkState{}, errors.New("network event scope is invalid")
-		}
-		if err := verifyNetworkEvent(event); err != nil {
-			return NetworkState{}, err
-		}
-		if genesisCandidate(event) {
-			if genesisIndex != -1 {
-				return NetworkState{}, errors.New("network contains multiple genesis events")
-			}
-			genesisIndex = index
-		}
-	}
-	if genesisIndex == -1 {
-		return NetworkState{}, errors.New("network genesis event is missing")
+	events := sortedNetworkEvents(bundle.Events)
+	genesisIndex, err := validateNetworkEvents(bundle, events)
+	if err != nil {
+		return NetworkState{}, err
 	}
 	genesis := events[genesisIndex]
-	devices[genesis.DeviceID] = DeviceRecord{ID: genesis.DeviceID, Name: genesis.DeviceName, PublicKey: append([]byte(nil), genesis.DevicePublicKey...), Role: genesis.Role, Active: true}
+	devices := map[string]DeviceRecord{genesis.DeviceID: {ID: genesis.DeviceID, Name: genesis.DeviceName, PublicKey: append([]byte(nil), genesis.DevicePublicKey...), Role: genesis.Role, Active: true}}
 	events = append(events[:genesisIndex], events[genesisIndex+1:]...)
-	currentEpoch := int64(1)
-	for len(events) > 0 {
-		progress := false
-		for index := 0; index < len(events); {
-			event := events[index]
-			if event.Epoch < currentEpoch {
-				events = append(events[:index], events[index+1:]...)
-				progress = true
-				continue
-			}
-			if event.Epoch > currentEpoch+1 {
-				index++
-				continue
-			}
-			if event.Epoch > currentEpoch && event.Action != "remove" {
-				index++
-				continue
-			}
-			signer, found := devices[event.SignerID]
-			if !found || !signer.Active || signer.Role != NetworkAdmin || !networkTargetReady(event, devices) {
-				index++
-				continue
-			}
-			if event.Epoch > currentEpoch {
-				currentEpoch = event.Epoch
-			}
-			if err := applyNetworkEvent(event, devices); err != nil {
-				return NetworkState{}, err
-			}
-			events = append(events[:index], events[index+1:]...)
-			progress = true
-		}
-		if !progress {
-			return NetworkState{}, fmt.Errorf("network event signer %s is not an active admin or its target is unavailable", events[0].SignerID)
-		}
+	currentEpoch, err := applyNetworkEvents(events, devices)
+	if err != nil {
+		return NetworkState{}, err
 	}
 	if currentEpoch != bundle.Epoch {
 		return NetworkState{}, errors.New("network epoch does not match events")
@@ -403,6 +340,83 @@ func materializeNetwork(bundle NetworkBundle) (NetworkState, error) {
 	}
 	sort.Slice(result.Devices, func(left, right int) bool { return result.Devices[left].ID < result.Devices[right].ID })
 	return result, nil
+}
+
+func sortedNetworkEvents(source []NetworkEvent) []NetworkEvent {
+	events := append([]NetworkEvent(nil), source...)
+	sort.Slice(events, func(left, right int) bool {
+		if events[left].Epoch != events[right].Epoch {
+			return events[left].Epoch < events[right].Epoch
+		}
+		if genesisCandidate(events[left]) != genesisCandidate(events[right]) {
+			return genesisCandidate(events[left])
+		}
+		if networkActionPriority(events[left].Action) != networkActionPriority(events[right].Action) {
+			return networkActionPriority(events[left].Action) < networkActionPriority(events[right].Action)
+		}
+		return events[left].ID < events[right].ID
+	})
+	return events
+}
+
+func validateNetworkEvents(bundle NetworkBundle, events []NetworkEvent) (int, error) {
+	genesisIndex := -1
+	for index, event := range events {
+		if event.NetworkID != bundle.ID || event.Epoch < 1 || event.Epoch > bundle.Epoch {
+			return -1, errors.New("network event scope is invalid")
+		}
+		if err := verifyNetworkEvent(event); err != nil {
+			return -1, err
+		}
+		if genesisCandidate(event) {
+			if genesisIndex != -1 {
+				return -1, errors.New("network contains multiple genesis events")
+			}
+			genesisIndex = index
+		}
+	}
+	if genesisIndex == -1 {
+		return -1, errors.New("network genesis event is missing")
+	}
+	return genesisIndex, nil
+}
+
+func applyNetworkEvents(events []NetworkEvent, devices map[string]DeviceRecord) (int64, error) {
+	currentEpoch := int64(1)
+	for len(events) > 0 {
+		remaining, epoch, progress, err := applyReadyNetworkEvents(events, devices, currentEpoch)
+		if err != nil {
+			return 0, err
+		}
+		if !progress {
+			return 0, fmt.Errorf("network event signer %s is not an active admin or its target is unavailable", events[0].SignerID)
+		}
+		events, currentEpoch = remaining, epoch
+	}
+	return currentEpoch, nil
+}
+
+func applyReadyNetworkEvents(events []NetworkEvent, devices map[string]DeviceRecord, currentEpoch int64) ([]NetworkEvent, int64, bool, error) {
+	remaining := events[:0]
+	progress := false
+	for _, event := range events {
+		if event.Epoch < currentEpoch {
+			progress = true
+			continue
+		}
+		signer, found := devices[event.SignerID]
+		ready := event.Epoch <= currentEpoch+1 && (event.Epoch <= currentEpoch || event.Action == "remove") && found && signer.Active && signer.Role == NetworkAdmin && networkTargetReady(event, devices)
+		if !ready {
+			remaining = append(remaining, event)
+			continue
+		}
+		currentEpoch = max(currentEpoch, event.Epoch)
+		if err := applyNetworkEvent(event, devices); err != nil {
+			return nil, 0, false, err
+		}
+		progress = true
+	}
+	return remaining, currentEpoch, progress, nil
 }
 
 func networkTargetReady(event NetworkEvent, devices map[string]DeviceRecord) bool {

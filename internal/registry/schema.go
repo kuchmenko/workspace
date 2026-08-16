@@ -80,52 +80,59 @@ func (store *Store) initialize(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	type legacyWorkspace struct {
-		name string
-		body []byte
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT w.name,w.registry FROM workspaces w LEFT JOIN workspace_protocol p ON p.name=w.name WHERE p.name IS NULL ORDER BY w.name`)
+	legacy, err := loadLegacyWorkspaces(ctx, tx)
 	if err != nil {
 		return err
 	}
-	var legacy []legacyWorkspace
-	for rows.Next() {
-		var workspace legacyWorkspace
-		if err = rows.Scan(&workspace.name, &workspace.body); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		legacy = append(legacy, workspace)
-	}
-	if err = rows.Err(); err != nil {
-		_ = rows.Close()
-		return err
-	}
-	if err = rows.Close(); err != nil {
-		return err
-	}
 	for _, workspace := range legacy {
-		state, decodeErr := config.DecodeStoredWorkspace(workspace.body)
-		if decodeErr != nil {
-			return fmt.Errorf("migrate workspace %q: %w", workspace.name, decodeErr)
-		}
-		snapshotBody, encodeErr := encodeSnapshot(state)
-		if encodeErr != nil {
-			return fmt.Errorf("migrate workspace %q: %w", workspace.name, encodeErr)
-		}
-		workspaceID := newWorkspaceID()
-		genesis, revisionErr := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, store.identity)
-		if revisionErr != nil {
-			return revisionErr
-		}
-		if err = insertRevision(tx, genesis); err != nil {
-			return fmt.Errorf("migrate workspace %q revision: %w", workspace.name, err)
-		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,1,?)`, workspace.name, workspaceID, genesis.ID); err != nil {
+		if err = store.migrateLegacyWorkspace(ctx, tx, workspace); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+type legacyWorkspace struct {
+	name string
+	body []byte
+}
+
+func loadLegacyWorkspaces(ctx context.Context, tx *sql.Tx) ([]legacyWorkspace, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT w.name,w.registry FROM workspaces w LEFT JOIN workspace_protocol p ON p.name=w.name WHERE p.name IS NULL ORDER BY w.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var legacy []legacyWorkspace
+	for rows.Next() {
+		var workspace legacyWorkspace
+		if err = rows.Scan(&workspace.name, &workspace.body); err != nil {
+			return nil, err
+		}
+		legacy = append(legacy, workspace)
+	}
+	return legacy, rows.Err()
+}
+
+func (store *Store) migrateLegacyWorkspace(ctx context.Context, tx *sql.Tx, workspace legacyWorkspace) error {
+	state, err := config.DecodeStoredWorkspace(workspace.body)
+	if err != nil {
+		return fmt.Errorf("migrate workspace %q: %w", workspace.name, err)
+	}
+	snapshotBody, err := encodeSnapshot(state)
+	if err != nil {
+		return fmt.Errorf("migrate workspace %q: %w", workspace.name, err)
+	}
+	workspaceID := newWorkspaceID()
+	genesis, err := makeRevision(workspaceID, 1, "genesis", nil, snapshotBody, nil, store.identity)
+	if err != nil {
+		return err
+	}
+	if err = insertRevision(tx, genesis); err != nil {
+		return fmt.Errorf("migrate workspace %q revision: %w", workspace.name, err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,1,?)`, workspace.name, workspaceID, genesis.ID)
+	return err
 }
 
 func workspaceExists(tx *sql.Tx, name string) (bool, error) {
