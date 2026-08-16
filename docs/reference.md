@@ -233,11 +233,23 @@ ws workspace create [path] --name <name>                     # path defaults to 
 ws workspace import <workspace.toml> --name <name> --root <path>
 ws workspace export <name>                                   # TOML on stdout
 ws workspace list                                            # names and roots
+ws workspace share <name> --with all --role writer
+ws workspace share <name> --with <device>[,<device>...] --role <role>
+ws workspace access <name>
+ws workspace access set <name> <device> <admin|writer|replica>
+ws workspace access remove <name> <device>
+ws workspace available [--json]
+ws workspace attach <workspace> --root <path> [--name <local-name>]
+ws workspace sync [workspace] [--json]
+ws workspace conflicts <workspace> [--json]
+ws workspace resolve <workspace> <path> --take <base|left|right>
+ws workspace resolve <workspace> <path> --value <json>
 ```
 
 Create and import write `$XDG_STATE_HOME/ws/registry.db`; export is the only
-command that emits TOML. These commands do not schedule or synchronize
-anything; run `ws sync` for project Git state.
+command that emits TOML. Workspace sharing and synchronization exchange signed
+registry revisions with authenticated online peers. They do not transfer
+repositories or invoke top-level project Git `ws sync`.
 
 ## Authentication
 

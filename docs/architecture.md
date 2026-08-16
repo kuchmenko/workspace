@@ -42,6 +42,14 @@ names are unique, roots are canonical, and commands select the longest
 path-boundary-safe root containing the current directory unless `--root`
 selects an exact root. Explorer reads all workspaces from SQLite.
 
+Each workspace also has a content-addressed signed revision DAG and a signed
+access policy. Device-network membership alone exposes no workspace. Policy
+selects `local`, every active device, or named devices and assigns `admin`,
+`writer`, or `replica` authority. Roots are deliberately outside replicated
+state. Authenticated TLS peers exchange complete revision bundles manually via
+`ws workspace available/attach/sync`; deterministic merges converge independent
+changes and preserve same-field conflicts for explicit resolution.
+
 ## Project Model
 
 ```toml

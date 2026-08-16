@@ -49,6 +49,22 @@ Import an existing TOML registry with
 one with `ws workspace export personal`, and inspect local workspaces with
 `ws workspace list`.
 
+After pairing trusted devices, share and attach a registry directly over the
+LAN:
+
+```sh
+# Existing workspace owner
+ws workspace share personal --with all --role writer
+
+# Another online device
+ws workspace available
+ws workspace attach personal --root ~/dev
+ws workspace sync personal
+```
+
+This exchanges signed SQLite registry revisions only. Workspace roots remain
+machine-local; repositories, worktrees, files, and credentials are not sent.
+
 For everyday navigation, run bare `ws` in a terminal. It opens the
 [Explorer TUI](docs/explorer.md) across every registered workspace and
 worktree.
@@ -62,6 +78,8 @@ worktree.
   `branch-orphan` and re-registering legacy `wt/<machine>/*`.
 - [Sync](docs/sync.md) — preflight, interactive selection, execution,
   conflicts, headless behavior, and multi-machine flow.
+- [Peer workspace sync](docs/peer-sync.md) — pairing, workspace policy,
+  attachment, manual registry synchronization, and conflict handling.
 - [Aliases](docs/aliases.md) — short shell aliases for projects and
   groups.
 - [Explorer TUI](docs/explorer.md) — bare `ws` opens a Bubble Tea
@@ -89,5 +107,5 @@ Pre-1.0; breaking changes happen between minor versions when the
 design pressure is real. Single-user tool by design — the
 multi-machine sync model assumes one human, several machines.
 
-Workspace commands are `create`, `import`, `export`, and `list`. They do not
-synchronize registry data; invoke `ws sync` explicitly for project Git state.
+`ws workspace sync` exchanges registry state with trusted peers. Top-level
+`ws sync` remains the separate foreground command for project Git state.
