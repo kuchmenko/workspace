@@ -94,6 +94,88 @@ func TestStoreRejectsDuplicateAndStaleWrites(t *testing.T) {
 	}
 }
 
+func TestStoreSetRootChangesOnlyLocalRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	created, err := store.Create(ctx, "personal", oldRoot, &config.Workspace{
+		Meta:    config.Meta{Version: 1},
+		Aliases: map[string]string{"ws": "personal/workspace"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revisionsBefore int
+	if err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions`).Scan(&revisionsBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.SetRoot(ctx, created.Name, newRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Root != newRoot || updated.Revision != created.Revision || updated.WorkspaceID != created.WorkspaceID || updated.Epoch != created.Epoch || updated.Head != created.Head {
+		t.Fatalf("updated workspace = %#v, created = %#v", updated, created)
+	}
+	if updated.State.Aliases["ws"] != "personal/workspace" {
+		t.Fatalf("aliases = %#v", updated.State.Aliases)
+	}
+	var revisionsAfter int
+	if err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions`).Scan(&revisionsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if revisionsAfter != revisionsBefore {
+		t.Fatalf("revision count = %d, want %d", revisionsAfter, revisionsBefore)
+	}
+	if _, err = store.LoadByRoot(ctx, oldRoot); !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("old root lookup error = %v", err)
+	}
+	found, err := store.LoadByRoot(ctx, newRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.Name != created.Name {
+		t.Fatalf("workspace at new root = %q", found.Name)
+	}
+}
+
+func TestStoreSetRootRejectsOwnedRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	firstRoot := t.TempDir()
+	secondRoot := t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}}
+	if _, err = store.Create(ctx, "first", firstRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Create(ctx, "second", secondRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.SetRoot(ctx, "second", firstRoot); err == nil {
+		t.Fatal("setting an owned root succeeded")
+	}
+	second, err := store.LoadByName(ctx, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Root != secondRoot {
+		t.Fatalf("second root = %q, want %q", second.Root, secondRoot)
+	}
+}
+
 func TestRegistryFindUsesCanonicalPathBoundariesAndDeepestRoot(t *testing.T) {
 	stateHome := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", stateHome)

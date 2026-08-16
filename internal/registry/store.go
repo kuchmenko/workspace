@@ -153,6 +153,25 @@ func (store *Store) LoadByRoot(ctx context.Context, root string) (Workspace, err
 	return workspace, err
 }
 
+func (store *Store) SetRoot(ctx context.Context, name, root string) (Workspace, error) {
+	canonical, err := canonicalRoot(root)
+	if err != nil {
+		return Workspace{}, err
+	}
+	result, err := store.db.ExecContext(ctx, `UPDATE workspaces SET root=? WHERE name=?`, canonical, name)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("set workspace root: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Workspace{}, err
+	}
+	if affected != 1 {
+		return Workspace{}, fmt.Errorf("%w: %q", ErrWorkspaceNotFound, name)
+	}
+	return store.LoadByName(ctx, name)
+}
+
 func (store *Store) List(ctx context.Context) ([]Workspace, error) {
 	rows, err := store.db.QueryContext(ctx, `SELECT w.name,w.root,w.revision,p.workspace_id,p.epoch,p.head_id,w.registry FROM workspaces w JOIN workspace_protocol p ON p.name=w.name ORDER BY w.name`)
 	if err != nil {

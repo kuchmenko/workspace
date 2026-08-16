@@ -18,6 +18,7 @@ func newWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(
 		newWorkspaceCreateCmd(),
 		newWorkspaceListCmd(),
+		newWorkspaceSetRootCmd(),
 		newWorkspaceImportCmd(),
 		newWorkspaceExportCmd(),
 		newWorkspaceShareCmd(),
@@ -89,6 +90,28 @@ func newWorkspaceListCmd() *cobra.Command {
 			for _, workspace := range workspaces {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", workspace.Name, workspace.Root)
 			}
+			return nil
+		},
+	}
+}
+
+func newWorkspaceSetRootCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:         "set-root <workspace> <path>",
+		Short:       "Change a workspace's machine-local root",
+		Annotations: agentAnnotations("workspace-set-root", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "2"),
+		Args:        cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			local, err := registry.OpenDefault()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = local.Close() }()
+			workspace, err := local.SetRoot(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s root=%s\n", workspace.Name, workspace.Root)
 			return nil
 		},
 	}

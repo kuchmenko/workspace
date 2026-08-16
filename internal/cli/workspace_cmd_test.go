@@ -44,6 +44,28 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\n") {
 		t.Fatalf("workspace list output = %q", got)
 	}
+
+	newRoot := t.TempDir()
+	out.Reset()
+	cmd = newWorkspaceCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"set-root", "personal", newRoot})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("workspace set-root: %v", err)
+	}
+	if got := out.String(); got != "workspace=personal root="+newRoot+"\n" {
+		t.Fatalf("workspace set-root output = %q", got)
+	}
+	out.Reset()
+	cmd = newWorkspaceCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"list"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("workspace list after set-root: %v", err)
+	}
+	if got := out.String(); got != "personal\t"+newRoot+"\n" {
+		t.Fatalf("workspace list after set-root output = %q", got)
+	}
 }
 
 func TestWorkspaceShareAndAccessCommands(t *testing.T) {

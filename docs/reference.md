@@ -235,6 +235,7 @@ ws workspace create [path] --name <name>                     # path defaults to 
 ws workspace import <workspace.toml> --name <name> --root <path>
 ws workspace export <name>                                   # TOML on stdout
 ws workspace list                                            # names and roots
+ws workspace set-root <workspace> <path>                     # rebind locally; does not move files
 ws workspace share <name> --with all --role writer
 ws workspace share <name> --with <device>[,<device>...] --role <role>
 ws workspace access <name>
@@ -248,11 +249,13 @@ ws workspace resolve <workspace> <path> --take <base|left|right>
 ws workspace resolve <workspace> <path> --value <json>
 ```
 
-Create and import write `$XDG_STATE_HOME/ws/registry.db`; export is the only
-command that emits TOML. Workspace sharing and synchronization exchange signed
-registry revisions with authenticated online peers. They do not transfer
-repositories. `ws workspace sync` performs only that exchange; top-level
-`ws sync` wraps registry exchange around project Git synchronization.
+Create, import, and set-root write `$XDG_STATE_HOME/ws/registry.db`; export is
+the only command that emits TOML. Set-root changes only the machine-local root
+mapping and does not move files or create a synchronized revision. Workspace
+sharing and synchronization exchange signed registry revisions with
+authenticated online peers. They do not transfer repositories. `ws workspace
+sync` performs only that exchange; top-level `ws sync` wraps registry exchange
+around project Git synchronization.
 
 ## Authentication
 
