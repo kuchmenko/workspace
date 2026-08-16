@@ -41,15 +41,21 @@ type Status struct {
 }
 
 type peerRequest struct {
-	Version int                    `json:"version"`
-	Action  string                 `json:"action"`
-	Network registry.NetworkBundle `json:"network"`
+	Version     int                    `json:"version"`
+	Action      string                 `json:"action"`
+	Network     registry.NetworkBundle `json:"network"`
+	WorkspaceID string                 `json:"workspace_id,omitempty"`
+	Workspace   *registry.Bundle       `json:"workspace,omitempty"`
 }
 
 type peerResponse struct {
-	Info    PeerInfo               `json:"info"`
-	Network registry.NetworkBundle `json:"network"`
-	Error   string                 `json:"error,omitempty"`
+	Info       PeerInfo                    `json:"info"`
+	Network    registry.NetworkBundle      `json:"network"`
+	Workspaces []registry.WorkspaceSummary `json:"workspaces,omitempty"`
+	Workspace  *registry.Bundle            `json:"workspace,omitempty"`
+	Conflicts  []registry.Conflict         `json:"conflicts,omitempty"`
+	SyncStatus string                      `json:"sync_status,omitempty"`
+	Error      string                      `json:"error,omitempty"`
 }
 
 func Serve(ctx context.Context, options ServeOptions) error {
@@ -230,11 +236,16 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
-	if request.Version != 1 || request.Action != "status" {
+	if request.Version != 1 {
 		_ = encoder.Encode(peerResponse{Error: "unsupported peer request"})
 		return
 	}
 	if _, err := store.MergeNetwork(context.Background(), request.Network); err != nil {
+		_ = encoder.Encode(peerResponse{Error: err.Error()})
+		return
+	}
+	peerID, err := authenticatedPeerID(connection)
+	if err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
@@ -248,7 +259,26 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
-	_ = encoder.Encode(peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle})
+	response := peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle}
+	if err = handleWorkspaceRequest(context.Background(), store, peerID, request, &response); err != nil {
+		response.Error = err.Error()
+	}
+	_ = encoder.Encode(response)
+}
+
+func authenticatedPeerID(connection net.Conn) (string, error) {
+	tlsConnection, ok := connection.(*tls.Conn)
+	if !ok {
+		return "", errors.New("peer connection is not TLS")
+	}
+	if err := tlsConnection.Handshake(); err != nil {
+		return "", err
+	}
+	public, _, err := peerPublicKey(tlsConnection.ConnectionState())
+	if err != nil {
+		return "", err
+	}
+	return device.IDForPublicKey(public), nil
 }
 
 func activeDevice(devices []registry.DeviceRecord, id string) (registry.DeviceRecord, bool) {
