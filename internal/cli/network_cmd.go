@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
@@ -126,27 +127,32 @@ func newNetworkStatusCmd() *cobra.Command {
 				encoder.SetIndent("", "  ")
 				return encoder.Encode(statuses)
 			}
-			fmt.Fprintln(command.OutOrStdout(), "DEVICE\tROLE\tSTATE\tENDPOINT")
-			for _, status := range statuses {
-				state := "○ offline"
-				if status.Online {
-					state = "● online"
-				}
-				endpoint := status.Endpoint
-				if endpoint == "" {
-					endpoint = "-"
-				}
-				if !status.Device.Active {
-					state = "× removed"
-				}
-				fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\t%s\n", status.Device.Name, status.Device.Role, state, endpoint)
-			}
-			return nil
+			return writeNetworkStatus(command.OutOrStdout(), statuses)
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "this device name (default: hostname)")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return command
+}
+
+func writeNetworkStatus(output io.Writer, statuses []peernetwork.Status) error {
+	table := tabwriter.NewWriter(output, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "DEVICE\tROLE\tSTATE\tENDPOINT")
+	for _, status := range statuses {
+		state := "○ offline"
+		if status.Online {
+			state = "● online"
+		}
+		if !status.Device.Active {
+			state = "× removed"
+		}
+		endpoint := status.Endpoint
+		if endpoint == "" {
+			endpoint = "-"
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", status.Device.Name, status.Device.Role, state, endpoint)
+	}
+	return table.Flush()
 }
 
 func newNetworkServeCmd() *cobra.Command {

@@ -5,7 +5,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	peernetwork "github.com/kuchmenko/workspace/internal/network"
+	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/spf13/cobra"
 )
 
@@ -48,5 +51,28 @@ func TestNetworkServeUsesStablePeerPort(t *testing.T) {
 	flag := command.Flag("listen")
 	if flag == nil || flag.DefValue != ":17337" {
 		t.Fatalf("serve listen default = %v", flag)
+	}
+}
+
+func TestNetworkStatusAlignsColumns(t *testing.T) {
+	statuses := []peernetwork.Status{
+		{Device: registry.DeviceRecord{Name: "archlinux", Role: registry.NetworkAdmin, Active: true}, Online: true, Endpoint: "local"},
+		{Device: registry.DeviceRecord{Name: "asahi", Role: registry.NetworkAdmin, Active: true}, Online: true, Endpoint: "192.168.88.154:17337"},
+	}
+	var output bytes.Buffer
+	if err := writeNetworkStatus(&output, statuses); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("status output = %q", output.String())
+	}
+	for _, column := range []string{"ROLE", "STATE", "ENDPOINT"} {
+		headerIndex := strings.Index(lines[0], column)
+		value := map[string]string{"ROLE": "admin", "STATE": "● online", "ENDPOINT": "local"}[column]
+		valueIndex := strings.Index(lines[1], value)
+		if headerIndex < 0 || valueIndex < 0 || utf8.RuneCountInString(lines[0][:headerIndex]) != utf8.RuneCountInString(lines[1][:valueIndex]) {
+			t.Fatalf("column %s is not aligned:\n%s", column, output.String())
+		}
 	}
 }
