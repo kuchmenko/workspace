@@ -2,8 +2,10 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,15 +47,11 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 		t.Fatalf("available workspaces = %#v", response.Workspaces)
 	}
 	source := AvailableWorkspace{WorkspaceSummary: response.Workspaces[0], DeviceID: arch.ID, DeviceName: arch.Name, Endpoint: address}
-	bundle, err := Fetch(ctx, source, asahiStore, asahiIdentity, "asahi")
-	if err != nil {
-		t.Fatal(err)
-	}
 	asahiRoot := filepath.Join(t.TempDir(), "personal")
 	if err = ensureDirectory(asahiRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = asahiStore.AttachFrom(ctx, "personal", asahiRoot, bundle, arch.ID); err != nil {
+	if _, err = Attach(ctx, source, asahiStore, asahiIdentity, "asahi", "personal", asahiRoot); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = asahiStore.Mutate(ctx, asahiRoot, func(workspace *config.Workspace) error {
@@ -106,6 +104,92 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 }
 
+func TestLargeHistoryAttachAndBidirectionalRealPeerSync(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	archRoot := t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{"payload": strings.Repeat("x", 6<<20)}}
+	created, err := archStore.Create(ctx, "large", archRoot, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{archIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err = archStore.SetAccess(ctx, "large", policy); err != nil {
+		t.Fatal(err)
+	}
+	for index := range 7 {
+		if _, err = archStore.Mutate(ctx, archRoot, func(workspace *config.Workspace) error {
+			workspace.Aliases["revision"] = string(rune('a' + index))
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bundle, err := archStore.Export(ctx, "large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) <= maxPeerMessageBytes {
+		t.Fatalf("large history size = %d, want over %d", len(body), maxPeerMessageBytes)
+	}
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	address := <-endpoint
+	arch := mustNetworkDevice(t, ctx, asahiStore, archIdentity.ID())
+	asahiRoot := t.TempDir()
+	source := AvailableWorkspace{WorkspaceSummary: registry.WorkspaceSummary{Name: "large", WorkspaceID: created.WorkspaceID}, DeviceID: arch.ID, DeviceName: arch.Name, Endpoint: address}
+	attached, err := Attach(ctx, source, asahiStore, asahiIdentity, "asahi", "large", asahiRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attached.Head == "" || attached.State.Aliases["payload"] != state.Aliases["payload"] {
+		t.Fatalf("attached workspace = %#v", attached)
+	}
+	if _, err = asahiStore.Mutate(ctx, asahiRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["revision"] = "asahi"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Sync(ctx, "large", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "pushed" {
+		t.Fatalf("large push result=%#v error=%v", result, err)
+	}
+	if _, err = archStore.Mutate(ctx, archRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["revision"] = "arch"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = Sync(ctx, "large", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "pulled" {
+		t.Fatalf("large pull result=%#v error=%v", result, err)
+	}
+	converged, err := asahiStore.LoadByName(ctx, "large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converged.State.Aliases["revision"] != "arch" {
+		t.Fatalf("converged aliases = %#v", converged.State.Aliases)
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnauthorizedWorkspaceIsNotListedOrFetched(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -132,15 +216,8 @@ func TestUnauthorizedWorkspaceIsNotListedOrFetched(t *testing.T) {
 	if len(response.Workspaces) != 0 {
 		t.Fatalf("private workspaces listed = %#v", response.Workspaces)
 	}
-	if _, err = requestPeer(ctx, address, arch, asahiStore, asahiIdentity, "asahi", peerRequest{Version: 1, Action: "workspace.fetch", WorkspaceID: created.WorkspaceID}); err == nil {
+	if _, err = requestPeer(ctx, address, arch, asahiStore, asahiIdentity, "asahi", peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: created.WorkspaceID, Mode: registry.RevisionImportAttach}); err == nil {
 		t.Fatal("unauthorized workspace was fetched")
-	}
-	leaked, err := archStore.Export(ctx, "private")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = requestPeer(ctx, address, arch, asahiStore, asahiIdentity, "asahi", peerRequest{Version: 1, Action: "workspace.sync", WorkspaceID: created.WorkspaceID, Workspace: &leaked}); err == nil {
-		t.Fatal("unauthorized workspace source was accepted")
 	}
 	unchanged, err := archStore.LoadByName(ctx, "private")
 	if err != nil || unchanged.Head != created.Head {
@@ -152,9 +229,10 @@ func TestUnauthorizedWorkspaceIsNotListedOrFetched(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSyncReturnsCurrentBundleAfterRejectingStaleAuthorizedWriter(t *testing.T) {
+func TestWorkspaceSyncPullsCurrentHistoryAfterRejectingStaleAuthorizedWriter(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	archRoot, asahiRoot := t.TempDir(), t.TempDir()
 	if _, err := archStore.Create(ctx, "shared", archRoot, &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}); err != nil {
 		t.Fatal(err)
@@ -176,28 +254,27 @@ func TestWorkspaceSyncReturnsCurrentBundleAfterRejectingStaleAuthorizedWriter(t 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stale, err := asahiStore.Export(ctx, "shared")
-	if err != nil {
-		t.Fatal(err)
-	}
 	demoted := registry.AccessPolicy{Mode: registry.AccessSelected, Roles: map[string]string{archIdentity.ID(): registry.WorkspaceAdmin, asahiIdentity.ID(): registry.WorkspaceReplica}}
 	authoritative, err := archStore.SetAccess(ctx, "shared", demoted)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var response peerResponse
-	err = syncWorkspace(ctx, archStore, asahiIdentity.ID(), &stale, &response)
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	arch := mustNetworkDevice(t, ctx, asahiStore, archIdentity.ID())
+	result, err := Sync(ctx, "shared", <-endpoint, arch, asahiStore, asahiIdentity, "asahi")
 	if err != nil {
-		t.Fatalf("stale writer rejection prevented response: %v", err)
+		t.Fatal(err)
 	}
-	if response.SyncStatus != "rejected" {
-		t.Fatalf("stale writer status = %q", response.SyncStatus)
-	}
-	if response.Workspace == nil {
-		t.Fatal("stale authorized writer did not receive current bundle")
-	}
-	if _, _, err = asahiStore.IntegrateFrom(ctx, "shared", *response.Workspace, archIdentity.ID()); err != nil {
-		t.Fatalf("demoted peer could not integrate current bundle: %v", err)
+	if result.Status != "pulled" {
+		t.Fatalf("stale writer sync status = %q", result.Status)
 	}
 	converged, err := asahiStore.LoadByName(ctx, "shared")
 	if err != nil {
@@ -205,6 +282,10 @@ func TestWorkspaceSyncReturnsCurrentBundleAfterRejectingStaleAuthorizedWriter(t 
 	}
 	if converged.Head != authoritative.Head || converged.Epoch != authoritative.Epoch {
 		t.Fatalf("demoted peer workspace = %#v, want head=%s epoch=%d", converged, authoritative.Head, authoritative.Epoch)
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
 	}
 }
 

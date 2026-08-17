@@ -331,11 +331,7 @@ func newWorkspaceAttachCmd() *cobra.Command {
 			if err = os.MkdirAll(root, 0o755); err != nil {
 				return err
 			}
-			bundle, err := peernetwork.Fetch(command.Context(), source, store, identity, name)
-			if err != nil {
-				return err
-			}
-			workspace, err := store.AttachFrom(command.Context(), localName, root, bundle, source.DeviceID)
+			workspace, err := peernetwork.Attach(command.Context(), source, store, identity, name, localName, root)
 			if err != nil {
 				return err
 			}
@@ -450,7 +446,7 @@ func synchronizeWorkspaceDevicesContext(ctx context.Context, store *registry.Sto
 		if target.ID == identity.ID() || !target.Active {
 			continue
 		}
-		if _, allowed := store.ExportFor(ctx, workspace, target.ID); allowed != nil {
+		if _, allowed := store.ManifestFor(ctx, workspace, target.ID); allowed != nil {
 			continue
 		}
 		result, failure := synchronizeWorkspacePeerContext(ctx, store, identity, name, workspace, target, endpoints[target.ID])

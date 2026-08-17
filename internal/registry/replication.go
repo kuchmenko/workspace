@@ -3,7 +3,6 @@ package registry
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -175,7 +174,11 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	base, policy, err := prepareIncoming(ctx, tx, name, bundle, sourceID, authorize, active)
+	return store.persistIncomingTx(ctx, tx, name, bundle, sourceID, authorize, active, remoteHeads, true)
+}
+
+func (store *Store) persistIncomingTx(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, remoteHeads []string, insertRevisions bool) ([]Conflict, error) {
+	base, policy, err := prepareIncoming(ctx, tx, name, bundle, sourceID, authorize, active, insertRevisions)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +198,7 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 		return nil, err
 	}
 	role := integrationRole(policy, store.identity.ID(), authorize, active)
-	head, state, conflicts, heads, err := store.integrateHeadSet(tx, bundle, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
+	head, state, conflicts, heads, err := store.integrateHeadSet(tx, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
 	if err != nil {
 		var divergence accessDivergence
 		if errors.As(err, &divergence) {
@@ -283,7 +286,7 @@ func clearResolvedIncomingState(ctx context.Context, tx *sql.Tx, bundle Bundle, 
 	return nil
 }
 
-func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool) (incomingBase, AccessPolicy, error) {
+func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, insertRevisions bool) (incomingBase, AccessPolicy, error) {
 	base, err := loadIncomingBase(ctx, tx, name)
 	if err != nil {
 		return base, AccessPolicy{}, err
@@ -307,7 +310,9 @@ func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle
 	if err = requireAuthorizedSource(policy, sourceID, authorize, active); err != nil {
 		return base, policy, err
 	}
-	err = insertIncomingRevisions(tx, base.workspaceID, bundle.Revisions)
+	if insertRevisions {
+		err = insertIncomingRevisions(tx, base.workspaceID, bundle.Revisions)
+	}
 	return base, policy, err
 }
 
@@ -418,7 +423,7 @@ func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace
 	return replaceConflicts(ctx, tx, workspaceID, head, conflicts)
 }
 
-func (store *Store) integrateHeadSet(tx *sql.Tx, bundle Bundle, workspaceID string, epoch int64, localHead string, remoteHeads []string, role string) (string, *config.Workspace, []Conflict, []string, error) {
+func (store *Store) integrateHeadSet(tx *sql.Tx, workspaceID string, epoch int64, localHead string, remoteHeads []string, role string) (string, *config.Workspace, []Conflict, []string, error) {
 	current := localHead
 	var state *config.Workspace
 	var conflicts []Conflict
@@ -426,7 +431,7 @@ func (store *Store) integrateHeadSet(tx *sql.Tx, bundle Bundle, workspaceID stri
 		if role == WorkspaceReplica {
 			continue
 		}
-		next, nextState, nextConflicts, err := store.integrateHeads(tx, bundle, workspaceID, epoch, current, remoteHead)
+		next, nextState, nextConflicts, err := store.integrateHeads(tx, workspaceID, epoch, current, remoteHead)
 		if err != nil {
 			return "", nil, nil, nil, err
 		}
@@ -447,12 +452,13 @@ func (store *Store) integrateHeadSet(tx *sql.Tx, bundle Bundle, workspaceID stri
 		if err != nil {
 			return "", nil, nil, nil, err
 		}
-		return heads[0], state, revisionConflicts(bundle.Revisions, heads[0]), heads, nil
+		conflicts, err = loadRevisionConflicts(tx, heads[0])
+		return heads[0], state, conflicts, heads, err
 	}
 	return localHead, nil, nil, heads, nil
 }
 
-func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+func (store *Store) integrateHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
 	remoteIsAncestor, err := isAncestor(tx, remoteHead, localHead)
 	if err != nil || localHead == remoteHead || remoteIsAncestor {
 		return localHead, nil, nil, err
@@ -463,7 +469,11 @@ func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string
 	}
 	if localIsAncestor {
 		state, err := loadRevisionState(tx, remoteHead)
-		return remoteHead, state, revisionConflicts(bundle.Revisions, remoteHead), err
+		if err != nil {
+			return "", nil, nil, err
+		}
+		conflicts, err := loadRevisionConflicts(tx, remoteHead)
+		return remoteHead, state, conflicts, err
 	}
 	return store.mergeHeads(tx, workspaceID, epoch, localHead, remoteHead)
 }
@@ -611,87 +621,4 @@ func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []by
 	}
 	rightBody, err := loadRevisionSnapshot(tx, parents[1])
 	return baseBody, leftBody, rightBody, err
-}
-
-func loadRevisionsFrom(ctx context.Context, reader sqlReader, workspaceID string) ([]Revision, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access,network_head FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	revisions, err := scanRevisions(rows, workspaceID)
-	if closeErr := rows.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return nil, err
-	}
-	for index := range revisions {
-		revisions[index].Parents, err = loadParentsFrom(ctx, reader, revisions[index].ID)
-		if err != nil {
-			return nil, err
-		}
-		revisions[index].Proofs, err = loadProofsFrom(ctx, reader, revisions[index].ID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return revisions, nil
-}
-
-func scanRevisions(rows *sql.Rows, workspaceID string) ([]Revision, error) {
-	var revisions []Revision
-	for rows.Next() {
-		var revision Revision
-		var conflicts, access []byte
-		revision.WorkspaceID = workspaceID
-		if err := rows.Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts, &access, &revision.NetworkHead); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal(conflicts, &revision.Conflicts); err != nil {
-			return nil, err
-		}
-		if len(access) > 0 && string(access) != "null" {
-			var policy AccessPolicy
-			if err := json.Unmarshal(access, &policy); err != nil {
-				return nil, err
-			}
-			revision.Access = &policy
-		}
-		revisions = append(revisions, revision)
-	}
-	return revisions, rows.Err()
-}
-
-func loadParentsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]string, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var parents []string
-	for rows.Next() {
-		var parent string
-		if err = rows.Scan(&parent); err != nil {
-			return nil, err
-		}
-		parents = append(parents, parent)
-	}
-	return parents, rows.Err()
-}
-
-func loadProofsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]Proof, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT device_id,public_key,signature FROM revision_proofs WHERE revision_id=? ORDER BY device_id`, revisionID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var proofs []Proof
-	for rows.Next() {
-		var proof Proof
-		if err = rows.Scan(&proof.DeviceID, &proof.PublicKey, &proof.Signature); err != nil {
-			return nil, err
-		}
-		proofs = append(proofs, proof)
-	}
-	return proofs, rows.Err()
 }

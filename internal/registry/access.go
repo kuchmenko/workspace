@@ -284,25 +284,11 @@ func (store *Store) sharedCandidates(ctx context.Context) ([]WorkspaceSummary, e
 }
 
 func (store *Store) ExportFor(ctx context.Context, name, peerID string) (Bundle, error) {
-	if err := store.ReconcileNetworkAccess(ctx); err != nil {
-		return Bundle{}, err
-	}
-	workspace, err := store.LoadByName(ctx, name)
+	workspace, err := store.authorizeWorkspacePeer(ctx, name, peerID)
 	if err != nil {
 		return Bundle{}, err
 	}
-	policy, err := store.authorizationPolicy(ctx, workspace)
-	if err != nil {
-		return Bundle{}, err
-	}
-	active, err := store.activeNetworkDevices(ctx)
-	if err != nil {
-		return Bundle{}, err
-	}
-	if policy.Role(peerID, active[peerID]) == "" {
-		return Bundle{}, errors.New("peer is not authorized for workspace")
-	}
-	bundle, err := store.Export(ctx, name)
+	bundle, err := store.Export(ctx, workspace.Name)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -312,6 +298,28 @@ func (store *Store) ExportFor(ctx context.Context, name, peerID string) (Bundle,
 		}
 	}
 	return bundle, nil
+}
+
+func (store *Store) authorizeWorkspacePeer(ctx context.Context, name, peerID string) (Workspace, error) {
+	if err := store.ReconcileNetworkAccess(ctx); err != nil {
+		return Workspace{}, err
+	}
+	workspace, err := store.LoadByName(ctx, name)
+	if err != nil {
+		return Workspace{}, err
+	}
+	policy, err := store.authorizationPolicy(ctx, workspace)
+	if err != nil {
+		return Workspace{}, err
+	}
+	active, err := store.activeNetworkDevices(ctx)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if policy.Role(peerID, active[peerID]) == "" {
+		return Workspace{}, errors.New("peer is not authorized for workspace")
+	}
+	return workspace, nil
 }
 
 func (store *Store) WorkspaceNameByID(ctx context.Context, workspaceID string) (string, error) {

@@ -6,9 +6,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -82,21 +84,28 @@ type Status struct {
 }
 
 type peerRequest struct {
-	Version     int                    `json:"version"`
-	Action      string                 `json:"action"`
-	Network     registry.NetworkBundle `json:"network"`
-	WorkspaceID string                 `json:"workspace_id,omitempty"`
-	Workspace   *registry.Bundle       `json:"workspace,omitempty"`
+	Version      int                        `json:"version"`
+	Action       string                     `json:"action"`
+	Network      registry.NetworkBundle     `json:"network"`
+	WorkspaceID  string                     `json:"workspace_id,omitempty"`
+	Mode         string                     `json:"mode,omitempty"`
+	Manifest     *registry.RevisionManifest `json:"manifest,omitempty"`
+	ImportID     string                     `json:"import_id,omitempty"`
+	ManifestHash string                     `json:"manifest_hash,omitempty"`
+	RevisionIDs  []string                   `json:"revision_ids,omitempty"`
+	Revisions    []registry.Revision        `json:"revisions,omitempty"`
 }
 
 type peerResponse struct {
-	Info       PeerInfo                    `json:"info"`
-	Network    registry.NetworkBundle      `json:"network"`
-	Workspaces []registry.WorkspaceSummary `json:"workspaces,omitempty"`
-	Workspace  *registry.Bundle            `json:"workspace,omitempty"`
-	Conflicts  []registry.Conflict         `json:"conflicts,omitempty"`
-	SyncStatus string                      `json:"sync_status,omitempty"`
-	Error      string                      `json:"error,omitempty"`
+	Info       PeerInfo                     `json:"info"`
+	Network    registry.NetworkBundle       `json:"network"`
+	Workspaces []registry.WorkspaceSummary  `json:"workspaces,omitempty"`
+	Manifest   *registry.RevisionManifest   `json:"manifest,omitempty"`
+	Import     *registry.RevisionImportPlan `json:"import,omitempty"`
+	Revisions  []registry.Revision          `json:"revisions,omitempty"`
+	Conflicts  []registry.Conflict          `json:"conflicts,omitempty"`
+	SyncStatus string                       `json:"sync_status,omitempty"`
+	Error      string                       `json:"error,omitempty"`
 }
 
 func Serve(ctx context.Context, options ServeOptions) error {
@@ -218,11 +227,11 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, s
 	if err != nil {
 		return PeerInfo{}, err
 	}
-	if err = json.NewEncoder(connection).Encode(peerRequest{Version: 1, Action: "status", Network: bundle}); err != nil {
+	if err = encodePeerFrame(connection, peerRequest{Version: 1, Action: "status", Network: bundle}); err != nil {
 		return PeerInfo{}, err
 	}
 	var response peerResponse
-	if err = decodeLimited(connection, maxPeerMessageBytes, &response); err != nil {
+	if err = decodePeerFrame(connection, &response); err != nil {
 		return PeerInfo{}, err
 	}
 	if response.Info.DeviceID != target.ID {
@@ -283,41 +292,40 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 }
 
 func servePeerConnection(store *registry.Store, self registry.DeviceRecord, connection net.Conn) {
-	encoder := json.NewEncoder(connection)
 	request, peerID, state, err := receivePeerRequest(store, connection)
 	if err != nil {
-		_ = encoder.Encode(peerResponse{Error: err.Error()})
+		writePeerResponse(connection, peerResponse{Error: err.Error()})
 		return
 	}
 	bundle, err := store.ExportNetwork(context.Background())
 	if err != nil {
-		_ = encoder.Encode(peerResponse{Error: err.Error()})
+		writePeerResponse(connection, peerResponse{Error: err.Error()})
 		return
 	}
 	response := peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle}
 	_, mergeErr := store.MergeNetworkFrom(context.Background(), request.Network, peerID)
 	if mergeErr != nil && !errors.Is(mergeErr, registry.ErrNetworkConflict) {
 		response.Error = mergeErr.Error()
-		_ = encoder.Encode(response)
+		writePeerResponse(connection, response)
 		return
 	}
 	state, err = store.Network(context.Background())
 	if err != nil {
 		response.Error = err.Error()
-		_ = encoder.Encode(response)
+		writePeerResponse(connection, response)
 		return
 	}
 	bundle, err = store.ExportNetwork(context.Background())
 	if err != nil {
 		response.Error = err.Error()
-		_ = encoder.Encode(response)
+		writePeerResponse(connection, response)
 		return
 	}
 	response.Info.Epoch = state.Epoch
 	response.Network = bundle
 	if mergeErr != nil {
 		response.Error = mergeErr.Error()
-		_ = encoder.Encode(response)
+		writePeerResponse(connection, response)
 		return
 	}
 	peer, known := deviceByID(state.Devices, peerID)
@@ -325,18 +333,18 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		if request.Action != "status" {
 			response.Error = "peer is not an active network device"
 		}
-		_ = encoder.Encode(response)
+		writePeerResponse(connection, response)
 		return
 	}
 	if err = handleWorkspaceRequest(context.Background(), store, peerID, request, &response); err != nil {
 		response.Error = err.Error()
 	}
-	_ = encoder.Encode(response)
+	writePeerResponse(connection, response)
 }
 
 func receivePeerRequest(store *registry.Store, connection net.Conn) (peerRequest, string, registry.NetworkState, error) {
 	var request peerRequest
-	if err := decodeLimited(connection, maxPeerMessageBytes, &request); err != nil {
+	if err := decodePeerFrame(connection, &request); err != nil {
 		return peerRequest{}, "", registry.NetworkState{}, err
 	}
 	if request.Version != 1 {
@@ -402,4 +410,52 @@ func watchConnection(ctx context.Context, connection net.Conn) func() {
 
 func decodeLimited(reader io.Reader, limit int64, value any) error {
 	return json.NewDecoder(io.LimitReader(reader, limit)).Decode(value)
+}
+
+func encodePeerFrame(writer io.Writer, value any) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if int64(len(body)) >= maxPeerMessageBytes {
+		return fmt.Errorf("peer message exceeds %d byte limit", maxPeerMessageBytes)
+	}
+	header := fmt.Sprintf("%08x", len(body))
+	if _, err = io.WriteString(writer, header); err != nil {
+		return err
+	}
+	_, err = writer.Write(body)
+	return err
+}
+
+func decodePeerFrame(reader io.Reader, value any) error {
+	var header [8]byte
+	if _, err := io.ReadFull(reader, header[:]); err != nil {
+		return err
+	}
+	size, err := strconv.ParseInt(string(header[:]), 16, 64)
+	if err != nil {
+		return errors.New("peer message header is invalid")
+	}
+	if size < 1 || size >= maxPeerMessageBytes {
+		return fmt.Errorf("peer message exceeds %d byte limit", maxPeerMessageBytes)
+	}
+	body := make([]byte, size)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		return err
+	}
+	return json.Unmarshal(body, value)
+}
+
+func writePeerResponse(connection net.Conn, response peerResponse) {
+	if err := encodePeerFrame(connection, response); err != nil {
+		response.Workspaces = nil
+		response.Manifest = nil
+		response.Import = nil
+		response.Revisions = nil
+		response.Conflicts = nil
+		response.SyncStatus = ""
+		response.Error = err.Error()
+		_ = encodePeerFrame(connection, response)
+	}
 }

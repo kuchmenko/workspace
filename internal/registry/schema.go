@@ -74,6 +74,54 @@ CREATE TABLE IF NOT EXISTS workspace_access_conflicts (
  conflict_id TEXT NOT NULL UNIQUE,
  base_revision_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workspace_imports (
+ id TEXT PRIMARY KEY,
+ peer_id TEXT NOT NULL,
+ workspace_id TEXT NOT NULL,
+ mode TEXT NOT NULL,
+ manifest_hash TEXT NOT NULL,
+ workspace_name TEXT NOT NULL,
+ root TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ heads BLOB NOT NULL,
+ expires_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_import_binding ON workspace_imports(peer_id,workspace_id,mode);
+CREATE TABLE IF NOT EXISTS workspace_import_manifest (
+ import_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ wire_bytes INTEGER NOT NULL,
+ requested INTEGER NOT NULL,
+ received INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(import_id,revision_id)
+);
+CREATE TABLE IF NOT EXISTS workspace_import_revisions (
+ import_id TEXT NOT NULL,
+ id TEXT NOT NULL,
+ workspace_id TEXT NOT NULL,
+ epoch INTEGER NOT NULL,
+ kind TEXT NOT NULL,
+ snapshot BLOB NOT NULL,
+ conflicts BLOB NOT NULL,
+ access BLOB,
+ network_head TEXT NOT NULL,
+ PRIMARY KEY(import_id,id)
+);
+CREATE TABLE IF NOT EXISTS workspace_import_parents (
+ import_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ parent_id TEXT NOT NULL,
+ position INTEGER NOT NULL,
+ PRIMARY KEY(import_id,revision_id,parent_id)
+);
+CREATE TABLE IF NOT EXISTS workspace_import_proofs (
+ import_id TEXT NOT NULL,
+ revision_id TEXT NOT NULL,
+ device_id TEXT NOT NULL,
+ public_key BLOB NOT NULL,
+ signature BLOB NOT NULL,
+ PRIMARY KEY(import_id,revision_id,device_id)
+);
 CREATE TABLE IF NOT EXISTS networks (
  id TEXT PRIMARY KEY,
  epoch INTEGER NOT NULL
@@ -142,6 +190,9 @@ func (store *Store) initialize(ctx context.Context) error {
 		}
 	}
 	if err = store.migrateWorkspacePolicies(ctx, tx); err != nil {
+		return err
+	}
+	if err = purgeExpiredImports(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit()
