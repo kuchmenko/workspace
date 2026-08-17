@@ -19,6 +19,14 @@ import (
 )
 
 func certificate(identity device.Identity, name string) (tls.Certificate, error) {
+	return makeCertificate(identity, name, name, []string{name})
+}
+
+func peerCertificate(identity device.Identity, name string) (tls.Certificate, error) {
+	return makeCertificate(identity, name, identity.ID(), []string{identity.ID()})
+}
+
+func makeCertificate(identity device.Identity, name, issuer string, dnsNames []string) (tls.Certificate, error) {
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serial, err := rand.Int(rand.Reader, serialLimit)
 	if err != nil {
@@ -28,13 +36,15 @@ func certificate(identity device.Identity, name string) (tls.Certificate, error)
 	template := x509.Certificate{
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: name},
-		DNSNames:     []string{name},
+		DNSNames:     dnsNames,
 		NotBefore:    now.Add(-time.Minute),
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, identity.PublicKey(), identity.Signer())
+	parent := template
+	parent.Subject = pkix.Name{CommonName: issuer}
+	der, err := x509.CreateCertificate(rand.Reader, &template, &parent, identity.PublicKey(), identity.Signer())
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -74,7 +84,7 @@ func peerServerTLS(cert tls.Certificate, identity device.Identity, name string, 
 			defer lock.Unlock()
 			if cert.Leaf == nil || time.Until(cert.Leaf.NotAfter) < time.Hour {
 				var err error
-				cert, err = certificate(identity, name)
+				cert, err = peerCertificate(identity, name)
 				if err != nil {
 					return nil, err
 				}
@@ -94,7 +104,8 @@ func peerServerTLS(cert tls.Certificate, identity device.Identity, name string, 
 	}
 }
 
-func peerClientTLS(cert tls.Certificate, expected ed25519.PublicKey, name string) (*tls.Config, error) {
+func peerClientTLS(cert tls.Certificate, expected ed25519.PublicKey) (*tls.Config, error) {
+	name := device.IDForPublicKey(expected)
 	signer, ok := cert.PrivateKey.(crypto.Signer)
 	if !ok {
 		return nil, errors.New("local TLS key cannot sign certificates")

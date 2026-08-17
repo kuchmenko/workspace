@@ -121,7 +121,7 @@ func preparePeerServer(ctx context.Context, options ServeOptions) (registry.Devi
 	if !found {
 		return registry.DeviceRecord{}, tls.Certificate{}, nil, errors.New("local device is not active in the network")
 	}
-	cert, err := certificate(options.Identity, options.Name)
+	cert, err := peerCertificate(options.Identity, options.Name)
 	if err != nil {
 		return registry.DeviceRecord{}, tls.Certificate{}, nil, err
 	}
@@ -198,11 +198,11 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) (PeerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
 	defer cancel()
-	cert, err := certificate(identity, name)
+	cert, err := peerCertificate(identity, name)
 	if err != nil {
 		return PeerInfo{}, err
 	}
-	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey), target.Name)
+	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey))
 	if err != nil {
 		return PeerInfo{}, err
 	}

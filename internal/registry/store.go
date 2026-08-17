@@ -15,8 +15,9 @@ import (
 )
 
 var (
-	ErrWorkspaceNotFound = errors.New("workspace not found")
-	ErrStaleRevision     = errors.New("workspace revision changed")
+	ErrWorkspaceNotFound   = errors.New("workspace not found")
+	ErrWorkspaceEpochStale = errors.New("workspace epoch is stale")
+	ErrStaleRevision       = errors.New("workspace revision changed")
 )
 
 type Workspace struct {

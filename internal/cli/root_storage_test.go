@@ -70,6 +70,24 @@ func TestAliasCommandUsesSoleRegistryWorkspaceOutsideItsRoot(t *testing.T) {
 	}
 }
 
+func TestAuthCommandsDoNotRequireWorkspace(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+	t.Cleanup(resetCLIWorkspace)
+	for _, name := range []string{"login", "logout", "status"} {
+		t.Run(name, func(t *testing.T) {
+			root := NewRootCmd()
+			command, _, err := root.Find([]string{"auth", name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = prepareCommand(command, nil); err != nil {
+				t.Fatalf("auth %s requires a workspace: %v", name, err)
+			}
+		})
+	}
+}
+
 func resetCLIWorkspace() {
 	if registryStore != nil {
 		_ = registryStore.Close()

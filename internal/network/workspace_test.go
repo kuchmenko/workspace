@@ -152,6 +152,62 @@ func TestUnauthorizedWorkspaceIsNotListedOrFetched(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSyncReturnsCurrentBundleAfterRejectingStaleAuthorizedWriter(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx := context.Background()
+	archRoot, asahiRoot := t.TempDir(), t.TempDir()
+	if _, err := archStore.Create(ctx, "shared", archRoot, &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{archIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err := archStore.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := archStore.ExportFor(ctx, "shared", asahiIdentity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = asahiStore.AttachFrom(ctx, "shared", asahiRoot, initial, archIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = asahiStore.Mutate(ctx, asahiRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["stale"] = "asahi"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := asahiStore.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	demoted := registry.AccessPolicy{Mode: registry.AccessSelected, Roles: map[string]string{archIdentity.ID(): registry.WorkspaceAdmin, asahiIdentity.ID(): registry.WorkspaceReplica}}
+	authoritative, err := archStore.SetAccess(ctx, "shared", demoted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response peerResponse
+	err = syncWorkspace(ctx, archStore, asahiIdentity.ID(), &stale, &response)
+	if err != nil {
+		t.Fatalf("stale writer rejection prevented response: %v", err)
+	}
+	if response.SyncStatus != "rejected" {
+		t.Fatalf("stale writer status = %q", response.SyncStatus)
+	}
+	if response.Workspace == nil {
+		t.Fatal("stale authorized writer did not receive current bundle")
+	}
+	if _, _, err = asahiStore.IntegrateFrom(ctx, "shared", *response.Workspace, archIdentity.ID()); err != nil {
+		t.Fatalf("demoted peer could not integrate current bundle: %v", err)
+	}
+	converged, err := asahiStore.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converged.Head != authoritative.Head || converged.Epoch != authoritative.Epoch {
+		t.Fatalf("demoted peer workspace = %#v, want head=%s epoch=%d", converged, authoritative.Head, authoritative.Epoch)
+	}
+}
+
 func mustNetworkDevice(t *testing.T, ctx context.Context, store *registry.Store, id string) registry.DeviceRecord {
 	t.Helper()
 	state, err := store.Network(ctx)

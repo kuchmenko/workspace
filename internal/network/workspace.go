@@ -85,14 +85,18 @@ func syncWorkspace(ctx context.Context, store *registry.Store, peerID string, in
 	}
 	after, conflicts, err := store.IntegrateFrom(ctx, name, *incoming, peerID)
 	if err != nil {
-		if !errors.Is(err, registry.ErrWorkspaceAccessConflict) {
+		switch {
+		case errors.Is(err, registry.ErrWorkspaceEpochStale):
+			response.SyncStatus = "rejected"
+		case errors.Is(err, registry.ErrWorkspaceAccessConflict):
+			_, err = store.LoadByName(ctx, name)
+			if err != nil {
+				return err
+			}
+			response.SyncStatus = "conflicted"
+		default:
 			return err
 		}
-		_, err = store.LoadByName(ctx, name)
-		if err != nil {
-			return err
-		}
-		response.SyncStatus = "conflicted"
 	} else {
 		response.SyncStatus = acceptedSyncStatus(before.Head, after.Head, incoming.Heads, conflicts)
 	}
@@ -261,11 +265,11 @@ func networkDevice(ctx context.Context, store *registry.Store, id string) (regis
 func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, request peerRequest) (peerResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
 	defer cancel()
-	cert, err := certificate(identity, name)
+	cert, err := peerCertificate(identity, name)
 	if err != nil {
 		return peerResponse{}, err
 	}
-	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey), target.Name)
+	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey))
 	if err != nil {
 		return peerResponse{}, err
 	}

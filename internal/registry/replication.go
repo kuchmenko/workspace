@@ -183,6 +183,13 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 	if err != nil {
 		return nil, err
 	}
+	adoptAccess, err := canAdoptAuthoritativeAccessTransition(tx, bundle, base, remoteHeads)
+	if err != nil {
+		return nil, err
+	}
+	if adoptAccess {
+		return persistAuthoritativeAccessTransition(ctx, tx, name, bundle, sourceID, authorize, base, remoteHeads[0])
+	}
 	accessConflicted, err := handleExistingAccessConflict(ctx, tx, name, base.workspaceID, localHeads, remoteHeads)
 	if err != nil {
 		return nil, err
@@ -203,6 +210,46 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 		return nil, err
 	}
 	if err = commitIncoming(ctx, tx, base.workspaceID, heads); err != nil {
+		return nil, err
+	}
+	return conflicts, nil
+}
+
+func canAdoptAuthoritativeAccessTransition(tx *sql.Tx, bundle Bundle, base incomingBase, remoteHeads []string) (bool, error) {
+	if bundle.Epoch <= base.epoch || len(remoteHeads) != 1 || !bundleHeadsAreAccessChanges(bundle) {
+		return false, nil
+	}
+	ancestor, found, err := commonAncestor(tx, base.head, remoteHeads[0])
+	if err != nil || !found {
+		return false, err
+	}
+	localPolicy, err := policyAtTx(tx, base.head)
+	if err != nil {
+		return false, err
+	}
+	ancestorPolicy, err := policyAtTx(tx, ancestor)
+	if err != nil {
+		return false, err
+	}
+	return equalPolicy(localPolicy, ancestorPolicy), nil
+}
+
+func persistAuthoritativeAccessTransition(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, base incomingBase, head string) ([]Conflict, error) {
+	state, err := loadRevisionState(tx, head)
+	if err != nil {
+		return nil, err
+	}
+	conflicts, err := loadRevisionConflicts(tx, head)
+	if err != nil {
+		return nil, err
+	}
+	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
+		return nil, err
+	}
+	if err = clearResolvedIncomingState(ctx, tx, bundle, sourceID, authorize, true, []string{head}); err != nil {
+		return nil, err
+	}
+	if err = commitIncoming(ctx, tx, base.workspaceID, []string{head}); err != nil {
 		return nil, err
 	}
 	return conflicts, nil
@@ -307,7 +354,7 @@ func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID 
 		return nil
 	}
 	if !authorize {
-		return errors.New("workspace epoch is stale")
+		return ErrWorkspaceEpochStale
 	}
 	if err := quarantineBundle(ctx, tx, bundle, sourceID, "workspace epoch is stale"); err != nil {
 		return err
@@ -315,7 +362,7 @@ func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return errors.New("workspace epoch is stale")
+	return ErrWorkspaceEpochStale
 }
 
 func bundleHeadsAreAccessChanges(bundle Bundle) bool {
