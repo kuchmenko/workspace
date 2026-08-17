@@ -7,6 +7,7 @@ import (
 	"net"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,6 +49,44 @@ func TestCanceledPairLeavesStoreUnpaired(t *testing.T) {
 	}
 	if _, err := store.Network(context.Background()); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("Network error = %v, want no network", err)
+	}
+}
+
+func TestPairResponseAcceptsValidNetworkHistoryBeyondOneMiB(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	joinerStore, joinerIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := inviterStore.EnsureNetwork(ctx, strings.Repeat("n", 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: inviterStore, Identity: inviterIdentity, Name: "inviter", Role: registry.NetworkAdmin,
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: joinerStore, Identity: joinerIdentity, Name: "joiner", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+	state, err := joinerStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Devices) != 2 {
+		t.Fatalf("joined network devices = %#v", state.Devices)
 	}
 }
 

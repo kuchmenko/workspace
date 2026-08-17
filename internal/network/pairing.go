@@ -47,10 +47,11 @@ type PairResult struct {
 }
 
 const (
-	pairExchangeTimeout = 30 * time.Second
-	maxPairMessageBytes = 1 << 20
-	maxPairConnections  = 8
-	maxPairCodeFailures = 5
+	pairExchangeTimeout  = 30 * time.Second
+	maxPairMessageBytes  = 1 << 20
+	maxPairResponseBytes = maxPeerMessageBytes
+	maxPairConnections   = 8
+	maxPairCodeFailures  = 5
 )
 
 var errInvalidPairCode = errors.New("pairing code is invalid")
@@ -365,7 +366,7 @@ func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	var response pairResponse
-	if err = decodeLimited(connection, maxPairMessageBytes, &response); err != nil {
+	if err = decodeLimited(connection, maxPairResponseBytes, &response); err != nil {
 		return PairResult{}, err
 	}
 	if !response.Accepted {

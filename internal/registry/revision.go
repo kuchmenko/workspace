@@ -136,6 +136,9 @@ func verifyRevision(revision Revision) error {
 }
 
 func insertRevision(tx *sql.Tx, revision Revision) error {
+	if err := validateRevisionTransferLimits(revision); err != nil {
+		return err
+	}
 	if err := verifyRevision(revision); err != nil {
 		return err
 	}

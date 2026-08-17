@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -61,6 +62,28 @@ func TestStorePersistsWorkspaceMutations(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Name != "personal" {
 		t.Fatalf("listed = %#v", listed)
+	}
+}
+
+func TestStoreRejectsLocalRevisionBeyondTransferLimit(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	root := t.TempDir()
+	created, err := store.Create(ctx, "personal", root, testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := created.State
+	state.Aliases["oversized"] = strings.Repeat("x", maxRevisionBytes)
+	if _, err = store.Update(ctx, "personal", created.Revision, state); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized local update error = %v", err)
+	}
+	unchanged, err := store.LoadByName(ctx, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Head != created.Head || unchanged.Revision != created.Revision {
+		t.Fatalf("oversized local update changed workspace: %#v", unchanged)
 	}
 }
 

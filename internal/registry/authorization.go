@@ -68,13 +68,20 @@ func validateBundledRevision(bundle Bundle, revision Revision, revisions map[str
 	if _, exists := revisions[revision.ID]; exists {
 		return errors.New("bundle contains a duplicate revision")
 	}
-	if len(revision.Snapshot) > maxRevisionBytes || len(revision.Conflicts) > maxRevisionItems || len(revision.Proofs) > maxRevisionItems {
-		return errors.New("workspace revision size limit exceeded")
+	if err := validateRevisionTransferLimits(revision); err != nil {
+		return err
 	}
 	if err := validateRevisionShape(revision); err != nil {
 		return err
 	}
 	return verifyRevision(revision)
+}
+
+func validateRevisionTransferLimits(revision Revision) error {
+	if len(revision.Snapshot) > maxRevisionBytes || len(revision.Conflicts) > maxRevisionItems || len(revision.Proofs) > maxRevisionItems {
+		return errors.New("workspace revision size limit exceeded")
+	}
+	return nil
 }
 
 func validateCompleteHistory(revisions []Revision, indexed map[string]Revision) error {
