@@ -66,7 +66,7 @@ func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stder
 		return registry.Workspace{}, err
 	}
 	if _, err = store.Network(ctx); errors.Is(err, sql.ErrNoRows) {
-		return workspace, nil
+		return requireResolvedWorkspace(ctx, store, workspace)
 	} else if err != nil {
 		return registry.Workspace{}, err
 	}
@@ -85,7 +85,22 @@ func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stder
 	if err = writeTopLevelWorkspaceSync(stdout, stderr, results, failures); err != nil {
 		return registry.Workspace{}, err
 	}
-	return store.LoadByRoot(ctx, root)
+	workspace, err = store.LoadByRoot(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	return requireResolvedWorkspace(ctx, store, workspace)
+}
+
+func requireResolvedWorkspace(ctx context.Context, store *registry.Store, workspace registry.Workspace) (registry.Workspace, error) {
+	conflicted, err := store.HasUnresolvedConflicts(ctx, workspace.Name)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	if conflicted {
+		return registry.Workspace{}, fmt.Errorf("workspace %s has unresolved registry conflicts", workspace.Name)
+	}
+	return workspace, nil
 }
 
 func writeTopLevelWorkspaceSync(stdout, stderr io.Writer, results []peernetwork.SyncResult, failures []string) error {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/device"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	peernetwork "github.com/kuchmenko/workspace/internal/network"
@@ -121,6 +122,154 @@ func TestRunSyncWithoutDeviceNetworkSynchronizesProjects(t *testing.T) {
 	if strings.Contains(stdout.String(), "workspace-sync:") || stderr.Len() != 0 {
 		t.Fatalf("unexpected local workspace output:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 	}
+}
+
+func TestRunSyncStopsBeforeProjectsWithLocalWorkspaceConflictAndNoReachablePeer(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root, projectPath := createSyncTestWorkspaceConflict(t, false)
+
+	var stdout, stderr bytes.Buffer
+	err := runSync(context.Background(), root, strings.NewReader(""), &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "unresolved registry conflicts") {
+		t.Fatalf("runSync error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if _, statErr := os.Stat(projectPath); !os.IsNotExist(statErr) {
+		t.Fatalf("project sync started with unresolved workspace conflict: %v", statErr)
+	}
+}
+
+func TestRunSyncStopsBeforeProjectsWithLocalWorkspaceAccessConflictAndNoReachablePeer(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root, projectPath := createSyncTestWorkspaceConflict(t, true)
+
+	var stdout, stderr bytes.Buffer
+	err := runSync(context.Background(), root, strings.NewReader(""), &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "unresolved registry conflicts") {
+		t.Fatalf("runSync error = %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if _, statErr := os.Stat(projectPath); !os.IsNotExist(statErr) {
+		t.Fatalf("project sync started with unresolved workspace access conflict: %v", statErr)
+	}
+}
+
+func createSyncTestWorkspaceConflict(t *testing.T, access bool) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+	projectRemote := testutil.InitFakeRemote(t, "app", "main")
+	root := t.TempDir()
+	state := &config.Workspace{
+		Meta:    config.Meta{Version: 1},
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{"editor": "vim"},
+		Projects: map[string]config.Project{"app": {
+			Remote: projectRemote, Path: "personal/app", Status: config.StatusActive,
+			Category: config.CategoryPersonal, DefaultBranch: "main",
+		}},
+	}
+	left, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightPath := filepath.Join(t.TempDir(), "registry.db")
+	right, err := registry.Open(rightPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access {
+		leftIdentity, loadErr := device.Load(filepath.Join(filepath.Dir(mustRegistryPath(t)), "identity.key"))
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		rightIdentity, loadErr := device.Load(filepath.Join(filepath.Dir(rightPath), "identity.key"))
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		if _, err = left.EnsureNetwork(ctx, "left"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = left.AddNetworkDevice(ctx, "right", rightIdentity.PublicKey(), registry.NetworkAdmin); err != nil {
+			t.Fatal(err)
+		}
+		network, exportErr := left.ExportNetwork(ctx)
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if _, err = right.ImportNetwork(ctx, network, leftIdentity.ID()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = left.Create(ctx, filepath.Base(root), root, state); err != nil {
+			t.Fatal(err)
+		}
+		base := registry.AccessPolicy{Mode: registry.AccessSelected, Roles: map[string]string{leftIdentity.ID(): registry.WorkspaceAdmin, rightIdentity.ID(): registry.WorkspaceAdmin}}
+		if _, err = left.SetAccess(ctx, filepath.Base(root), base); err != nil {
+			t.Fatal(err)
+		}
+		bundle, exportErr := left.ExportFor(ctx, filepath.Base(root), rightIdentity.ID())
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if _, err = right.AttachFrom(ctx, filepath.Base(root), t.TempDir(), bundle, leftIdentity.ID()); err != nil {
+			t.Fatal(err)
+		}
+		leftPolicy := base
+		leftPolicy.Roles = map[string]string{leftIdentity.ID(): registry.WorkspaceAdmin, rightIdentity.ID(): registry.WorkspaceWriter}
+		rightPolicy := base
+		rightPolicy.Roles = map[string]string{leftIdentity.ID(): registry.WorkspaceWriter, rightIdentity.ID(): registry.WorkspaceAdmin}
+		if _, err = left.SetAccess(ctx, filepath.Base(root), leftPolicy); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = right.SetAccess(ctx, filepath.Base(root), rightPolicy); err != nil {
+			t.Fatal(err)
+		}
+		rightBranch, exportErr := right.Export(ctx, filepath.Base(root))
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if _, _, err = left.IntegrateFrom(ctx, filepath.Base(root), rightBranch, rightIdentity.ID()); !errors.Is(err, registry.ErrWorkspaceAccessConflict) {
+			t.Fatalf("access conflict setup: %v", err)
+		}
+	} else {
+		if _, err = left.Create(ctx, filepath.Base(root), root, state); err != nil {
+			t.Fatal(err)
+		}
+		bundle, exportErr := left.Export(ctx, filepath.Base(root))
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		rightRoot := t.TempDir()
+		if _, err = right.Attach(ctx, filepath.Base(root), rightRoot, bundle); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = left.Mutate(ctx, root, func(workspace *config.Workspace) error { workspace.Aliases["editor"] = "helix"; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error { workspace.Aliases["editor"] = "nano"; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		rightBranch, exportErr := right.Export(ctx, filepath.Base(root))
+		if exportErr != nil {
+			t.Fatal(exportErr)
+		}
+		if _, conflicts, integrateErr := left.Integrate(ctx, filepath.Base(root), rightBranch); integrateErr != nil || len(conflicts) != 1 {
+			t.Fatalf("conflict setup: conflicts=%v error=%v", conflicts, integrateErr)
+		}
+	}
+	if err = right.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = left.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return root, filepath.Join(root, "personal/app")
+}
+
+func mustRegistryPath(t *testing.T) string {
+	t.Helper()
+	path, err := registry.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestRunSyncCanceledBeforeInitialExchangeReturns130(t *testing.T) {

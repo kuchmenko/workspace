@@ -2,9 +2,12 @@ package network
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"net"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,9 +20,35 @@ type pairReady struct {
 	endpoint string
 }
 
+var networkTestStorePaths sync.Map
+
 type pairOutcome struct {
 	result PairResult
 	err    error
+}
+
+func TestCanceledPairLeavesStoreUnpaired(t *testing.T) {
+	store, identity := networkTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan struct{}, 1)
+	outcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: store, Identity: identity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(string, string) { ready <- struct{}{} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		outcome <- err
+	}()
+	<-ready
+	cancel()
+	if err := <-outcome; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Pair error = %v, want context canceled", err)
+	}
+	if _, err := store.Network(context.Background()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Network error = %v, want no network", err)
+	}
 }
 
 func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
@@ -130,12 +159,8 @@ func TestPairRejectsUnconfirmedJoinWithoutAddingDevice(t *testing.T) {
 	if err := <-serverOutcome; err == nil {
 		t.Fatal("pair server accepted unconfirmed join")
 	}
-	state, err := archStore.Network(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(state.Devices) != 1 || state.Devices[0].ID != archIdentity.ID() {
-		t.Fatalf("network changed after rejected join: %#v", state)
+	if _, err := archStore.Network(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Network error = %v, want no network", err)
 	}
 }
 
@@ -225,10 +250,12 @@ func TestPairAllowsCorrectCodeAfterRejectedWrongCode(t *testing.T) {
 func networkTestStore(t *testing.T) (*registry.Store, device.Identity) {
 	t.Helper()
 	directory := t.TempDir()
-	store, err := registry.Open(filepath.Join(directory, "registry.db"))
+	path := filepath.Join(directory, "registry.db")
+	store, err := registry.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	networkTestStorePaths.Store(store, path)
 	t.Cleanup(func() { _ = store.Close() })
 	identity, err := device.Load(filepath.Join(directory, "identity.key"))
 	if err != nil {

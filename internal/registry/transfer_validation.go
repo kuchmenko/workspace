@@ -16,9 +16,6 @@ func loadImportManifest(ctx context.Context, reader sqlReader, item revisionImpo
 	if err := reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_import_manifest WHERE import_id=?`, item.id).Scan(&count); err != nil {
 		return RevisionManifest{}, err
 	}
-	if count > maxBundleRevisions {
-		return RevisionManifest{}, errors.New("revision manifest history limit exceeded")
-	}
 	rows, err := reader.QueryContext(ctx, `SELECT revision_id,wire_bytes FROM workspace_import_manifest WHERE import_id=? ORDER BY revision_id`, item.id)
 	if err != nil {
 		return RevisionManifest{}, err

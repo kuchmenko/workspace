@@ -187,6 +187,36 @@ func TestPeerProbeRejectsUnknownDevice(t *testing.T) {
 	}
 }
 
+func TestPeerProbeRejectsRemovedDevice(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := archStore.RemoveNetworkDevice(ctx, asahiIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	state, err := asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch, _ := activeDevice(state.Devices, archIdentity.ID())
+	if _, err = Probe(ctx, <-endpoint, arch, asahiStore, asahiIdentity, "asahi"); err == nil {
+		t.Fatal("removed device authenticated")
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPeerProbeRejectsMismatchedPinnedIdentity(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
 	_, otherIdentity := networkTestStore(t)

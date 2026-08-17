@@ -32,6 +32,20 @@ func (store *Store) Conflicts(ctx context.Context, name string) ([]Conflict, err
 	return conflicts, rows.Err()
 }
 
+func (store *Store) HasUnresolvedConflicts(ctx context.Context, name string) (bool, error) {
+	workspace, err := store.LoadByName(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	var found bool
+	err = store.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM workspace_conflicts WHERE workspace_id=?
+		UNION ALL
+		SELECT 1 FROM workspace_access_conflicts WHERE workspace_id=?
+	)`, workspace.WorkspaceID, workspace.WorkspaceID).Scan(&found)
+	return found, err
+}
+
 func (store *Store) Resolve(ctx context.Context, name, path string, value json.RawMessage) (Workspace, error) {
 	localActive, _ := store.localNetworkPresence(ctx)
 	if err := store.persistResolution(ctx, name, path, value, localActive); err != nil {

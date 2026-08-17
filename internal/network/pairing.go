@@ -90,9 +90,6 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	if options.Role == "" {
 		options.Role = registry.NetworkMember
 	}
-	if _, err := options.Store.EnsureNetwork(ctx, options.Name); err != nil {
-		return PairResult{}, err
-	}
 	cert, err := certificate(options.Identity, options.Name)
 	if err != nil {
 		return PairResult{}, err
@@ -277,6 +274,10 @@ func confirmPairConnection(connection net.Conn, peerName, authentication string,
 }
 
 func persistPairedDevice(ctx context.Context, connection net.Conn, peerKey ed25519.PublicKey, peerName string, options PairOptions) (PairResult, bool, error) {
+	if _, err := options.Store.EnsureNetwork(ctx, options.Name); err != nil {
+		_ = json.NewEncoder(connection).Encode(pairResponse{Error: err.Error()})
+		return PairResult{}, false, err
+	}
 	state, err := options.Store.AddNetworkDevice(ctx, peerName, peerKey, options.Role)
 	if err != nil {
 		_ = json.NewEncoder(connection).Encode(pairResponse{Error: err.Error()})

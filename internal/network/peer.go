@@ -94,6 +94,7 @@ type peerRequest struct {
 	ManifestHash string                     `json:"manifest_hash,omitempty"`
 	RevisionIDs  []string                   `json:"revision_ids,omitempty"`
 	Revisions    []registry.Revision        `json:"revisions,omitempty"`
+	After        string                     `json:"after,omitempty"`
 }
 
 type peerResponse struct {
@@ -148,8 +149,8 @@ func trustedPeer(store *registry.Store) func(string) bool {
 		if loadErr != nil {
 			return false
 		}
-		_, known := deviceByID(current.Devices, id)
-		return known
+		_, active := activeDevice(current.Devices, id)
+		return active
 	}
 }
 

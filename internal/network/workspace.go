@@ -8,11 +8,18 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
 	"github.com/kuchmenko/workspace/internal/registry"
 )
+
+var workspaceManifestPageSize atomic.Int64
+
+func init() {
+	workspaceManifestPageSize.Store(10000)
+}
 
 type AvailableWorkspace struct {
 	registry.WorkspaceSummary
@@ -44,6 +51,21 @@ func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID s
 		return inventoryWorkspace(ctx, store, peerID, request, response)
 	case "workspace.revisions":
 		return workspaceRevisions(ctx, store, peerID, request, response)
+	default:
+		return handleWorkspaceImportRequest(ctx, store, peerID, request, response)
+	}
+}
+
+func handleWorkspaceImportRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+	switch request.Action {
+	case "workspace.import.begin":
+		return beginWorkspaceManifestImport(ctx, store, peerID, request, response)
+	case "workspace.import.append":
+		return appendWorkspaceManifestImport(ctx, store, peerID, request)
+	case "workspace.import.plan":
+		return finishWorkspaceManifestImport(ctx, store, peerID, request, response)
+	case "workspace.import.missing":
+		return workspaceImportMissing(ctx, store, peerID, request, response)
 	case "workspace.import.batch":
 		return stageWorkspaceImport(ctx, store, peerID, request)
 	case "workspace.import.finish":
@@ -69,21 +91,49 @@ func inventoryWorkspace(ctx context.Context, store *registry.Store, peerID strin
 	if err != nil {
 		return err
 	}
-	manifest, err := store.ManifestFor(ctx, name, peerID)
+	manifest, err := store.ManifestPageForLimit(ctx, name, peerID, request.After, int(workspaceManifestPageSize.Load()))
 	if err != nil {
 		return err
 	}
 	response.Manifest = &manifest
-	if request.Mode == registry.RevisionImportAttach {
-		if request.Manifest != nil {
-			return errors.New("workspace attach inventory must not include local history")
-		}
-		return nil
+	if request.Manifest != nil {
+		return errors.New("workspace inventory must not include local history")
 	}
-	if request.Manifest == nil || request.Manifest.WorkspaceID != request.WorkspaceID {
-		return errors.New("workspace sync inventory is required")
+	return nil
+}
+
+func beginWorkspaceManifestImport(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+	if request.Mode != registry.RevisionImportSync || request.Manifest == nil || request.Manifest.WorkspaceID != request.WorkspaceID {
+		return errors.New("workspace manifest import is invalid")
 	}
-	plan, err := store.BeginSyncImport(ctx, name, peerID, *request.Manifest)
+	name, err := store.WorkspaceNameByID(ctx, request.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	id, err := store.BeginSyncImportPage(ctx, name, peerID, *request.Manifest)
+	if err == nil {
+		response.Import = &registry.RevisionImportPlan{ID: id}
+	}
+	return err
+}
+
+func appendWorkspaceManifestImport(ctx context.Context, store *registry.Store, peerID string, request peerRequest) error {
+	if request.Mode != registry.RevisionImportSync || request.Manifest == nil {
+		return errors.New("workspace manifest import page is invalid")
+	}
+	return store.AppendRevisionImportManifest(ctx, request.ImportID, peerID, request.WorkspaceID, request.Mode, request.After, *request.Manifest)
+}
+
+func finishWorkspaceManifestImport(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+	plan, err := store.FinishRevisionImportManifest(ctx, request.ImportID, peerID, request.WorkspaceID, request.Mode)
+	if err == nil {
+		response.Import = &plan
+	}
+	return err
+}
+
+func workspaceImportMissing(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+	plan, err := store.RevisionImportMissingPage(ctx, request.ImportID, peerID, request.WorkspaceID, request.Mode, request.ManifestHash, request.After)
 	if err == nil {
 		response.Import = &plan
 	}
@@ -188,17 +238,23 @@ func Attach(ctx context.Context, source AvailableWorkspace, store *registry.Stor
 	if response.Manifest == nil {
 		return registry.Workspace{}, errors.New("peer returned no workspace manifest")
 	}
-	plan, err := store.BeginAttachImport(ctx, localName, root, source.DeviceID, *response.Manifest)
+	importID, err := store.BeginAttachImportPage(ctx, localName, root, source.DeviceID, *response.Manifest)
 	if err != nil {
 		return registry.Workspace{}, err
 	}
+	manifestHash := ""
 	complete := false
 	defer func() {
 		if !complete {
-			_ = store.AbortRevisionImport(context.Background(), plan.ID, source.DeviceID, source.WorkspaceID, registry.RevisionImportAttach, plan.ManifestHash)
+			_ = store.AbortRevisionImport(context.Background(), importID, source.DeviceID, source.WorkspaceID, registry.RevisionImportAttach, manifestHash)
 		}
 	}()
-	if err = pullRevisionImport(ctx, source.Endpoint, target, store, identity, deviceName, *response.Manifest, plan, registry.RevisionImportAttach); err != nil {
+	plan, err := appendRemoteManifestPages(ctx, source.Endpoint, target, store, identity, deviceName, registry.RevisionImportAttach, importID, *response.Manifest)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	manifestHash = plan.ManifestHash
+	if err = pullPagedRevisionImport(ctx, source.Endpoint, target, store, identity, deviceName, source.WorkspaceID, registry.RevisionImportAttach, plan); err != nil {
 		return registry.Workspace{}, err
 	}
 	workspace, err := store.FinishAttachImport(ctx, plan.ID, source.DeviceID, source.WorkspaceID, plan.ManifestHash)
@@ -214,138 +270,168 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	if err != nil {
 		return SyncResult{}, err
 	}
-	localManifest, err := store.ManifestFor(ctx, workspaceName, target.ID)
+	workspaceID := before.WorkspaceID
+	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync})
 	if err != nil {
 		return SyncResult{}, err
 	}
-	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: localManifest.WorkspaceID, Mode: registry.RevisionImportSync, Manifest: &localManifest})
-	if err != nil {
-		return SyncResult{}, err
-	}
-	if response.Manifest == nil || response.Import == nil {
+	if response.Manifest == nil {
 		return SyncResult{}, errors.New("peer returned incomplete workspace inventory")
 	}
-	remoteManifest, remotePlan := *response.Manifest, *response.Import
-	localPlan, err := store.BeginSyncImport(ctx, workspaceName, target.ID, remoteManifest)
-	if err != nil {
-		abortPeerRevisionImport(endpoint, target, store, identity, name, localManifest.WorkspaceID, remotePlan)
-		return SyncResult{}, err
-	}
-	finished, after, conflicts, err := exchangeRevisionImports(ctx, workspaceName, endpoint, target, store, identity, name, localManifest, remoteManifest, localPlan, remotePlan)
-	if errors.Is(err, registry.ErrWorkspaceAccessConflict) {
-		after, err = store.LoadByName(ctx, workspaceName)
-		if err == nil {
-			return SyncResult{Workspace: workspaceName, Device: target.Name, Status: "conflicted", Head: after.Head}, nil
-		}
-	}
+	localImportID, err := store.BeginSyncImportPage(ctx, workspaceName, target.ID, *response.Manifest)
 	if err != nil {
 		return SyncResult{}, err
 	}
+	localPlan := registry.RevisionImportPlan{ID: localImportID}
+	localComplete := false
+	defer abortLocalRevisionImportUnlessComplete(store, target.ID, workspaceID, &localPlan, &localComplete)
+	localPlan, err = appendRemoteManifestPages(ctx, endpoint, target, store, identity, name, registry.RevisionImportSync, localImportID, *response.Manifest)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	remotePlan, err := pushLocalManifestPages(ctx, workspaceName, endpoint, target, store, identity, name, workspaceID)
+	remoteComplete := false
+	defer abortPeerRevisionImportUnlessComplete(endpoint, target, store, identity, name, workspaceID, &remotePlan, &remoteComplete)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	finished, after, conflicts, err := finishPagedSync(ctx, workspaceName, endpoint, target, store, identity, name, workspaceID, localPlan, remotePlan)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	localComplete = true
+	remoteComplete = true
 	status := completedSyncStatus(before.Head, after.Head, finished.SyncStatus, conflicts, finished.Conflicts)
 	return SyncResult{Workspace: workspaceName, Device: target.Name, Status: status, Head: after.Head, Conflicts: conflicts}, nil
 }
 
-func exchangeRevisionImports(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, localManifest, remoteManifest registry.RevisionManifest, localPlan, remotePlan registry.RevisionImportPlan) (peerResponse, registry.Workspace, []registry.Conflict, error) {
-	localComplete, remoteComplete := false, false
-	defer func() {
-		if !localComplete {
-			_ = store.AbortRevisionImport(context.Background(), localPlan.ID, target.ID, localManifest.WorkspaceID, registry.RevisionImportSync, localPlan.ManifestHash)
-		}
-		if !remoteComplete {
-			abortPeerRevisionImport(endpoint, target, store, identity, name, localManifest.WorkspaceID, remotePlan)
-		}
-	}()
-	if err := pullRevisionImport(ctx, endpoint, target, store, identity, name, remoteManifest, localPlan, registry.RevisionImportSync); err != nil {
-		return peerResponse{}, registry.Workspace{}, nil, err
+func finishPagedSync(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string, localPlan, remotePlan registry.RevisionImportPlan) (peerResponse, registry.Workspace, []registry.Conflict, error) {
+	finished, after, conflicts, err := exchangePagedRevisionImports(ctx, workspaceName, endpoint, target, store, identity, name, workspaceID, localPlan, remotePlan)
+	if !errors.Is(err, registry.ErrWorkspaceAccessConflict) {
+		return finished, after, conflicts, err
 	}
-	if err := pushRevisionImport(ctx, workspaceName, endpoint, target, store, identity, name, localManifest, remotePlan); err != nil {
-		return peerResponse{}, registry.Workspace{}, nil, err
-	}
-	finished, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.finish", WorkspaceID: localManifest.WorkspaceID, Mode: registry.RevisionImportSync, ImportID: remotePlan.ID, ManifestHash: remotePlan.ManifestHash})
+	after, err = store.LoadByName(ctx, workspaceName)
 	if err != nil {
 		return peerResponse{}, registry.Workspace{}, nil, err
 	}
-	remoteComplete = true
-	after, conflicts, _, err := store.FinishSyncImport(ctx, localPlan.ID, target.ID, localManifest.WorkspaceID, localPlan.ManifestHash)
-	if errors.Is(err, registry.ErrWorkspaceEpochStale) {
-		after, err = store.LoadByName(ctx, workspaceName)
-	}
-	if err != nil {
-		return peerResponse{}, registry.Workspace{}, nil, RejectedError{err: err}
-	}
-	localComplete = true
+	finished.SyncStatus = "conflicted"
 	return finished, after, conflicts, nil
 }
 
-const maxPeerRevisionBatchBytes = 16 << 20
+func appendRemoteManifestPages(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, mode, importID string, first registry.RevisionManifest) (registry.RevisionImportPlan, error) {
+	page := first
+	plan := registry.RevisionImportPlan{ID: importID}
+	for page.Next != "" {
+		after := page.Next
+		response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: page.WorkspaceID, Mode: mode, After: after})
+		if err != nil {
+			return plan, err
+		}
+		if response.Manifest == nil {
+			return plan, errors.New("peer returned no workspace manifest page")
+		}
+		page = *response.Manifest
+		if err = store.AppendRevisionImportManifest(ctx, importID, target.ID, page.WorkspaceID, mode, after, page); err != nil {
+			return plan, err
+		}
+	}
+	return store.FinishRevisionImportManifest(ctx, importID, target.ID, first.WorkspaceID, mode)
+}
 
-func pullRevisionImport(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, manifest registry.RevisionManifest, plan registry.RevisionImportPlan, mode string) error {
-	batches, err := revisionBatches(manifest, plan.Missing)
+func pushLocalManifestPages(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string) (registry.RevisionImportPlan, error) {
+	page, err := store.ManifestPageForLimit(ctx, workspaceName, target.ID, "", int(workspaceManifestPageSize.Load()))
+	if err != nil {
+		return registry.RevisionImportPlan{}, err
+	}
+	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.begin", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, Manifest: &page})
+	if err != nil || response.Import == nil {
+		return registry.RevisionImportPlan{}, errors.Join(err, errors.New("peer returned no workspace manifest import"))
+	}
+	importID := response.Import.ID
+	plan := registry.RevisionImportPlan{ID: importID}
+	for page.Next != "" {
+		after := page.Next
+		page, err = store.ManifestPageForLimit(ctx, workspaceName, target.ID, after, int(workspaceManifestPageSize.Load()))
+		if err != nil {
+			return plan, err
+		}
+		if _, err = requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.append", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: importID, After: after, Manifest: &page}); err != nil {
+			return plan, err
+		}
+	}
+	response, err = requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.plan", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: importID})
+	if err != nil || response.Import == nil {
+		return plan, errors.Join(err, errors.New("peer returned no workspace import plan"))
+	}
+	return *response.Import, nil
+}
+
+func exchangePagedRevisionImports(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string, localPlan, remotePlan registry.RevisionImportPlan) (peerResponse, registry.Workspace, []registry.Conflict, error) {
+	if err := pullPagedRevisionImport(ctx, endpoint, target, store, identity, name, workspaceID, registry.RevisionImportSync, localPlan); err != nil {
+		return peerResponse{}, registry.Workspace{}, nil, err
+	}
+	if err := pushPagedRevisionImport(ctx, workspaceName, endpoint, target, store, identity, name, workspaceID, remotePlan); err != nil {
+		return peerResponse{}, registry.Workspace{}, nil, err
+	}
+	finished, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.finish", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: remotePlan.ID, ManifestHash: remotePlan.ManifestHash})
+	if err != nil {
+		return peerResponse{}, registry.Workspace{}, nil, err
+	}
+	after, conflicts, _, err := store.FinishSyncImport(ctx, localPlan.ID, target.ID, workspaceID, localPlan.ManifestHash)
+	return finished, after, conflicts, err
+}
+
+func pullPagedRevisionImport(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID, mode string, plan registry.RevisionImportPlan) error {
+	for {
+		if err := pullRevisionImportPage(ctx, endpoint, target, store, identity, name, workspaceID, mode, plan); err != nil {
+			return err
+		}
+		if plan.Next == "" {
+			return nil
+		}
+		var err error
+		plan, err = store.RevisionImportMissingPage(ctx, plan.ID, target.ID, workspaceID, mode, plan.ManifestHash, plan.Next)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func pullRevisionImportPage(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID, mode string, plan registry.RevisionImportPlan) error {
+	if len(plan.Missing) == 0 {
+		return nil
+	}
+	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.revisions", WorkspaceID: workspaceID, RevisionIDs: plan.Missing})
 	if err != nil {
 		return err
 	}
-	for _, ids := range batches {
-		response, requestErr := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.revisions", WorkspaceID: manifest.WorkspaceID, RevisionIDs: ids})
-		if requestErr != nil {
-			return requestErr
-		}
-		if !revisionBatchMatches(ids, response.Revisions) {
-			return errors.New("peer returned a mismatched revision batch")
-		}
-		if requestErr = store.StageRevisionImport(ctx, plan.ID, target.ID, manifest.WorkspaceID, mode, plan.ManifestHash, response.Revisions); requestErr != nil {
-			return requestErr
-		}
+	if !revisionBatchMatches(plan.Missing, response.Revisions) {
+		return errors.New("peer returned a mismatched revision batch")
 	}
-	return nil
+	return store.StageRevisionImport(ctx, plan.ID, target.ID, workspaceID, mode, plan.ManifestHash, response.Revisions)
 }
 
-func pushRevisionImport(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, manifest registry.RevisionManifest, plan registry.RevisionImportPlan) error {
-	batches, err := revisionBatches(manifest, plan.Missing)
-	if err != nil {
-		return err
-	}
-	for _, ids := range batches {
-		revisions, loadErr := store.RevisionsFor(ctx, workspaceName, target.ID, ids)
-		if loadErr != nil {
-			return loadErr
+func pushPagedRevisionImport(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string, plan registry.RevisionImportPlan) error {
+	for {
+		if len(plan.Missing) > 0 {
+			revisions, err := store.RevisionsFor(ctx, workspaceName, target.ID, plan.Missing)
+			if err != nil {
+				return err
+			}
+			if _, err = requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.batch", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: plan.ID, ManifestHash: plan.ManifestHash, Revisions: revisions}); err != nil {
+				return err
+			}
 		}
-		_, requestErr := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.batch", WorkspaceID: manifest.WorkspaceID, Mode: registry.RevisionImportSync, ImportID: plan.ID, ManifestHash: plan.ManifestHash, Revisions: revisions})
-		if requestErr != nil {
-			return requestErr
+		if plan.Next == "" {
+			return nil
 		}
+		response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.missing", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: plan.ID, ManifestHash: plan.ManifestHash, After: plan.Next})
+		if err != nil || response.Import == nil {
+			return errors.Join(err, errors.New("peer returned no workspace import plan page"))
+		}
+		plan = *response.Import
 	}
-	return nil
 }
-
-func revisionBatches(manifest registry.RevisionManifest, missing []string) ([][]string, error) {
-	sizes := make(map[string]int64, len(manifest.Revisions))
-	for _, revision := range manifest.Revisions {
-		sizes[revision.ID] = revision.WireBytes
-	}
-	seen := make(map[string]bool, len(missing))
-	var batches [][]string
-	var batch []string
-	var bytes int64
-	for _, id := range missing {
-		size, declared := sizes[id]
-		if !declared || seen[id] || size < 1 || size >= maxPeerMessageBytes {
-			return nil, errors.New("revision import plan is invalid")
-		}
-		seen[id] = true
-		if len(batch) > 0 && (bytes+size >= maxPeerRevisionBatchBytes || len(batch) == maxImportBatchRevisions) {
-			batches = append(batches, batch)
-			batch, bytes = nil, 0
-		}
-		batch = append(batch, id)
-		bytes += size
-	}
-	if len(batch) > 0 {
-		batches = append(batches, batch)
-	}
-	return batches, nil
-}
-
-const maxImportBatchRevisions = 128
 
 func revisionBatchMatches(ids []string, revisions []registry.Revision) bool {
 	if len(ids) != len(revisions) {
@@ -370,8 +456,20 @@ func abortPeerRevisionImport(endpoint string, target registry.DeviceRecord, stor
 	_, _ = requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.import.abort", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync, ImportID: plan.ID, ManifestHash: plan.ManifestHash})
 }
 
+func abortLocalRevisionImportUnlessComplete(store *registry.Store, peerID, workspaceID string, plan *registry.RevisionImportPlan, complete *bool) {
+	if !*complete {
+		_ = store.AbortRevisionImport(context.Background(), plan.ID, peerID, workspaceID, registry.RevisionImportSync, plan.ManifestHash)
+	}
+}
+
+func abortPeerRevisionImportUnlessComplete(endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string, plan *registry.RevisionImportPlan, complete *bool) {
+	if !*complete && plan.ID != "" {
+		abortPeerRevisionImport(endpoint, target, store, identity, name, workspaceID, *plan)
+	}
+}
+
 func completedSyncStatus(before, after, remoteStatus string, localConflicts, remoteConflicts []registry.Conflict) string {
-	if len(localConflicts) > 0 || len(remoteConflicts) > 0 {
+	if remoteStatus == "conflicted" || len(localConflicts) > 0 || len(remoteConflicts) > 0 {
 		return "conflicted"
 	}
 	if remoteStatus == "merged" {

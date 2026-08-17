@@ -2,6 +2,8 @@ package network
 
 import (
 	"context"
+	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,6 +16,8 @@ import (
 )
 
 func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
+	previousPageSize := workspaceManifestPageSize.Swap(1)
+	t.Cleanup(func() { workspaceManifestPageSize.Store(previousPageSize) })
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -101,6 +105,63 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	cancel()
 	if err = <-serverOutcome; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAttachAbortsImportWhenManifestPagingIsInterrupted(t *testing.T) {
+	previousPageSize := workspaceManifestPageSize.Swap(1)
+	t.Cleanup(func() { workspaceManifestPageSize.Store(previousPageSize) })
+	sourceStore, sourceIdentity, targetStore, targetIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	created, err := sourceStore.Create(ctx, "shared", t.TempDir(), &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{}, Aliases: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{sourceIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err = sourceStore.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	options := ServeOptions{Store: sourceStore, Identity: sourceIdentity, Name: "source", ListenAddress: "127.0.0.1:0", DisableDiscovery: true}
+	self, cert, listener, err := preparePeerServer(ctx, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsListener := tls.NewListener(listener, peerServerTLS(cert, sourceIdentity, options.Name, trustedPeer(sourceStore)))
+	serverOutcome := make(chan error, 1)
+	go func() {
+		connection, acceptErr := tlsListener.Accept()
+		if acceptErr == nil {
+			_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
+			servePeerConnection(sourceStore, self, connection)
+			_ = connection.Close()
+		}
+		_ = listener.Close()
+		serverOutcome <- acceptErr
+	}()
+	sourceDevice := mustNetworkDevice(t, ctx, targetStore, sourceIdentity.ID())
+	source := AvailableWorkspace{WorkspaceSummary: registry.WorkspaceSummary{Name: "shared", WorkspaceID: created.WorkspaceID}, DeviceID: sourceDevice.ID, DeviceName: sourceDevice.Name, Endpoint: listener.Addr().String()}
+	if _, err = Attach(ctx, source, targetStore, targetIdentity, "target", "shared", t.TempDir()); err == nil {
+		t.Fatal("attach succeeded after peer stopped during manifest paging")
+	}
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+	path, found := networkTestStorePaths.Load(targetStore)
+	if !found {
+		t.Fatal("target registry path is unavailable")
+	}
+	database, err := sql.Open("sqlite", path.(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	var imports int
+	if err = database.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_imports WHERE workspace_id=?`, created.WorkspaceID).Scan(&imports); err != nil {
+		t.Fatal(err)
+	}
+	if imports != 0 {
+		t.Fatalf("interrupted attach retained %d imports", imports)
 	}
 }
 

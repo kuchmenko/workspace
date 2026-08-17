@@ -3,11 +3,150 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
 )
+
+func TestWorkspaceManifestPagesHistoryBeyondTenThousandRevisions(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	root := t.TempDir()
+	if _, err := store.Create(ctx, "shared", root, testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := store.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement, err := tx.PrepareContext(ctx, `INSERT INTO revisions(id,workspace_id,epoch,kind,snapshot,conflicts) VALUES(?,?,?,?,?,?)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range maxRevisionManifestPage + 1 {
+		id := fmt.Sprintf("%064x", index+1)
+		if _, err = statement.ExecContext(ctx, id, workspace.WorkspaceID, 1, "mutation", []byte(`{}`), []byte(`[]`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = statement.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var revisions []RevisionInventory
+	after := ""
+	for {
+		page, pageErr := store.workspaceManifestPage(ctx, workspace, false, after, maxRevisionManifestPage)
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		if len(page.Revisions) > maxRevisionManifestPage {
+			t.Fatalf("manifest page has %d revisions", len(page.Revisions))
+		}
+		revisions = append(revisions, page.Revisions...)
+		if page.Next == "" {
+			break
+		}
+		after = page.Next
+	}
+	if len(revisions) <= maxRevisionManifestPage {
+		t.Fatalf("paged revisions=%d", len(revisions))
+	}
+}
+
+func TestRevisionManifestImportRejectsMalformedAndOutOfOrderPages(t *testing.T) {
+	ctx := context.Background()
+	source, target := pairedRegistryStores(t)
+	if _, err := source.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{source.identity.ID(): WorkspaceAdmin}}
+	if _, err := source.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	first, err := source.ManifestPageForLimit(ctx, "shared", target.identity.ID(), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importID, err := target.BeginAttachImportPage(ctx, "shared", t.TempDir(), source.identity.ID(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.ManifestPageForLimit(ctx, "shared", target.identity.ID(), first.Next, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = target.AppendRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach, strings.Repeat("f", 64), second); err == nil || !strings.Contains(err.Error(), "inconsistent") {
+		t.Fatalf("out-of-order page error = %v", err)
+	}
+	malformed := second
+	malformed.Epoch++
+	if err = target.AppendRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach, first.Next, malformed); err == nil || !strings.Contains(err.Error(), "inconsistent") {
+		t.Fatalf("inconsistent page error = %v", err)
+	}
+	duplicate := second
+	duplicate.Revisions = append([]RevisionInventory(nil), second.Revisions...)
+	duplicate.Revisions[0] = first.Revisions[0]
+	if err = target.AppendRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach, first.Next, duplicate); err == nil {
+		t.Fatal("duplicate page was accepted")
+	}
+	if err = target.AppendRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach, first.Next, second); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := target.FinishRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete, err := source.ManifestFor(ctx, "shared", target.identity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := revisionManifestHash(complete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ManifestHash != wantHash {
+		t.Fatalf("manifest hash = %s, want %s", plan.ManifestHash, wantHash)
+	}
+}
+
+func TestRevisionManifestImportRejectsExpiredAppend(t *testing.T) {
+	ctx := context.Background()
+	source, target := pairedRegistryStores(t)
+	if _, err := source.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{source.identity.ID(): WorkspaceAdmin}}
+	if _, err := source.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	first, err := source.ManifestPageForLimit(ctx, "shared", target.identity.ID(), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importID, err := target.BeginAttachImportPage(ctx, "shared", t.TempDir(), source.identity.ID(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.ManifestPageForLimit(ctx, "shared", target.identity.ID(), first.Next, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = target.db.ExecContext(ctx, `UPDATE workspace_imports SET expires_at=0 WHERE id=?`, importID); err != nil {
+		t.Fatal(err)
+	}
+	if err = target.AppendRevisionImportManifest(ctx, importID, source.identity.ID(), first.WorkspaceID, RevisionImportAttach, first.Next, second); !errors.Is(err, errRevisionImportExpired) {
+		t.Fatalf("expired append error = %v", err)
+	}
+}
 
 func TestIncompleteAndAbortedRevisionImportLeavesLiveHistoryUntouched(t *testing.T) {
 	ctx := context.Background()

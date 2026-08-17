@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS workspace_imports (
  root TEXT NOT NULL,
  epoch INTEGER NOT NULL,
  heads BLOB NOT NULL,
+ manifest_next TEXT NOT NULL DEFAULT '',
+ manifest_finished INTEGER NOT NULL DEFAULT 1,
  expires_at INTEGER NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS workspace_import_binding ON workspace_imports(peer_id,workspace_id,mode);
@@ -159,25 +161,7 @@ func (store *Store) initialize(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, schema); err != nil {
 		return err
 	}
-	if err = ensureRevisionColumn(ctx, tx, "conflicts", `ALTER TABLE revisions ADD COLUMN conflicts BLOB NOT NULL DEFAULT 'null'`); err != nil {
-		return err
-	}
-	if err = ensureRevisionColumn(ctx, tx, "access", `ALTER TABLE revisions ADD COLUMN access BLOB`); err != nil {
-		return err
-	}
-	if err = ensureRevisionColumn(ctx, tx, "network_head", `ALTER TABLE revisions ADD COLUMN network_head TEXT NOT NULL DEFAULT ''`); err != nil {
-		return err
-	}
-	if err = ensureTableColumn(ctx, tx, "network_events", "version", `ALTER TABLE network_events ADD COLUMN version INTEGER NOT NULL DEFAULT 0`); err != nil {
-		return err
-	}
-	if err = ensureTableColumn(ctx, tx, "network_events", "parents", `ALTER TABLE network_events ADD COLUMN parents BLOB NOT NULL DEFAULT 'null'`); err != nil {
-		return err
-	}
-	if err = ensureTableColumn(ctx, tx, "network_events", "selected_parent", `ALTER TABLE network_events ADD COLUMN selected_parent TEXT NOT NULL DEFAULT ''`); err != nil {
-		return err
-	}
-	if err = ensureTableColumn(ctx, tx, "network_events", "recovery_ids", `ALTER TABLE network_events ADD COLUMN recovery_ids BLOB NOT NULL DEFAULT 'null'`); err != nil {
+	if err = migrateSchemaColumns(ctx, tx); err != nil {
 		return err
 	}
 	legacy, err := loadLegacyWorkspaces(ctx, tx)
@@ -198,8 +182,26 @@ func (store *Store) initialize(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func ensureRevisionColumn(ctx context.Context, tx *sql.Tx, wanted, alter string) error {
-	return ensureTableColumn(ctx, tx, "revisions", wanted, alter)
+func migrateSchemaColumns(ctx context.Context, tx *sql.Tx) error {
+	columns := []struct {
+		table, name, alter string
+	}{
+		{"revisions", "conflicts", `ALTER TABLE revisions ADD COLUMN conflicts BLOB NOT NULL DEFAULT 'null'`},
+		{"revisions", "access", `ALTER TABLE revisions ADD COLUMN access BLOB`},
+		{"revisions", "network_head", `ALTER TABLE revisions ADD COLUMN network_head TEXT NOT NULL DEFAULT ''`},
+		{"network_events", "version", `ALTER TABLE network_events ADD COLUMN version INTEGER NOT NULL DEFAULT 0`},
+		{"network_events", "parents", `ALTER TABLE network_events ADD COLUMN parents BLOB NOT NULL DEFAULT 'null'`},
+		{"network_events", "selected_parent", `ALTER TABLE network_events ADD COLUMN selected_parent TEXT NOT NULL DEFAULT ''`},
+		{"network_events", "recovery_ids", `ALTER TABLE network_events ADD COLUMN recovery_ids BLOB NOT NULL DEFAULT 'null'`},
+		{"workspace_imports", "manifest_next", `ALTER TABLE workspace_imports ADD COLUMN manifest_next TEXT NOT NULL DEFAULT ''`},
+		{"workspace_imports", "manifest_finished", `ALTER TABLE workspace_imports ADD COLUMN manifest_finished INTEGER NOT NULL DEFAULT 1`},
+	}
+	for _, column := range columns {
+		if err := ensureTableColumn(ctx, tx, column.table, column.name, column.alter); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ensureTableColumn(ctx context.Context, tx *sql.Tx, table, wanted, alter string) error {

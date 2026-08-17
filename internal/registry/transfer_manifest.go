@@ -21,15 +21,19 @@ type RevisionManifest struct {
 	Epoch       int64               `json:"epoch"`
 	Heads       []string            `json:"heads"`
 	Revisions   []RevisionInventory `json:"revisions"`
+	Next        string              `json:"next,omitempty"`
 }
 
 type RevisionImportPlan struct {
 	ID           string   `json:"id"`
 	ManifestHash string   `json:"manifest_hash"`
 	Missing      []string `json:"missing"`
+	Next         string   `json:"next,omitempty"`
 }
 
 const maxRevisionBatchWireBytes = 16 << 20
+
+var maxRevisionManifestPage = 10000
 
 func (store *Store) Manifest(ctx context.Context, name string) (RevisionManifest, error) {
 	workspace, err := store.LoadByName(ctx, name)
@@ -47,7 +51,26 @@ func (store *Store) ManifestFor(ctx context.Context, name, peerID string) (Revis
 	return store.workspaceManifest(ctx, workspace, true)
 }
 
+func (store *Store) ManifestPageFor(ctx context.Context, name, peerID, after string) (RevisionManifest, error) {
+	return store.ManifestPageForLimit(ctx, name, peerID, after, maxRevisionManifestPage)
+}
+
+func (store *Store) ManifestPageForLimit(ctx context.Context, name, peerID, after string, limit int) (RevisionManifest, error) {
+	if limit < 1 || limit > maxRevisionManifestPage {
+		return RevisionManifest{}, errors.New("revision manifest page limit is invalid")
+	}
+	workspace, err := store.authorizeWorkspacePeer(ctx, name, peerID)
+	if err != nil {
+		return RevisionManifest{}, err
+	}
+	return store.workspaceManifestPage(ctx, workspace, true, after, limit)
+}
+
 func (store *Store) workspaceManifest(ctx context.Context, workspace Workspace, shareable bool) (RevisionManifest, error) {
+	return store.workspaceManifestPage(ctx, workspace, shareable, "", 0)
+}
+
+func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspace, shareable bool, after string, limit int) (RevisionManifest, error) {
 	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return RevisionManifest{}, err
@@ -57,28 +80,21 @@ func (store *Store) workspaceManifest(ctx context.Context, workspace Workspace, 
 	if err != nil {
 		return RevisionManifest{}, err
 	}
-	ids, err := revisionIDs(ctx, tx, workspace.WorkspaceID)
+	ids, next, err := revisionIDsPage(ctx, tx, workspace.WorkspaceID, after, limit)
 	if err != nil {
 		return RevisionManifest{}, err
 	}
-	manifest := RevisionManifest{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: make([]RevisionInventory, 0, len(ids))}
-	for _, id := range ids {
-		revision, loadErr := loadRevisionByID(ctx, tx, workspace.WorkspaceID, id)
-		if loadErr != nil {
-			return RevisionManifest{}, loadErr
-		}
-		if shareable {
-			if loadErr = validateShareableSnapshot(revision.Snapshot); loadErr != nil {
-				return RevisionManifest{}, loadErr
-			}
-		}
-		body, marshalErr := json.Marshal(revision)
-		if marshalErr != nil {
-			return RevisionManifest{}, marshalErr
-		}
-		manifest.Revisions = append(manifest.Revisions, RevisionInventory{ID: id, WireBytes: int64(len(body))})
+	manifest := RevisionManifest{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: make([]RevisionInventory, 0, len(ids)), Next: next}
+	manifest.Revisions, err = loadRevisionInventory(ctx, tx, workspace.WorkspaceID, ids, shareable)
+	if err != nil {
+		return RevisionManifest{}, err
 	}
-	if err = validateRevisionManifest(manifest); err != nil {
+	if limit == 0 {
+		err = validateRevisionManifest(manifest)
+	} else {
+		err = validateRevisionManifestPage(manifest)
+	}
+	if err != nil {
 		return RevisionManifest{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -87,28 +103,63 @@ func (store *Store) workspaceManifest(ctx context.Context, workspace Workspace, 
 	return manifest, nil
 }
 
-func revisionIDs(ctx context.Context, reader sqlReader, workspaceID string) ([]string, error) {
+func loadRevisionInventory(ctx context.Context, reader sqlReader, workspaceID string, ids []string, shareable bool) ([]RevisionInventory, error) {
+	inventory := make([]RevisionInventory, 0, len(ids))
+	for _, id := range ids {
+		revision, loadErr := loadRevisionByID(ctx, reader, workspaceID, id)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if shareable {
+			if loadErr = validateShareableSnapshot(revision.Snapshot); loadErr != nil {
+				return nil, loadErr
+			}
+		}
+		body, marshalErr := json.Marshal(revision)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		inventory = append(inventory, RevisionInventory{ID: id, WireBytes: int64(len(body))})
+	}
+	return inventory, nil
+}
+
+func revisionIDsPage(ctx context.Context, reader sqlReader, workspaceID, after string, limit int) ([]string, string, error) {
 	var count int
 	if err := reader.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions WHERE workspace_id=?`, workspaceID).Scan(&count); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if count > maxBundleRevisions {
-		return nil, errors.New("bundle history limit exceeded")
+	query := `SELECT id FROM revisions WHERE workspace_id=? AND id>? ORDER BY id`
+	args := []any{workspaceID, after}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit+1)
 	}
-	rows, err := reader.QueryContext(ctx, `SELECT id FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
+	rows, err := reader.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer func() { _ = rows.Close() }()
-	ids := make([]string, 0, count)
+	capacity := count
+	if limit > 0 && capacity > limit+1 {
+		capacity = limit + 1
+	}
+	ids := make([]string, 0, capacity)
 	for rows.Next() {
 		var id string
 		if err = rows.Scan(&id); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		ids = append(ids, id)
 	}
-	return ids, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if limit > 0 && len(ids) > limit {
+		next := ids[limit-1]
+		return ids[:limit], next, nil
+	}
+	return ids, "", nil
 }
 
 func loadRevisionByID(ctx context.Context, reader sqlReader, workspaceID, id string) (Revision, error) {
@@ -180,10 +231,13 @@ func (store *Store) RevisionsFor(ctx context.Context, name, peerID string, ids [
 }
 
 func validateRevisionManifest(manifest RevisionManifest) error {
+	if manifest.Next != "" {
+		return errors.New("revision manifest is incomplete")
+	}
 	if manifest.WorkspaceID == "" || manifest.Epoch < 1 || len(manifest.Heads) == 0 {
 		return errors.New("revision manifest identity is invalid")
 	}
-	if len(manifest.Revisions) > maxBundleRevisions || len(manifest.Heads) > maxBundleHeads {
+	if len(manifest.Heads) > maxBundleHeads {
 		return errors.New("revision manifest history limit exceeded")
 	}
 	indexed, err := validateRevisionInventory(manifest.Revisions)
@@ -191,6 +245,35 @@ func validateRevisionManifest(manifest RevisionManifest) error {
 		return err
 	}
 	return validateManifestHeads(manifest.Heads, indexed)
+}
+
+func validateRevisionManifestPage(manifest RevisionManifest) error {
+	if manifest.WorkspaceID == "" || manifest.Epoch < 1 || len(manifest.Heads) == 0 {
+		return errors.New("revision manifest identity is invalid")
+	}
+	if len(manifest.Revisions) > maxRevisionManifestPage || len(manifest.Heads) > maxBundleHeads {
+		return errors.New("revision manifest history limit exceeded")
+	}
+	_, err := validateRevisionInventory(manifest.Revisions)
+	if err != nil {
+		return err
+	}
+	if err = validateOrderedRevisionIDs(manifest.Heads); err != nil {
+		return err
+	}
+	if manifest.Next != "" && (!validRevisionID(manifest.Next) || len(manifest.Revisions) == 0 || manifest.Revisions[len(manifest.Revisions)-1].ID != manifest.Next) {
+		return errors.New("revision manifest cursor is invalid")
+	}
+	return nil
+}
+
+func validateOrderedRevisionIDs(ids []string) error {
+	for index, id := range ids {
+		if !validRevisionID(id) || index > 0 && ids[index-1] >= id {
+			return errors.New("revision manifest head set is invalid")
+		}
+	}
+	return nil
 }
 
 func validateRevisionInventory(revisions []RevisionInventory) (map[string]bool, error) {
