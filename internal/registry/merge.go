@@ -208,7 +208,11 @@ func joinPath(parent, key string) string {
 }
 
 func isObservationPath(path string) bool {
-	return strings.HasSuffix(path, "/last_active") || strings.HasSuffix(path, "/last_pushed") || strings.HasSuffix(path, "/created")
+	parts := strings.Split(path, "/")
+	if len(parts) != 6 || parts[1] != "projects" || parts[3] != "branches" {
+		return false
+	}
+	return parts[5] == "last_active" || parts[5] == "last_pushed" || parts[5] == "created"
 }
 
 func mergeObservation(path string, left, right map[string]any) map[string]any {

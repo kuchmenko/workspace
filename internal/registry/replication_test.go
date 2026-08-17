@@ -66,6 +66,8 @@ func TestMergeCombinesIndependentChangesAndPreservesConflict(t *testing.T) {
 	leftProject.Branches[0].Machines = append(leftProject.Branches[0].Machines, "asahi")
 	leftProject.Branches[0].LastActiveMachine = "asahi"
 	leftProject.Branches[0].LastActiveAt = "2026-08-15T10:00:00Z"
+	leftProject.Branches[0].LastPushedMachine = "asahi"
+	leftProject.Branches[0].LastPushedAt = "2026-08-15T10:00:00Z"
 	leftProject.Branches[0].CreatedBy = "asahi"
 	leftProject.Branches[0].CreatedAt = "2026-08-15T09:00:00Z"
 	left.Projects["workspace"] = leftProject
@@ -73,6 +75,8 @@ func TestMergeCombinesIndependentChangesAndPreservesConflict(t *testing.T) {
 	rightProject.Branches[0].Machines = append(rightProject.Branches[0].Machines, "lxc")
 	rightProject.Branches[0].LastActiveMachine = "lxc"
 	rightProject.Branches[0].LastActiveAt = "2026-08-15T11:00:00Z"
+	rightProject.Branches[0].LastPushedMachine = "lxc"
+	rightProject.Branches[0].LastPushedAt = "2026-08-15T11:00:00Z"
 	rightProject.Branches[0].CreatedBy = "lxc"
 	rightProject.Branches[0].CreatedAt = "2026-08-15T08:00:00Z"
 	right.Projects["workspace"] = rightProject
@@ -92,7 +96,7 @@ func TestMergeCombinesIndependentChangesAndPreservesConflict(t *testing.T) {
 		t.Fatalf("merged machines = %v", machines)
 	}
 	branch := merged.Projects["workspace"].Branches[0]
-	if branch.LastActiveMachine != "lxc" || branch.CreatedBy != "lxc" {
+	if branch.LastActiveMachine != "lxc" || branch.LastPushedMachine != "lxc" || branch.CreatedBy != "lxc" {
 		t.Fatalf("merged observations = %#v", branch)
 	}
 
@@ -107,6 +111,48 @@ func TestMergeCombinesIndependentChangesAndPreservesConflict(t *testing.T) {
 	}
 	if merged.Aliases["editor"] != "vim" {
 		t.Fatalf("conflicted value = %q, want base vim", merged.Aliases["editor"])
+	}
+}
+
+func TestMergeTreatsObservationNamesAsOrdinaryProjectKeys(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"created", "last_active", "last_pushed"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			base := testWorkspace()
+			base.Projects[name] = config.Project{Remote: "base", Path: "base"}
+			left := cloneState(t, base)
+			right := cloneState(t, base)
+			leftProject := left.Projects[name]
+			leftProject.Remote = "left"
+			left.Projects[name] = leftProject
+			rightProject := right.Projects[name]
+			rightProject.Path = "right"
+			right.Projects[name] = rightProject
+
+			merged, conflicts, err := Merge(base, left, right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(conflicts) != 0 {
+				t.Fatalf("independent conflicts = %#v", conflicts)
+			}
+			if project := merged.Projects[name]; project.Remote != "left" || project.Path != "right" {
+				t.Fatalf("merged project = %#v", project)
+			}
+
+			rightProject = right.Projects[name]
+			rightProject.Remote = "right"
+			right.Projects[name] = rightProject
+			_, conflicts, err = Merge(base, left, right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantPath := "/projects/" + name + "/remote"
+			if len(conflicts) != 1 || conflicts[0].Path != wantPath {
+				t.Fatalf("conflicts = %#v, want %s", conflicts, wantPath)
+			}
+		})
 	}
 }
 
