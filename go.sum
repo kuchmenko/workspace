@@ -35,12 +35,12 @@ github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 h1:LMLX+LgTNWpfvCBdFe
 github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3/go.mod h1:jl5iWTm0/hd5PjEYEOuwAJ57L/CibdZfrqZ5XA5GrCk=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/grandcat/zeroconf v1.0.1-0.20230119201135-e4f60f8407b1 h1:cNb52t5fkWv8ZiicKWnc2eZnhsCCoH7WmRBMIbMp04Q=
-github.com/grandcat/zeroconf v1.0.1-0.20230119201135-e4f60f8407b1/go.mod h1:I6CSXU4zCGL08JOk9NbcT0ofAgnIkS/fVXbYzfSoDic=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
+github.com/jclab-joseph/zeroconf v0.0.0-20231207120421-09af95e78527 h1:qhZt9wEA3uva7f3E2eFN3tEOrFBF6W2Vjb7DUUW6nXA=
+github.com/jclab-joseph/zeroconf v0.0.0-20231207120421-09af95e78527/go.mod h1:I6CSXU4zCGL08JOk9NbcT0ofAgnIkS/fVXbYzfSoDic=
 github.com/lucasb-eyer/go-colorful v1.3.0 h1:2/yBRLdWBZKrf7gB40FoiKfAWYQ0lqNcbuQwVHXptag=
 github.com/lucasb-eyer/go-colorful v1.3.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-isatty v0.0.24 h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI=

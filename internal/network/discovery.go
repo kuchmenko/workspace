@@ -53,11 +53,8 @@ func discoverPair(ctx context.Context, code string) (string, error) {
 		if !entryHasCode(entry, code) {
 			continue
 		}
-		if len(entry.AddrIPv4) > 0 {
-			return net.JoinHostPort(entry.AddrIPv4[0].String(), strconv.Itoa(entry.Port)), nil
-		}
-		if len(entry.AddrIPv6) > 0 {
-			return net.JoinHostPort(entry.AddrIPv6[0].String(), strconv.Itoa(entry.Port)), nil
+		if endpoint := discoveryEndpoint(entry); endpoint != "" {
+			return endpoint, nil
 		}
 	}
 	if err = ctx.Err(); err != nil {
@@ -109,16 +106,32 @@ func discoverPeers(ctx context.Context) (map[string]string, error) {
 		if entryValue(entry, "v") != "1" || id == "" {
 			continue
 		}
-		if len(entry.AddrIPv4) > 0 {
-			peers[id] = net.JoinHostPort(entry.AddrIPv4[0].String(), strconv.Itoa(entry.Port))
-		} else if len(entry.AddrIPv6) > 0 {
-			peers[id] = net.JoinHostPort(entry.AddrIPv6[0].String(), strconv.Itoa(entry.Port))
+		if endpoint := discoveryEndpoint(entry); endpoint != "" {
+			peers[id] = endpoint
 		}
 	}
 	if err = ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
 	return peers, nil
+}
+
+func discoveryEndpoint(entry *zeroconf.ServiceEntry) string {
+	if len(entry.AddrIPv4) > 0 {
+		return net.JoinHostPort(entry.AddrIPv4[0].String(), strconv.Itoa(entry.Port))
+	}
+	if len(entry.AddrIPv6) == 0 {
+		return ""
+	}
+	host := entry.AddrIPv6[0].String()
+	if entry.AddrIPv6[0].IsLinkLocalUnicast() {
+		networkInterface, err := net.InterfaceByIndex(entry.ReceivedIfIndex)
+		if err != nil {
+			return ""
+		}
+		host += "%" + networkInterface.Name
+	}
+	return net.JoinHostPort(host, strconv.Itoa(entry.Port))
 }
 
 func entryValue(entry *zeroconf.ServiceEntry, wanted string) string {

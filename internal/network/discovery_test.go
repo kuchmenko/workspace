@@ -1,6 +1,7 @@
 package network
 
 import (
+	"net"
 	"strings"
 	"testing"
 
@@ -26,5 +27,31 @@ func TestPairDiscoveryUsesInvitationIdentifier(t *testing.T) {
 	}
 	if invitationID("123456") != "" {
 		t.Fatal("legacy low-entropy code produced an invitation identifier")
+	}
+}
+
+func TestDiscoveryEndpointPreservesIPv6LinkLocalScope(t *testing.T) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received net.Interface
+	for _, candidate := range interfaces {
+		if candidate.Index > 0 && candidate.Name != "" {
+			received = candidate
+			break
+		}
+	}
+	if received.Index == 0 {
+		t.Fatal("no network interface available")
+	}
+	entry := &zeroconf.ServiceEntry{
+		Port:            17337,
+		AddrIPv6:        []net.IP{net.ParseIP("fe80::1")},
+		ReceivedIfIndex: received.Index,
+	}
+	want := net.JoinHostPort("fe80::1%"+received.Name, "17337")
+	if got := discoveryEndpoint(entry); got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
 	}
 }
