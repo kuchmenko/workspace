@@ -40,7 +40,7 @@ func newWorkspaceConflictsCmd() *cobra.Command {
 
 func writeWorkspaceConflicts(writer io.Writer, conflicts []registry.Conflict) error {
 	for _, conflict := range conflicts {
-		if _, err := fmt.Fprintf(writer, "%s\tbase=%s\tleft=%s\tright=%s\n", terminalText(conflict.Path), displayJSON(conflict.Base), displayJSON(conflict.Left), displayJSON(conflict.Right)); err != nil {
+		if _, err := fmt.Fprintf(writer, "%s\tbase=%s\tleft=%s\tright=%s\n", terminalText(conflict.Path), terminalText(displayJSON(conflict.Base)), terminalText(displayJSON(conflict.Left)), terminalText(displayJSON(conflict.Right))); err != nil {
 			return err
 		}
 	}

@@ -211,13 +211,18 @@ func TestWorkspaceAccessOutputEscapesPeerDeviceNames(t *testing.T) {
 	}
 }
 
-func TestWorkspaceConflictOutputEscapesReplicatedPath(t *testing.T) {
-	conflicts := []registry.Conflict{{Path: "/aliases/peer\nforged\x1b]0;owned\a", Base: json.RawMessage(`"base"`)}}
+func TestWorkspaceConflictOutputEscapesReplicatedControls(t *testing.T) {
+	conflicts := []registry.Conflict{{
+		Path:  "/aliases/peer\nforged\x1b]0;owned\a",
+		Base:  json.RawMessage("\"base\u009bvalue\""),
+		Left:  json.RawMessage("\"left\u009bvalue\""),
+		Right: json.RawMessage("\"right\u009bvalue\""),
+	}}
 	var output bytes.Buffer
 	if err := writeWorkspaceConflicts(&output, conflicts); err != nil {
 		t.Fatal(err)
 	}
-	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "peer\nforged") {
+	if strings.ContainsAny(output.String(), "\x1b\a\u009b") || strings.Contains(output.String(), "peer\nforged") {
 		t.Fatalf("conflict output contains replicated control characters: %q", output.String())
 	}
 }
