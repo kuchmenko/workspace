@@ -191,6 +191,25 @@ func TestAttachedWorkspaceOutputEscapesPeerProvidedNames(t *testing.T) {
 	}
 }
 
+func TestWorkspaceAccessOutputEscapesPeerDeviceNames(t *testing.T) {
+	policy := registry.AccessPolicy{
+		Mode:   registry.AccessSelected,
+		Roles:  map[string]string{"role-id": registry.WorkspaceWriter},
+		Denied: []string{"denied-id"},
+	}
+	names := map[string]string{
+		"role-id":   "writer\nforged\x1b]0;owned\a",
+		"denied-id": "denied\x1b[2J",
+	}
+	var output bytes.Buffer
+	if err := writeWorkspaceAccess(&output, policy, names); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "writer\nforged") {
+		t.Fatalf("access output contains peer control characters: %q", output.String())
+	}
+}
+
 func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))

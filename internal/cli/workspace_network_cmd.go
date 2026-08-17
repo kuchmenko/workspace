@@ -177,18 +177,22 @@ func runWorkspaceAccess(command *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(command.OutOrStdout(), "MODE\tDEFAULT ROLE\n%s\t%s\n", policy.Mode, displayDash(policy.DefaultRole))
 	deviceNames := workspaceDeviceNames(command, store)
+	return writeWorkspaceAccess(command.OutOrStdout(), policy, deviceNames)
+}
+
+func writeWorkspaceAccess(writer io.Writer, policy registry.AccessPolicy, deviceNames map[string]string) error {
+	fmt.Fprintf(writer, "MODE\tDEFAULT ROLE\n%s\t%s\n", policy.Mode, displayDash(policy.DefaultRole))
 	ids := make([]string, 0, len(policy.Roles))
 	for id := range policy.Roles {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(left, right int) bool { return deviceNames[ids[left]] < deviceNames[ids[right]] })
 	for _, id := range ids {
-		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\n", displayDevice(deviceNames[id], id), policy.Roles[id])
+		fmt.Fprintf(writer, "%s\t%s\n", terminalText(displayDevice(deviceNames[id], id)), policy.Roles[id])
 	}
 	for _, id := range policy.Denied {
-		fmt.Fprintf(command.OutOrStdout(), "%s\tdenied\n", displayDevice(deviceNames[id], id))
+		fmt.Fprintf(writer, "%s\tdenied\n", terminalText(displayDevice(deviceNames[id], id)))
 	}
 	return nil
 }

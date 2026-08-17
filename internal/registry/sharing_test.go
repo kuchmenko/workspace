@@ -8,6 +8,7 @@ func TestRemoteContainsCredentials(t *testing.T) {
 		"https://example.com/repo.git?token=secret":        true,
 		"https://example.com/repo.git#access_token=secret": true,
 		"https://user@example.com/repo.git":                true,
+		"https://user:secret@example.com/%zz":              true,
 		"ssh://git@example.com/repo.git":                   false,
 		"ssh://git:secret@example.com/repo.git":            true,
 		"git@example.com:owner/repo.git":                   false,

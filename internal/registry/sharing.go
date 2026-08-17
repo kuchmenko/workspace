@@ -62,7 +62,7 @@ func remoteContainsCredentials(raw string) bool {
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return false
+		return true
 	}
 	httpRemote := strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")
 	if httpRemote && (parsed.RawQuery != "" || parsed.Fragment != "") {
