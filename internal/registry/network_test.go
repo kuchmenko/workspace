@@ -67,6 +67,37 @@ func TestNetworkPairingBundleConvergesAndAuthorizesAdmins(t *testing.T) {
 	}
 }
 
+func TestNetworkRoleChangeRejectsHistoryBeyondPeerFrameLimit(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	large := testIdentity(t)
+	if _, err := store.EnsureNetwork(ctx, "local"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddNetworkDevice(ctx, strings.Repeat("n", 5<<20), large.PublicKey(), NetworkMember); err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range []string{NetworkAdmin, NetworkMember} {
+		if _, err := store.SetNetworkRole(ctx, large.ID(), role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := store.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.SetNetworkRole(ctx, large.ID(), NetworkAdmin); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized network history error = %v", err)
+	}
+	after, err := store.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Events) != len(before.Events) || after.Epoch != before.Epoch {
+		t.Fatalf("oversized network event was persisted: before=%d/%d after=%d/%d", before.Epoch, len(before.Events), after.Epoch, len(after.Events))
+	}
+}
+
 func TestNetworkRoleAndRemovalAdvanceSignedState(t *testing.T) {
 	ctx := context.Background()
 	arch := openTestStore(t)

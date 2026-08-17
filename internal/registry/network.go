@@ -101,6 +101,9 @@ func (store *Store) EnsureNetwork(ctx context.Context, name string) (NetworkStat
 	if err != nil {
 		return NetworkState{}, err
 	}
+	if _, err = analyzeNetwork(NetworkBundle{ID: networkID, Epoch: 1, Events: []NetworkEvent{event}}); err != nil {
+		return NetworkState{}, err
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return NetworkState{}, err

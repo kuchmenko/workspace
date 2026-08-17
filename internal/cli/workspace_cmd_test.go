@@ -180,6 +180,17 @@ func TestAvailableWorkspaceOutputEscapesPeerProvidedNames(t *testing.T) {
 	}
 }
 
+func TestAttachedWorkspaceOutputEscapesPeerProvidedNames(t *testing.T) {
+	workspace := registry.Workspace{Name: "shared\x1b[2J", Root: "/tmp/shared"}
+	var output bytes.Buffer
+	if err := writeAttachedWorkspace(&output, workspace, "peer\nforged\x1b]0;owned\a"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "peer\nforged") {
+		t.Fatalf("attach output contains peer control characters: %q", output.String())
+	}
+}
+
 func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))

@@ -34,9 +34,18 @@ type networkHistory struct {
 	maxEpoch int64
 }
 
+const maxNetworkBundleBytes = 16 << 20
+
 func analyzeNetwork(bundle NetworkBundle) (networkAnalysis, error) {
 	if len(bundle.Events) > 10000 {
 		return networkAnalysis{}, errors.New("network event limit exceeded")
+	}
+	body, err := json.Marshal(bundle)
+	if err != nil {
+		return networkAnalysis{}, err
+	}
+	if len(body) >= maxNetworkBundleBytes {
+		return networkAnalysis{}, errors.New("network size limit exceeded")
 	}
 	history, err := validateNetworkHistory(bundle)
 	if err != nil {

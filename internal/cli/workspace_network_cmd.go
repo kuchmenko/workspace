@@ -340,14 +340,18 @@ func newWorkspaceAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "workspace=%s root=%s device=%s\n", workspace.Name, workspace.Root, source.DeviceName)
-			return nil
+			return writeAttachedWorkspace(command.OutOrStdout(), workspace, source.DeviceName)
 		},
 	}
 	command.Flags().StringVar(&root, "root", "", "machine-local workspace root")
 	command.Flags().StringVar(&localName, "name", "", "machine-local workspace name")
 	_ = command.MarkFlagRequired("root")
 	return command
+}
+
+func writeAttachedWorkspace(writer io.Writer, workspace registry.Workspace, deviceName string) error {
+	_, err := fmt.Fprintf(writer, "workspace=%s root=%s device=%s\n", terminalText(workspace.Name), terminalText(workspace.Root), terminalText(deviceName))
+	return err
 }
 
 func selectAvailableWorkspace(available []peernetwork.AvailableWorkspace, selector string) (peernetwork.AvailableWorkspace, error) {
