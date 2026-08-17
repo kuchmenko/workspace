@@ -64,6 +64,32 @@ func TestStorePersistsWorkspaceMutations(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsMissingIdentityForInitializedRegistry(t *testing.T) {
+	directory := t.TempDir()
+	database := filepath.Join(directory, "registry.db")
+	identity := filepath.Join(directory, "identity.key")
+	store, err := Open(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.EnsureNetwork(context.Background(), "arch"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(identity); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, openErr := Open(database); openErr == nil {
+		_ = reopened.Close()
+		t.Fatal("initialized registry opened with a replacement identity")
+	}
+	if _, err = os.Stat(identity); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement identity stat error = %v", err)
+	}
+}
+
 func TestStoreRejectsDuplicateAndStaleWrites(t *testing.T) {
 	t.Parallel()
 

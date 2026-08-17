@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -311,6 +312,13 @@ func Join(ctx context.Context, options JoinOptions) (PairResult, error) {
 func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (PairResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
 	defer cancel()
+	if err := requireUnpairedStore(ctx, options.Store); err != nil {
+		return PairResult{}, err
+	}
+	return joinEndpoint(ctx, endpoint, options)
+}
+
+func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (PairResult, error) {
 	cert, err := certificate(options.Identity, options.Name)
 	if err != nil {
 		return PairResult{}, err
@@ -371,6 +379,18 @@ func JoinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, errors.New("inviting device is missing from network state")
 	}
 	return PairResult{Peer: peer}, nil
+}
+
+func requireUnpairedStore(ctx context.Context, store *registry.Store) error {
+	if store == nil {
+		return errors.New("join store is required")
+	}
+	if _, err := store.Network(ctx); err == nil {
+		return errors.New("device already belongs to a network")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return nil
 }
 
 func writePairCertificate(connection net.Conn, cert tls.Certificate) error {

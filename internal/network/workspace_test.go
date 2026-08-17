@@ -109,7 +109,7 @@ func TestLargeHistoryAttachAndBidirectionalRealPeerSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	archRoot := t.TempDir()
-	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{"payload": strings.Repeat("x", 6<<20)}}
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{"payload": strings.Repeat("x", 4<<20)}}
 	created, err := archStore.Create(ctx, "large", archRoot, state)
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestLargeHistoryAttachAndBidirectionalRealPeerSync(t *testing.T) {
 	if _, err = archStore.SetAccess(ctx, "large", policy); err != nil {
 		t.Fatal(err)
 	}
-	for index := range 7 {
+	for index := range 11 {
 		if _, err = archStore.Mutate(ctx, archRoot, func(workspace *config.Workspace) error {
 			workspace.Aliases["revision"] = string(rune('a' + index))
 			return nil

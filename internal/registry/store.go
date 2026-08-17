@@ -41,15 +41,16 @@ func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, err
 	}
-	identity, err := device.Load(filepath.Join(directory, "identity.key"))
-	if err != nil {
-		return nil, err
-	}
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	database.SetMaxOpenConns(1)
+	identity, err := loadRegistryIdentity(database, filepath.Join(directory, "identity.key"))
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
 	if _, err = database.Exec(`PRAGMA journal_mode=WAL;
 PRAGMA synchronous=FULL;
 PRAGMA busy_timeout=5000;`); err != nil {
@@ -66,6 +67,42 @@ PRAGMA busy_timeout=5000;`); err != nil {
 		return nil, err
 	}
 	return store, nil
+}
+
+func loadRegistryIdentity(database *sql.DB, path string) (device.Identity, error) {
+	if _, err := os.Stat(path); err == nil || !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return device.Identity{}, err
+		}
+		return device.Load(path)
+	}
+	initialized, err := registryHasIdentityBoundState(database)
+	if err != nil {
+		return device.Identity{}, err
+	}
+	if initialized {
+		return device.Identity{}, errors.New("device identity is missing for initialized registry")
+	}
+	return device.Load(path)
+}
+
+func registryHasIdentityBoundState(database *sql.DB) (bool, error) {
+	for _, table := range []string{"network_events", "revision_proofs", "workspace_protocol"} {
+		var exists int
+		if err := database.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`, table).Scan(&exists); err != nil {
+			return false, err
+		}
+		if exists == 0 {
+			continue
+		}
+		if err := database.QueryRow(`SELECT EXISTS(SELECT 1 FROM ` + table + ` LIMIT 1)`).Scan(&exists); err != nil {
+			return false, err
+		}
+		if exists != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func OpenDefault() (*Store, error) {

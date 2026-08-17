@@ -139,6 +139,46 @@ func TestPairRejectsUnconfirmedJoinWithoutAddingDevice(t *testing.T) {
 	}
 }
 
+func TestPairRejectsJoinerFromAnotherNetworkWithoutAddingDevice(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := archStore.EnsureNetwork(ctx, "arch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := asahiStore.EnsureNetwork(ctx, "asahi"); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err == nil {
+		t.Fatal("cross-network join succeeded")
+	}
+	cancel()
+	<-serverOutcome
+	state, err := archStore.Network(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Devices) != 1 || state.Devices[0].ID != archIdentity.ID() {
+		t.Fatalf("inviter network changed after cross-network join: %#v", state)
+	}
+}
+
 func TestPairAllowsCorrectCodeAfterRejectedWrongCode(t *testing.T) {
 	archStore, archIdentity := networkTestStore(t)
 	asahiStore, asahiIdentity := networkTestStore(t)
