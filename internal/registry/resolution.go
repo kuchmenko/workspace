@@ -47,7 +47,10 @@ func (store *Store) HasUnresolvedConflicts(ctx context.Context, name string) (bo
 }
 
 func (store *Store) Resolve(ctx context.Context, name, path string, value json.RawMessage) (Workspace, error) {
-	localActive, _ := store.localNetworkPresence(ctx)
+	localActive, _, err := store.localNetworkPresence(ctx)
+	if err != nil {
+		return Workspace{}, err
+	}
 	if err := store.persistResolution(ctx, name, path, value, localActive); err != nil {
 		return Workspace{}, err
 	}

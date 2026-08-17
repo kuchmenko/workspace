@@ -263,7 +263,10 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 	if err != nil {
 		return Workspace{}, err
 	}
-	localActive, networkPresent := store.localNetworkPresence(ctx)
+	localActive, networkPresent, err := store.localNetworkPresence(ctx)
+	if err != nil {
+		return Workspace{}, err
+	}
 	if err = store.persistUpdate(ctx, name, expectedRevision, body, snapshotBody, localActive, networkPresent); err != nil {
 		return Workspace{}, err
 	}
@@ -339,17 +342,20 @@ func persistWorkspaceUpdate(ctx context.Context, tx *sql.Tx, name string, expect
 	return err
 }
 
-func (store *Store) localNetworkPresence(ctx context.Context) (bool, bool) {
+func (store *Store) localNetworkPresence(ctx context.Context) (bool, bool, error) {
 	network, err := store.Network(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, false, nil
+	}
 	if err != nil {
-		return true, false
+		return false, false, err
 	}
 	for _, record := range network.Devices {
 		if record.ID == store.identity.ID() {
-			return record.Active, true
+			return record.Active, true, nil
 		}
 	}
-	return false, true
+	return false, true, nil
 }
 
 func requireLocalWriter(policy AccessPolicy, deviceID string, active, networkPresent bool) error {

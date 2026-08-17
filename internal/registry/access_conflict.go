@@ -163,7 +163,10 @@ func accessConflictID(workspaceID, base string, heads []string) string {
 }
 
 func (store *Store) ResolveAccessConflict(ctx context.Context, name, conflictID, policyHead, stateHead string) (Workspace, error) {
-	localActive, _ := store.localNetworkPresence(ctx)
+	localActive, _, err := store.localNetworkPresence(ctx)
+	if err != nil {
+		return Workspace{}, err
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Workspace{}, err

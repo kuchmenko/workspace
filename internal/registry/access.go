@@ -140,7 +140,10 @@ func (store *Store) SetAccess(ctx context.Context, name string, policy AccessPol
 	if err = store.validatePolicyDevices(ctx, policy); err != nil {
 		return Workspace{}, err
 	}
-	localActive, _ := store.localNetworkPresence(ctx)
+	localActive, _, err := store.localNetworkPresence(ctx)
+	if err != nil {
+		return Workspace{}, err
+	}
 	if err = store.persistAccess(ctx, name, policy, localActive); err != nil {
 		return Workspace{}, err
 	}

@@ -87,6 +87,31 @@ func TestStoreRejectsLocalRevisionBeyondTransferLimit(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsUpdateWhenNetworkStateCannotLoad(t *testing.T) {
+	ctx := context.Background()
+	store, peer := pairedRegistryStores(t)
+	root := t.TempDir()
+	_, err := store.Create(ctx, "shared", root, testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{peer.identity.ID(): WorkspaceAdmin}, Denied: []string{store.identity.ID()}}
+	if _, err = store.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.ExecContext(ctx, `DROP TABLE network_events`); err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created.State.Aliases["unauthorized"] = "write"
+	if _, err = store.Update(ctx, "shared", created.Revision, created.State); err == nil {
+		t.Fatal("update succeeded while network authorization state was unavailable")
+	}
+}
+
 func TestOpenRejectsMissingIdentityForInitializedRegistry(t *testing.T) {
 	directory := t.TempDir()
 	database := filepath.Join(directory, "registry.db")

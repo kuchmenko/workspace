@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -289,16 +290,20 @@ func newWorkspaceAvailableCmd() *cobra.Command {
 				encoder.SetIndent("", "  ")
 				return encoder.Encode(available)
 			}
-			table := tabwriter.NewWriter(command.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(table, "WORKSPACE\tROLE\tDEVICE\tENDPOINT")
-			for _, item := range available {
-				fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", item.Name, item.Role, item.DeviceName, item.Endpoint)
-			}
-			return table.Flush()
+			return writeAvailableWorkspaces(command.OutOrStdout(), available)
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return command
+}
+
+func writeAvailableWorkspaces(writer io.Writer, available []peernetwork.AvailableWorkspace) error {
+	table := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(table, "WORKSPACE\tROLE\tDEVICE\tENDPOINT")
+	for _, item := range available {
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", terminalText(item.Name), terminalText(item.Role), terminalText(item.DeviceName), terminalText(item.Endpoint))
+	}
+	return table.Flush()
 }
 
 func newWorkspaceAttachCmd() *cobra.Command {

@@ -165,6 +165,21 @@ func TestWorkspaceNetworkCommandSelectionAndOutput(t *testing.T) {
 	}
 }
 
+func TestAvailableWorkspaceOutputEscapesPeerProvidedNames(t *testing.T) {
+	available := []peernetwork.AvailableWorkspace{{
+		WorkspaceSummary: registry.WorkspaceSummary{Name: "shared\x1b[2J", Role: "writer"},
+		DeviceName:       "peer\nforged\x1b]0;owned\a",
+		Endpoint:         "127.0.0.1:17337",
+	}}
+	var output bytes.Buffer
+	if err := writeAvailableWorkspaces(&output, available); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "peer\nforged") {
+		t.Fatalf("availability output contains peer control characters: %q", output.String())
+	}
+}
+
 func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
