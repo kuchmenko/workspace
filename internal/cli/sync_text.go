@@ -52,6 +52,9 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 		}
 		return runErr
 	}
+	if errors.Is(publishErr, context.Canceled) || errors.Is(publishErr, context.DeadlineExceeded) {
+		return ExitError{Code: syncExitCanceled}
+	}
 	return publishErr
 }
 

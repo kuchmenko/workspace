@@ -286,6 +286,49 @@ func TestRunSyncCanceledBeforeInitialExchangeReturns130(t *testing.T) {
 	}
 }
 
+func TestRunSyncCanceledDuringFinalWorkspaceExchangeReturns130(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	projectRemote := testutil.InitFakeRemote(t, "app", "main")
+	root := t.TempDir()
+	registerSyncTestWorkspace(t, root, &config.Workspace{
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{},
+		Projects: map[string]config.Project{
+			"app": {
+				Remote:        projectRemote,
+				Path:          "personal/app",
+				Status:        config.StatusActive,
+				Category:      config.CategoryPersonal,
+				DefaultBranch: "main",
+			},
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	stdout := cancelOnWrite{match: "summary:", cancel: cancel}
+	var stderr bytes.Buffer
+	err := runSync(ctx, root, strings.NewReader(""), &stdout, &stderr)
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != syncExitCanceled {
+		t.Fatalf("error = %T %v, want exit %d", err, err, syncExitCanceled)
+	}
+	if !git.IsRepo(filepath.Join(root, "personal/app")) {
+		t.Fatal("project was not synchronized before cancellation")
+	}
+}
+
+type cancelOnWrite struct {
+	bytes.Buffer
+	match  string
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnWrite) Write(p []byte) (int, error) {
+	if strings.Contains(string(p), w.match) {
+		w.cancel()
+	}
+	return w.Buffer.Write(p)
+}
+
 func registerSyncTestWorkspace(t *testing.T, root string, workspace *config.Workspace) {
 	t.Helper()
 	workspace.Meta.Version = 1
