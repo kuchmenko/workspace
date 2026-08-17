@@ -277,7 +277,7 @@ func exchangeRevisionImports(ctx context.Context, workspaceName, endpoint string
 	return finished, after, conflicts, nil
 }
 
-const maxPeerRevisionBatchBytes = 48 << 20
+const maxPeerRevisionBatchBytes = 16 << 20
 
 func pullRevisionImport(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, manifest registry.RevisionManifest, plan registry.RevisionImportPlan, mode string) error {
 	batches, err := revisionBatches(manifest, plan.Missing)

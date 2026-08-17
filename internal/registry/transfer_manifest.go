@@ -29,7 +29,7 @@ type RevisionImportPlan struct {
 	Missing      []string `json:"missing"`
 }
 
-const maxRevisionBatchWireBytes = 48 << 20
+const maxRevisionBatchWireBytes = 16 << 20
 
 func (store *Store) Manifest(ctx context.Context, name string) (RevisionManifest, error) {
 	workspace, err := store.LoadByName(ctx, name)
