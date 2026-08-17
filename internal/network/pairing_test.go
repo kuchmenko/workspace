@@ -179,6 +179,65 @@ func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 	}
 }
 
+func TestPairSerializesConcurrentValidCodeConfirmations(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	firstStore, firstIdentity := networkTestStore(t)
+	secondStore, secondIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	confirmations := make(chan string, 2)
+	releaseConfirmation := make(chan struct{})
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: inviterStore, Identity: inviterIdentity, Name: "inviter",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(peerName, _ string) (bool, error) {
+				confirmations <- peerName
+				<-releaseConfirmation
+				return true, nil
+			},
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	join := func(store *registry.Store, identity device.Identity, name string) <-chan error {
+		outcome := make(chan error, 1)
+		go func() {
+			_, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+				Store: store, Identity: identity, Name: name, Code: pairing.code,
+				Confirm: func(string, string) (bool, error) { return true, nil },
+			})
+			outcome <- err
+		}()
+		return outcome
+	}
+	firstOutcome := join(firstStore, firstIdentity, "first")
+	<-confirmations
+	secondOutcome := join(secondStore, secondIdentity, "second")
+	concurrent := false
+	select {
+	case <-confirmations:
+		concurrent = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(releaseConfirmation)
+	serverErr := <-serverOutcome
+	firstErr := <-firstOutcome
+	secondErr := <-secondOutcome
+	if concurrent {
+		t.Fatal("pair confirmation callback ran concurrently")
+	}
+	if serverErr != nil {
+		t.Fatal(serverErr)
+	}
+	if (firstErr == nil) == (secondErr == nil) {
+		t.Fatalf("join errors = first %v, second %v; want exactly one success", firstErr, secondErr)
+	}
+}
+
 func TestPairRejectsUnconfirmedJoinWithoutAddingDevice(t *testing.T) {
 	archStore, archIdentity := networkTestStore(t)
 	asahiStore, asahiIdentity := networkTestStore(t)
