@@ -19,7 +19,7 @@ type advertisement struct {
 }
 
 func advertisePair(instance, code string, port int) (*advertisement, error) {
-	server, err := zeroconf.Register(instance, pairingService, "local.", port, []string{"v=1", "code=" + code}, nil)
+	server, err := zeroconf.Register(instance, pairingService, "local.", port, []string{"v=1", "invitation=" + invitationID(code)}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +77,19 @@ func entryHasCode(entry *zeroconf.ServiceEntry, code string) bool {
 		switch key {
 		case "v":
 			version = content == "1"
-		case "code":
-			matched = content == code
+		case "invitation":
+			matched = content == invitationID(code)
 		}
 	}
 	return version && matched
+}
+
+func invitationID(code string) string {
+	invitation, _, found := strings.Cut(code, "-")
+	if !found || len(invitation) != 16 {
+		return ""
+	}
+	return invitation
 }
 
 func discoverPeers(ctx context.Context) (map[string]string, error) {

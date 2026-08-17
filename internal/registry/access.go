@@ -157,6 +157,9 @@ func (store *Store) persistAccess(ctx context.Context, name string, policy Acces
 	if err != nil {
 		return err
 	}
+	if err = requireNoAccessConflict(tx, base.workspaceID); err != nil {
+		return err
+	}
 	if base.policy.Role(store.identity.ID(), localActive) != WorkspaceAdmin {
 		return errors.New("local device is not a workspace admin")
 	}
@@ -170,8 +173,12 @@ func (store *Store) persistAccess(ctx context.Context, name string, policy Acces
 	if err = insertRevision(tx, revision); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, revision.ID, name, base.head); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, revision.ID, name, base.head)
+	if err != nil {
 		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during access update")
 	}
 	if err = replaceHeads(ctx, tx, base.workspaceID, []string{revision.ID}); err != nil {
 		return err
@@ -179,8 +186,12 @@ func (store *Store) persistAccess(ctx context.Context, name string, policy Acces
 	if err = replaceConflicts(ctx, tx, base.workspaceID, revision.ID, revision.Conflicts); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, name, base.revision); err != nil {
+	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, name, base.revision)
+	if err != nil {
 		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during access update")
 	}
 	return tx.Commit()
 }
@@ -239,7 +250,11 @@ func (store *Store) ListShared(ctx context.Context, peerID string) ([]WorkspaceS
 	}
 	var summaries []WorkspaceSummary
 	for _, summary := range candidates {
-		policy, policyErr := store.policyAt(ctx, summary.Head)
+		workspace, loadErr := store.LoadByName(ctx, summary.Name)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		policy, policyErr := store.authorizationPolicy(ctx, workspace)
 		if policyErr != nil {
 			return nil, policyErr
 		}
@@ -272,7 +287,11 @@ func (store *Store) ExportFor(ctx context.Context, name, peerID string) (Bundle,
 	if err := store.ReconcileNetworkAccess(ctx); err != nil {
 		return Bundle{}, err
 	}
-	policy, err := store.Access(ctx, name)
+	workspace, err := store.LoadByName(ctx, name)
+	if err != nil {
+		return Bundle{}, err
+	}
+	policy, err := store.authorizationPolicy(ctx, workspace)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -362,34 +381,34 @@ func roleDemoted(previous, next string) bool {
 }
 
 func (store *Store) ReconcileNetworkAccess(ctx context.Context) error {
-	network, err := store.Network(ctx)
+	bundle, err := store.ExportNetwork(ctx)
 	if err != nil {
 		return err
 	}
-	active := make(map[string]bool, len(network.Devices))
-	for _, record := range network.Devices {
-		active[record.ID] = record.Active
-	}
-	workspaces, err := store.List(ctx)
+	analysis, err := analyzeNetwork(bundle)
 	if err != nil {
 		return err
 	}
-	for _, workspace := range workspaces {
-		policy, policyErr := store.Access(ctx, workspace.Name)
-		if policyErr != nil {
-			return policyErr
-		}
-		if policy.Role(store.identity.ID(), active[store.identity.ID()]) != WorkspaceAdmin {
-			continue
-		}
-		policy, changed := reconcilePolicy(policy, active)
-		if changed {
-			if _, err = store.SetAccess(ctx, workspace.Name, policy); err != nil {
-				return err
-			}
-		}
+	if analysis.conflict != nil {
+		return ErrNetworkConflict
 	}
-	return nil
+	networkHead, err := currentCausalNetworkHead(bundle)
+	if err != nil {
+		return err
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var recoveryIDs []string
+	if err = store.reconcileNetworkAccessTx(ctx, tx, analysis.state, networkHead, &recoveryIDs); err != nil {
+		return err
+	}
+	if err = store.ratifyRecoveriesTx(ctx, tx, bundle.ID, networkHead, bundle.Epoch, recoveryIDs); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func reconcilePolicy(policy AccessPolicy, active map[string]bool) (AccessPolicy, bool) {
@@ -411,6 +430,132 @@ func reconcilePolicy(policy AccessPolicy, active map[string]bool) (AccessPolicy,
 		}
 	}
 	return policy, changed
+}
+
+func (store *Store) reconcileNetworkAccessTx(ctx context.Context, tx *sql.Tx, network NetworkState, networkHead string, recoveryIDs *[]string) error {
+	active := make(map[string]bool, len(network.Devices))
+	networkAdmin := false
+	for _, record := range network.Devices {
+		active[record.ID] = record.Active
+		if record.ID == store.identity.ID() && record.Active && record.Role == NetworkAdmin {
+			networkAdmin = true
+		}
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT p.name,p.workspace_id,p.epoch,p.head_id,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name ORDER BY p.name`)
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		name, workspaceID, head string
+		epoch, revision         int64
+	}
+	var candidates []candidate
+	for rows.Next() {
+		var item candidate
+		if err = rows.Scan(&item.name, &item.workspaceID, &item.epoch, &item.head, &item.revision); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		candidates = append(candidates, item)
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range candidates {
+		if _, conflicted, conflictErr := accessConflictBase(tx, item.workspaceID); conflictErr != nil {
+			return conflictErr
+		} else if conflicted {
+			continue
+		}
+		policy, policyErr := policyAtTx(tx, item.head)
+		if policyErr != nil {
+			return policyErr
+		}
+		previous := cloneAccessPolicy(policy)
+		kind := "access"
+		if !hasActiveWorkspaceAdmin(policy, active) {
+			if !networkAdmin {
+				continue
+			}
+			policy.Roles[store.identity.ID()] = WorkspaceAdmin
+			kind = "access-recovery"
+		} else if policy.Role(store.identity.ID(), active[store.identity.ID()]) != WorkspaceAdmin {
+			continue
+		}
+		policy, changed := reconcilePolicy(policy, active)
+		if kind == "access-recovery" {
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		snapshot, loadErr := loadRevisionSnapshot(tx, item.head)
+		if loadErr != nil {
+			return loadErr
+		}
+		conflicts, loadErr := loadRevisionConflicts(tx, item.head)
+		if loadErr != nil {
+			return loadErr
+		}
+		epoch := item.epoch
+		if kind == "access-recovery" || policyRestricts(previous, policy) {
+			epoch++
+		}
+		authorityHead := ""
+		if kind == "access-recovery" {
+			authorityHead = networkHead
+		}
+		revision, makeErr := makeRevisionAtNetworkHead(item.workspaceID, epoch, kind, []string{item.head}, snapshot, conflicts, policy, authorityHead, store.identity)
+		if makeErr != nil {
+			return makeErr
+		}
+		if makeErr = insertRevision(tx, revision); makeErr != nil {
+			return makeErr
+		}
+		if kind == "access-recovery" {
+			*recoveryIDs = append(*recoveryIDs, revision.ID)
+		}
+		result, updateErr := tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, revision.ID, item.name, item.head)
+		if updateErr != nil {
+			return updateErr
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return errors.New("workspace changed during network access reconciliation")
+		}
+		if updateErr = replaceHeads(ctx, tx, item.workspaceID, []string{revision.ID}); updateErr != nil {
+			return updateErr
+		}
+		if updateErr = replaceConflicts(ctx, tx, item.workspaceID, revision.ID, conflicts); updateErr != nil {
+			return updateErr
+		}
+		result, updateErr = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, item.name, item.revision)
+		if updateErr != nil {
+			return updateErr
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return errors.New("workspace changed during network access reconciliation")
+		}
+	}
+	return nil
+}
+
+func hasActiveWorkspaceAdmin(policy AccessPolicy, active map[string]bool) bool {
+	for deviceID, role := range policy.Roles {
+		if role == WorkspaceAdmin && active[deviceID] {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneAccessPolicy(policy AccessPolicy) AccessPolicy {
+	roles := make(map[string]string, len(policy.Roles))
+	for deviceID, role := range policy.Roles {
+		roles[deviceID] = role
+	}
+	policy.Roles = roles
+	policy.Denied = append([]string(nil), policy.Denied...)
+	return policy
 }
 
 func hasOtherActiveAdmin(policy AccessPolicy, excluded string, active map[string]bool) bool {

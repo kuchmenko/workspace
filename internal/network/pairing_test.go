@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -155,11 +156,20 @@ func TestPairAllowsCorrectCodeAfterRejectedWrongCode(t *testing.T) {
 		serverOutcome <- err
 	}()
 	pairing := <-ready
-	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
-		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: "wrong-code",
-		Confirm: func(string, string) (bool, error) { return true, nil },
-	}); err == nil {
-		t.Fatal("wrong pairing code succeeded")
+	for attempt := 0; attempt < 10; attempt++ {
+		connection, err := net.Dial("tcp", pairing.endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = connection.Close()
+	}
+	for attempt := 0; attempt < maxPairCodeFailures-1; attempt++ {
+		if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+			Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: "wrong-code",
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		}); err == nil {
+			t.Fatal("wrong pairing code succeeded")
+		}
 	}
 	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
 		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,

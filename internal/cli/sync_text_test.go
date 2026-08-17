@@ -204,4 +204,13 @@ func TestWriteTopLevelWorkspaceSyncContinuesOfflineAndRejectsInvalidHistory(t *t
 	if err == nil || err.Error() != "shared/asahi: workspace epoch is stale" {
 		t.Fatalf("error = %v", err)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	results = []peernetwork.SyncResult{{Device: "asahi\x1b[2J\u009b0m", Status: "unavailable"}}
+	if err = writeTopLevelWorkspaceSync(&stdout, &stderr, results, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(stdout.String()+stderr.String(), "\x1b\x9b") || !strings.Contains(stdout.String(), `asahi\x1B[2J\x9B0m`) {
+		t.Fatalf("unsafe workspace sync output stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
 }

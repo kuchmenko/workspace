@@ -42,17 +42,21 @@ type NetworkBundle struct {
 }
 
 type NetworkEvent struct {
-	ID              string `json:"id"`
-	NetworkID       string `json:"network_id"`
-	Epoch           int64  `json:"epoch"`
-	Action          string `json:"action"`
-	DeviceID        string `json:"device_id"`
-	DeviceName      string `json:"device_name"`
-	DevicePublicKey []byte `json:"device_public_key"`
-	Role            string `json:"role"`
-	SignerID        string `json:"signer_id"`
-	SignerPublicKey []byte `json:"signer_public_key"`
-	Signature       []byte `json:"signature"`
+	ID              string   `json:"id"`
+	NetworkID       string   `json:"network_id"`
+	Epoch           int64    `json:"epoch"`
+	Version         int      `json:"version,omitempty"`
+	Parents         []string `json:"parents,omitempty"`
+	SelectedParent  string   `json:"selected_parent,omitempty"`
+	RecoveryIDs     []string `json:"recovery_ids,omitempty"`
+	Action          string   `json:"action"`
+	DeviceID        string   `json:"device_id"`
+	DeviceName      string   `json:"device_name"`
+	DevicePublicKey []byte   `json:"device_public_key"`
+	Role            string   `json:"role"`
+	SignerID        string   `json:"signer_id"`
+	SignerPublicKey []byte   `json:"signer_public_key"`
+	Signature       []byte   `json:"signature"`
 }
 
 type networkEventCore struct {
@@ -65,6 +69,22 @@ type networkEventCore struct {
 	Role            string `json:"role"`
 	SignerID        string `json:"signer_id"`
 	SignerPublicKey []byte `json:"signer_public_key"`
+}
+
+type causalNetworkEventCore struct {
+	Version         int      `json:"version"`
+	NetworkID       string   `json:"network_id"`
+	Epoch           int64    `json:"epoch"`
+	Parents         []string `json:"parents"`
+	SelectedParent  string   `json:"selected_parent,omitempty"`
+	RecoveryIDs     []string `json:"recovery_ids,omitempty"`
+	Action          string   `json:"action"`
+	DeviceID        string   `json:"device_id"`
+	DeviceName      string   `json:"device_name"`
+	DevicePublicKey []byte   `json:"device_public_key"`
+	Role            string   `json:"role"`
+	SignerID        string   `json:"signer_id"`
+	SignerPublicKey []byte   `json:"signer_public_key"`
 }
 
 func (store *Store) EnsureNetwork(ctx context.Context, name string) (NetworkState, error) {
@@ -103,7 +123,8 @@ func (store *Store) Network(ctx context.Context) (NetworkState, error) {
 	if err != nil {
 		return NetworkState{}, err
 	}
-	return materializeNetwork(bundle)
+	analysis, err := analyzeNetwork(bundle)
+	return analysis.state, err
 }
 
 func (store *Store) ExportNetwork(ctx context.Context) (NetworkBundle, error) {
@@ -116,14 +137,21 @@ func (store *Store) ExportNetwork(ctx context.Context) (NetworkBundle, error) {
 	if err = tx.QueryRowContext(ctx, `SELECT id,epoch FROM networks LIMIT 1`).Scan(&bundle.ID, &bundle.Epoch); err != nil {
 		return NetworkBundle{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature FROM network_events WHERE network_id=? ORDER BY epoch,id`, bundle.ID)
+	rows, err := tx.QueryContext(ctx, `SELECT id,network_id,epoch,version,parents,selected_parent,recovery_ids,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature FROM network_events WHERE network_id=? ORDER BY epoch,id`, bundle.ID)
 	if err != nil {
 		return NetworkBundle{}, err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var event NetworkEvent
-		if err = rows.Scan(&event.ID, &event.NetworkID, &event.Epoch, &event.Action, &event.DeviceID, &event.DeviceName, &event.DevicePublicKey, &event.Role, &event.SignerID, &event.SignerPublicKey, &event.Signature); err != nil {
+		var parents, recoveryIDs []byte
+		if err = rows.Scan(&event.ID, &event.NetworkID, &event.Epoch, &event.Version, &parents, &event.SelectedParent, &recoveryIDs, &event.Action, &event.DeviceID, &event.DeviceName, &event.DevicePublicKey, &event.Role, &event.SignerID, &event.SignerPublicKey, &event.Signature); err != nil {
+			return NetworkBundle{}, err
+		}
+		if err = json.Unmarshal(parents, &event.Parents); err != nil {
+			return NetworkBundle{}, err
+		}
+		if err = json.Unmarshal(recoveryIDs, &event.RecoveryIDs); err != nil {
 			return NetworkBundle{}, err
 		}
 		bundle.Events = append(bundle.Events, event)
@@ -141,10 +169,14 @@ func (store *Store) ExportNetwork(ctx context.Context) (NetworkBundle, error) {
 }
 
 func (store *Store) ImportNetwork(ctx context.Context, bundle NetworkBundle, inviterID string) (NetworkState, error) {
-	state, err := materializeNetwork(bundle)
+	analysis, err := analyzeNetwork(bundle)
 	if err != nil {
 		return NetworkState{}, err
 	}
+	if analysis.conflict != nil {
+		return NetworkState{}, ErrNetworkConflict
+	}
+	state := analysis.state
 	inviter, found := findDevice(state.Devices, inviterID)
 	if !found || !inviter.Active || inviter.Role != NetworkAdmin {
 		return NetworkState{}, errors.New("pairing inviter is not a network admin")
@@ -156,6 +188,14 @@ func (store *Store) ImportNetwork(ctx context.Context, bundle NetworkBundle, inv
 }
 
 func (store *Store) MergeNetwork(ctx context.Context, incoming NetworkBundle) (NetworkState, error) {
+	return store.mergeNetwork(ctx, incoming)
+}
+
+func (store *Store) MergeNetworkFrom(ctx context.Context, incoming NetworkBundle, _ string) (NetworkState, error) {
+	return store.mergeNetwork(ctx, incoming)
+}
+
+func (store *Store) mergeNetwork(ctx context.Context, incoming NetworkBundle) (NetworkState, error) {
 	local, err := store.ExportNetwork(ctx)
 	if err != nil {
 		return NetworkState{}, err
@@ -164,14 +204,17 @@ func (store *Store) MergeNetwork(ctx context.Context, incoming NetworkBundle) (N
 		return NetworkState{}, errors.New("peer belongs to another network")
 	}
 	combined := combineNetworkBundles(local, incoming)
-	state, err := materializeNetwork(combined)
+	analysis, err := analyzeNetwork(combined)
 	if err != nil {
 		return NetworkState{}, err
 	}
-	if err = store.persistNetwork(ctx, incoming, false); err != nil {
+	if err = store.persistNetwork(ctx, combined, false); err != nil {
 		return NetworkState{}, err
 	}
-	return state, nil
+	if analysis.conflict != nil {
+		return analysis.state, ErrNetworkConflict
+	}
+	return store.Network(ctx)
 }
 
 func combineNetworkBundles(local, incoming NetworkBundle) NetworkBundle {
@@ -190,6 +233,9 @@ func combineNetworkBundles(local, incoming NetworkBundle) NetworkBundle {
 }
 
 func (store *Store) persistNetwork(ctx context.Context, bundle NetworkBundle, allowNew bool) error {
+	if _, err := analyzeNetwork(bundle); err != nil {
+		return err
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -214,7 +260,37 @@ func (store *Store) persistNetwork(ctx context.Context, bundle NetworkBundle, al
 			return err
 		}
 	}
-	return tx.Commit()
+	current, err := exportNetworkTx(ctx, tx, bundle.ID)
+	if err != nil {
+		return err
+	}
+	analysis, err := analyzeNetwork(current)
+	if err != nil {
+		return err
+	}
+	if err = persistNetworkConflict(ctx, tx, analysis); err != nil {
+		return err
+	}
+	if analysis.conflict == nil {
+		networkHead, headErr := currentCausalNetworkHead(current)
+		if headErr != nil {
+			return headErr
+		}
+		var recoveryIDs []string
+		if err = store.reconcileNetworkAccessTx(ctx, tx, analysis.state, networkHead, &recoveryIDs); err != nil {
+			return err
+		}
+		if err = store.ratifyRecoveriesTx(ctx, tx, bundle.ID, networkHead, current.Epoch, recoveryIDs); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if analysis.conflict != nil {
+		return ErrNetworkConflict
+	}
+	return nil
 }
 
 func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey ed25519.PublicKey, role string) (NetworkState, error) {
@@ -236,11 +312,15 @@ func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey
 		}
 		return NetworkState{}, errors.New("network device already exists with different attributes")
 	}
-	event, err := makeNetworkEvent(state.ID, state.Epoch, "add", record, store.identity)
+	bundle, err := store.mutableNetworkBundle(ctx)
 	if err != nil {
 		return NetworkState{}, err
 	}
-	if _, err = store.db.ExecContext(ctx, `INSERT INTO network_events(id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, event.ID, event.NetworkID, event.Epoch, event.Action, event.DeviceID, event.DeviceName, event.DevicePublicKey, event.Role, event.SignerID, event.SignerPublicKey, event.Signature); err != nil {
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "add", record, networkFrontier(bundle.Events), "", store.identity)
+	if err != nil {
+		return NetworkState{}, err
+	}
+	if err = store.persistNetworkEvents(ctx, state.ID, event.Epoch, []NetworkEvent{event}); err != nil {
 		return NetworkState{}, err
 	}
 	return store.Network(ctx)
@@ -261,15 +341,22 @@ func (store *Store) SetNetworkRole(ctx context.Context, deviceID, role string) (
 	if !found || !target.Active {
 		return NetworkState{}, errors.New("network device is not active")
 	}
+	if target.Role == role {
+		return state, nil
+	}
 	if target.Role == NetworkAdmin && role != NetworkAdmin && activeAdminCount(state.Devices) == 1 {
 		return NetworkState{}, errors.New("cannot demote the last network admin")
 	}
 	target.Role = role
-	event, err := makeNetworkEvent(state.ID, state.Epoch, "role", target, store.identity)
+	bundle, err := store.mutableNetworkBundle(ctx)
 	if err != nil {
 		return NetworkState{}, err
 	}
-	if _, err = store.db.ExecContext(ctx, `INSERT INTO network_events(id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, event.ID, event.NetworkID, event.Epoch, event.Action, event.DeviceID, event.DeviceName, event.DevicePublicKey, event.Role, event.SignerID, event.SignerPublicKey, event.Signature); err != nil {
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "role", target, networkFrontier(bundle.Events), "", store.identity)
+	if err != nil {
+		return NetworkState{}, err
+	}
+	if err = store.persistNetworkEvents(ctx, state.ID, event.Epoch, []NetworkEvent{event}); err != nil {
 		return NetworkState{}, err
 	}
 	return store.Network(ctx)
@@ -291,22 +378,15 @@ func (store *Store) RemoveNetworkDevice(ctx context.Context, deviceID string) (N
 		return NetworkState{}, errors.New("cannot remove the last network admin")
 	}
 	target.Active = false
-	event, err := makeNetworkEvent(state.ID, state.Epoch+1, "remove", target, store.identity)
+	bundle, err := store.mutableNetworkBundle(ctx)
 	if err != nil {
 		return NetworkState{}, err
 	}
-	tx, err := store.db.BeginTx(ctx, nil)
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "remove", target, networkFrontier(bundle.Events), "", store.identity)
 	if err != nil {
 		return NetworkState{}, err
 	}
-	defer func() { _ = tx.Rollback() }()
-	if err = insertNetworkEvent(ctx, tx, event); err != nil {
-		return NetworkState{}, err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE networks SET epoch=? WHERE id=? AND epoch=?`, state.Epoch+1, state.ID, state.Epoch); err != nil {
-		return NetworkState{}, err
-	}
-	if err = tx.Commit(); err != nil {
+	if err = store.persistNetworkEvents(ctx, state.ID, event.Epoch, []NetworkEvent{event}); err != nil {
 		return NetworkState{}, err
 	}
 	return store.Network(ctx)
@@ -345,6 +425,12 @@ func makeNetworkEvent(networkID string, epoch int64, action string, record Devic
 }
 
 func verifyNetworkEvent(event NetworkEvent) error {
+	if event.Version != 0 {
+		return verifyCausalNetworkEvent(event)
+	}
+	if len(event.Parents) != 0 || event.SelectedParent != "" || len(event.RecoveryIDs) != 0 {
+		return errors.New("legacy network event contains unsigned causal metadata")
+	}
 	core := networkEventCore{
 		NetworkID:       event.NetworkID,
 		Epoch:           event.Epoch,
@@ -376,7 +462,7 @@ func verifyNetworkEvent(event NetworkEvent) error {
 	return nil
 }
 
-func materializeNetwork(bundle NetworkBundle) (NetworkState, error) {
+func materializeLegacyNetwork(bundle NetworkBundle) (NetworkState, error) {
 	if bundle.ID == "" || bundle.Epoch < 1 || len(bundle.Events) == 0 {
 		return NetworkState{}, errors.New("network bundle is incomplete")
 	}
@@ -536,7 +622,19 @@ func insertNetworkEvent(ctx context.Context, tx *sql.Tx, event NetworkEvent) err
 	if err := verifyNetworkEvent(event); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO network_events(id,network_id,epoch,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, event.ID, event.NetworkID, event.Epoch, event.Action, event.DeviceID, event.DeviceName, event.DevicePublicKey, event.Role, event.SignerID, event.SignerPublicKey, event.Signature)
+	parents, err := json.Marshal(event.Parents)
+	if err != nil {
+		return err
+	}
+	devicePublicKey := event.DevicePublicKey
+	if (event.Action == "resolve" || event.Action == "recover") && devicePublicKey == nil {
+		devicePublicKey = []byte{}
+	}
+	recoveryIDs, err := json.Marshal(event.RecoveryIDs)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO network_events(id,network_id,epoch,version,parents,selected_parent,recovery_ids,action,device_id,device_name,device_public_key,role,signer_id,signer_public_key,signature) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, event.ID, event.NetworkID, event.Epoch, event.Version, parents, event.SelectedParent, recoveryIDs, event.Action, event.DeviceID, event.DeviceName, devicePublicKey, event.Role, event.SignerID, event.SignerPublicKey, event.Signature)
 	return err
 }
 

@@ -179,13 +179,39 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 	if err != nil {
 		return nil, err
 	}
+	localHeads, err := loadHeadsFrom(ctx, tx, base.workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	_, accessConflicted, conflictErr := accessConflictBase(tx, base.workspaceID)
+	if conflictErr != nil {
+		return nil, conflictErr
+	}
+	if accessConflicted {
+		reduced, reduceErr := reduceHeads(tx, append(localHeads, remoteHeads...))
+		if reduceErr != nil {
+			return nil, reduceErr
+		}
+		if len(reduced) > 1 {
+			return nil, persistAccessDivergence(ctx, tx, name, base.workspaceID, reduced)
+		}
+	}
 	role := integrationRole(policy, store.identity.ID(), authorize, active)
 	head, state, conflicts, heads, err := store.integrateHeadSet(tx, bundle, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
 	if err != nil {
+		var divergence accessDivergence
+		if errors.As(err, &divergence) {
+			return nil, persistAccessDivergence(ctx, tx, name, base.workspaceID, append(localHeads, remoteHeads...))
+		}
 		return nil, err
 	}
 	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
 		return nil, err
+	}
+	if accessConflicted && len(heads) == 1 {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_access_conflicts WHERE workspace_id=?`, base.workspaceID); err != nil {
+			return nil, err
+		}
 	}
 	if authorize {
 		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? AND epoch<=?`, bundle.WorkspaceID, sourceID, bundle.Epoch); err != nil {
@@ -206,7 +232,13 @@ func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle
 	if base.workspaceID != bundle.WorkspaceID {
 		return base, AccessPolicy{}, errors.New("workspace ID does not match")
 	}
-	policy, err := policyAtTx(tx, base.head)
+	policyHead := base.head
+	if conflictBase, found, conflictErr := accessConflictBase(tx, base.workspaceID); conflictErr != nil {
+		return base, AccessPolicy{}, conflictErr
+	} else if found {
+		policyHead = conflictBase
+	}
+	policy, err := policyAtTx(tx, policyHead)
 	if err != nil {
 		return base, policy, err
 	}
@@ -259,6 +291,9 @@ func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID 
 	if bundle.Epoch >= localEpoch {
 		return nil
 	}
+	if bundleHeadsAreAccessChanges(bundle) {
+		return nil
+	}
 	if !authorize {
 		return errors.New("workspace epoch is stale")
 	}
@@ -269,6 +304,20 @@ func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID 
 		return err
 	}
 	return errors.New("workspace epoch is stale")
+}
+
+func bundleHeadsAreAccessChanges(bundle Bundle) bool {
+	revisions := make(map[string]Revision, len(bundle.Revisions))
+	for _, revision := range bundle.Revisions {
+		revisions[revision.ID] = revision
+	}
+	for _, head := range bundle.Heads {
+		kind := revisions[head].Kind
+		if kind != "access" && kind != "access-recovery" && kind != "access-resolution" {
+			return false
+		}
+	}
+	return len(bundle.Heads) > 0
 }
 
 func integrationRole(policy AccessPolicy, localID string, authorize bool, active map[string]bool) string {
@@ -293,11 +342,19 @@ func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace
 	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber)
+	if err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, head, name, localHead); err != nil {
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during integration")
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, head, name, localHead)
+	if err != nil {
 		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during integration")
 	}
 	return replaceConflicts(ctx, tx, workspaceID, head, conflicts)
 }
@@ -353,6 +410,24 @@ func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string
 }
 
 func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	base, found, err := commonAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !found {
+		return "", nil, nil, errors.New("divergent revisions have no common ancestor")
+	}
+	localResolutions, err := revisionKindIDsBetween(tx, localHead, base, "access-resolution")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	remoteResolutions, err := revisionKindIDsBetween(tx, remoteHead, base, "access-resolution")
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if !equalStringSets(localResolutions, remoteResolutions) {
+		return "", nil, nil, errors.New("stale access branch cannot reopen a resolved conflict")
+	}
 	leftPolicy, err := policyAtTx(tx, localHead)
 	if err != nil {
 		return "", nil, nil, err
@@ -362,14 +437,7 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 		return "", nil, nil, err
 	}
 	if !equalPolicy(leftPolicy, rightPolicy) {
-		return "", nil, nil, errors.New("divergent workspace access policies require admin resolution")
-	}
-	base, found, err := commonAncestor(tx, localHead, remoteHead)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	if !found {
-		return "", nil, nil, errors.New("divergent revisions have no common ancestor")
+		return "", nil, nil, accessDivergence{base: base, heads: []string{localHead, remoteHead}}
 	}
 	parents := []string{localHead, remoteHead}
 	sort.Strings(parents)
@@ -404,6 +472,37 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	return merged.ID, state, conflicts, err
 }
 
+func revisionKindIDsBetween(tx *sql.Tx, head, base, kind string) (map[string]bool, error) {
+	rows, err := tx.Query(`WITH RECURSIVE ancestors(id) AS (
+		SELECT ? UNION SELECT p.parent_id FROM revision_parents p JOIN ancestors a ON p.revision_id=a.id WHERE a.id<>?
+	) SELECT r.id FROM revisions r JOIN ancestors a ON a.id=r.id WHERE a.id<>? AND r.kind=?`, head, base, base, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
+}
+
+func equalStringSets(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if !right[value] {
+			return false
+		}
+	}
+	return true
+}
+
 func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []byte, []byte, error) {
 	baseBody, err := loadRevisionSnapshot(tx, base)
 	if err != nil {
@@ -422,7 +521,7 @@ func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Re
 }
 
 func loadRevisionsFrom(ctx context.Context, reader sqlReader, workspaceID string) ([]Revision, error) {
-	rows, err := reader.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
+	rows, err := reader.QueryContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access,network_head FROM revisions WHERE workspace_id=? ORDER BY id`, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -452,7 +551,7 @@ func scanRevisions(rows *sql.Rows, workspaceID string) ([]Revision, error) {
 		var revision Revision
 		var conflicts, access []byte
 		revision.WorkspaceID = workspaceID
-		if err := rows.Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts, &access); err != nil {
+		if err := rows.Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts, &access, &revision.NetworkHead); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(conflicts, &revision.Conflicts); err != nil {

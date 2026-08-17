@@ -85,9 +85,17 @@ func syncWorkspace(ctx context.Context, store *registry.Store, peerID string, in
 	}
 	after, conflicts, err := store.IntegrateFrom(ctx, name, *incoming, peerID)
 	if err != nil {
-		return err
+		if !errors.Is(err, registry.ErrWorkspaceAccessConflict) {
+			return err
+		}
+		after, err = store.LoadByName(ctx, name)
+		if err != nil {
+			return err
+		}
+		response.SyncStatus = "conflicted"
+	} else {
+		response.SyncStatus = acceptedSyncStatus(before.Head, after.Head, incoming.Heads, conflicts)
 	}
-	response.SyncStatus = acceptedSyncStatus(before.Head, after.Head, incoming.Heads, conflicts)
 	bundle, err := store.ExportFor(ctx, name, peerID)
 	if err == nil {
 		response.Workspace = &bundle
@@ -170,6 +178,13 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	}
 	after, conflicts, err := store.IntegrateFrom(ctx, workspaceName, *response.Workspace, target.ID)
 	if err != nil {
+		if errors.Is(err, registry.ErrWorkspaceAccessConflict) {
+			after, loadErr := store.LoadByName(ctx, workspaceName)
+			if loadErr != nil {
+				return SyncResult{}, loadErr
+			}
+			return SyncResult{Workspace: workspaceName, Device: target.Name, Status: "conflicted", Head: after.Head}, nil
+		}
 		return SyncResult{}, RejectedError{err: err}
 	}
 	status := completedSyncStatus(before.Head, after.Head, response.SyncStatus, conflicts, response.Conflicts)
@@ -278,13 +293,16 @@ func exchangePeer(ctx context.Context, connection net.Conn, target registry.Devi
 	if err = decodeLimited(connection, maxPeerMessageBytes, &response); err != nil {
 		return peerResponse{}, UnavailableError{err: err}
 	}
-	if response.Error != "" {
-		return peerResponse{}, RejectedError{err: errors.New(response.Error)}
-	}
 	if response.Info.DeviceID != target.ID {
 		return peerResponse{}, errors.New("peer response identity does not match certificate")
 	}
-	if _, err = store.MergeNetwork(ctx, response.Network); err != nil {
+	if _, err = store.MergeNetworkFrom(ctx, response.Network, target.ID); err != nil && !errors.Is(err, registry.ErrNetworkConflict) {
+		return peerResponse{}, RejectedError{err: err}
+	}
+	if response.Error != "" {
+		return peerResponse{}, RejectedError{err: errors.New(response.Error)}
+	}
+	if errors.Is(err, registry.ErrNetworkConflict) {
 		return peerResponse{}, RejectedError{err: err}
 	}
 	return response, nil

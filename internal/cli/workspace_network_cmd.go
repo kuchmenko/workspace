@@ -101,7 +101,68 @@ func newWorkspaceAccessCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runWorkspaceAccess,
 	}
-	command.AddCommand(newWorkspaceAccessSetCmd(), newWorkspaceAccessRemoveCmd())
+	command.AddCommand(newWorkspaceAccessSetCmd(), newWorkspaceAccessRemoveCmd(), newWorkspaceAccessConflictsCmd(), newWorkspaceAccessResolveCmd())
+	return command
+}
+
+func newWorkspaceAccessConflictsCmd() *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "conflicts <workspace>",
+		Short: "Show a concurrent workspace access conflict",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			store, err := registry.OpenDefault()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+			conflict, err := store.AccessConflict(command.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				encoder := json.NewEncoder(command.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(conflict)
+			}
+			fmt.Fprintf(command.OutOrStdout(), "conflict=%s base=%s\n", conflict.ID, conflict.Base)
+			for _, head := range conflict.Heads {
+				fmt.Fprintf(command.OutOrStdout(), "head=%s epoch=%d mode=%s default=%s\n", head.ID, head.Epoch, head.Policy.Mode, displayDash(head.Policy.DefaultRole))
+			}
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	return command
+}
+
+func newWorkspaceAccessResolveCmd() *cobra.Command {
+	var policyHead, stateHead string
+	command := &cobra.Command{
+		Use:   "resolve <workspace> <conflict>",
+		Short: "Resolve a concurrent workspace access conflict",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(command *cobra.Command, args []string) error {
+			if stateHead == "" {
+				stateHead = policyHead
+			}
+			store, err := registry.OpenDefault()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+			workspace, err := store.ResolveAccessConflict(command.Context(), args[0], args[1], policyHead, stateHead)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(command.OutOrStdout(), "workspace=%s head=%s\n", workspace.Name, workspace.Head)
+			return nil
+		},
+	}
+	command.Flags().StringVar(&policyHead, "policy-from", "", "conflicting head whose access policy to keep")
+	command.Flags().StringVar(&stateHead, "state-from", "", "conflicting head whose workspace state to keep")
+	_ = command.MarkFlagRequired("policy-from")
 	return command
 }
 
@@ -345,7 +406,7 @@ func runWorkspaceSync(command *cobra.Command, args []string, jsonOutput bool) er
 		return err
 	}
 	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "; "))
+		return errors.New(terminalText(strings.Join(failures, "; ")))
 	}
 	if len(results) == 0 {
 		return errors.New("no authorized attached workspace peer exists")
@@ -413,7 +474,7 @@ func writeWorkspaceSyncResults(command *cobra.Command, results []peernetwork.Syn
 		return encoder.Encode(results)
 	}
 	for _, result := range results {
-		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", result.Workspace, result.Device, result.Status)
+		fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", terminalText(result.Workspace), terminalText(result.Device), terminalText(result.Status))
 	}
 	return nil
 }

@@ -148,6 +148,21 @@ func TestWorkspaceNetworkCommandSelectionAndOutput(t *testing.T) {
 	if !strings.Contains(output.String(), `"status": "pulled"`) || !strings.Contains(output.String(), `"status": "unavailable"`) {
 		t.Fatalf("sync JSON = %q", output.String())
 	}
+	results = []peernetwork.SyncResult{{Workspace: "personal\x1b[2J", Device: "arch\u009b2J", Status: "pulled\nforged"}}
+	output.Reset()
+	if err = writeWorkspaceSyncResults(command, results, false); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "personal\\x1B[2J\tarch\\x9B2J\tpulled\\x0Aforged\n" {
+		t.Fatalf("escaped sync output = %q", output.String())
+	}
+	output.Reset()
+	if err = writeWorkspaceSyncResults(command, results, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"workspace": "personal\u001b[2J"`) {
+		t.Fatalf("sync JSON changed = %q", output.String())
+	}
 }
 
 func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {

@@ -29,6 +29,8 @@ func newNetworkCmd() *cobra.Command {
 		newNetworkServeCmd(),
 		newNetworkRoleCmd(),
 		newNetworkRemoveCmd(),
+		newNetworkConflictsCmd(),
+		newNetworkResolveCmd(),
 	)
 	return command
 }
@@ -61,7 +63,7 @@ func newNetworkPairCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Paired with %s (%s).\n", result.Peer.Name, shortDeviceID(result.Peer.ID))
+			fmt.Fprintf(command.OutOrStdout(), "Paired with %s (%s).\n", terminalText(result.Peer.Name), shortDeviceID(result.Peer.ID))
 			return nil
 		},
 	}
@@ -93,7 +95,7 @@ func newNetworkJoinCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(command.OutOrStdout(), "Paired with %s (%s).\n", result.Peer.Name, shortDeviceID(result.Peer.ID))
+			fmt.Fprintf(command.OutOrStdout(), "Paired with %s (%s).\n", terminalText(result.Peer.Name), shortDeviceID(result.Peer.ID))
 			return nil
 		},
 	}
@@ -150,7 +152,7 @@ func writeNetworkStatus(output io.Writer, statuses []peernetwork.Status) error {
 		if endpoint == "" {
 			endpoint = "-"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", status.Device.Name, status.Device.Role, state, endpoint)
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", terminalText(status.Device.Name), terminalText(status.Device.Role), state, terminalText(endpoint))
 	}
 	return table.Flush()
 }
@@ -226,6 +228,63 @@ func newNetworkRemoveCmd() *cobra.Command {
 	}
 }
 
+func newNetworkConflictsCmd() *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{
+		Use:   "conflicts",
+		Short: "Show a concurrent network membership conflict",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			store, _, err := openNetworkNode()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+			conflict, err := store.NetworkConflict(command.Context())
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				encoder := json.NewEncoder(command.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(conflict)
+			}
+			fmt.Fprintf(command.OutOrStdout(), "conflict=%s base=%s\n", conflict.ID, conflict.Base)
+			for _, head := range conflict.Heads {
+				fmt.Fprintf(command.OutOrStdout(), "head=%s epoch=%d action=%s device=%s signer=%s\n", head.ID, head.Epoch, head.Action, terminalText(head.DeviceName), shortDeviceID(head.SignerID))
+			}
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
+	return command
+}
+
+func newNetworkResolveCmd() *cobra.Command {
+	var selected string
+	command := &cobra.Command{
+		Use:   "resolve <conflict>",
+		Short: "Resolve a concurrent network membership conflict",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, args []string) error {
+			store, _, err := openNetworkNode()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+			state, err := store.ResolveNetworkConflict(command.Context(), args[0], selected)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(command.OutOrStdout(), "network=%s epoch=%d\n", state.ID, state.Epoch)
+			return nil
+		},
+	}
+	command.Flags().StringVar(&selected, "from", "", "conflicting head whose membership state to keep")
+	_ = command.MarkFlagRequired("from")
+	return command
+}
+
 func openNetworkNode() (*registry.Store, device.Identity, error) {
 	store, err := registry.OpenDefault()
 	if err != nil {
@@ -255,7 +314,7 @@ func networkDeviceName(name string) (string, error) {
 func networkConfirmation(command *cobra.Command) peernetwork.Confirm {
 	reader := bufio.NewReader(command.InOrStdin())
 	return func(peerName, authentication string) (bool, error) {
-		fmt.Fprintf(command.OutOrStdout(), "Device: %s\nVerification: %s\nConfirm pairing? [y/N] ", peerName, authentication)
+		fmt.Fprintf(command.OutOrStdout(), "Device: %s\nVerification: %s\nConfirm pairing? [y/N] ", terminalText(peerName), terminalText(authentication))
 		answer, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return false, err

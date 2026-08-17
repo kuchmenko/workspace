@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS revisions (
  kind TEXT NOT NULL,
  snapshot BLOB NOT NULL,
  conflicts BLOB NOT NULL,
- access BLOB
+ access BLOB,
+ network_head TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS revisions_workspace ON revisions(workspace_id);
 CREATE TABLE IF NOT EXISTS revision_parents (
@@ -68,6 +69,11 @@ CREATE TABLE IF NOT EXISTS workspace_quarantine (
  received_at TEXT NOT NULL,
  PRIMARY KEY(workspace_id,source_device_id,head_id)
 );
+CREATE TABLE IF NOT EXISTS workspace_access_conflicts (
+ workspace_id TEXT PRIMARY KEY,
+ conflict_id TEXT NOT NULL UNIQUE,
+ base_revision_id TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS networks (
  id TEXT PRIMARY KEY,
  epoch INTEGER NOT NULL
@@ -76,6 +82,10 @@ CREATE TABLE IF NOT EXISTS network_events (
  id TEXT PRIMARY KEY,
  network_id TEXT NOT NULL,
  epoch INTEGER NOT NULL,
+ version INTEGER NOT NULL DEFAULT 0,
+ parents BLOB NOT NULL DEFAULT 'null',
+ selected_parent TEXT NOT NULL DEFAULT '',
+ recovery_ids BLOB NOT NULL DEFAULT 'null',
  action TEXT NOT NULL,
  device_id TEXT NOT NULL,
  device_name TEXT NOT NULL,
@@ -84,6 +94,12 @@ CREATE TABLE IF NOT EXISTS network_events (
  signer_id TEXT NOT NULL,
  signer_public_key BLOB NOT NULL,
  signature BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS network_conflicts (
+ network_id TEXT PRIMARY KEY,
+ conflict_id TEXT NOT NULL UNIQUE,
+ base_event_id TEXT NOT NULL,
+ head_ids BLOB NOT NULL
 );`
 
 func (store *Store) initialize(ctx context.Context) error {
@@ -99,6 +115,21 @@ func (store *Store) initialize(ctx context.Context) error {
 		return err
 	}
 	if err = ensureRevisionColumn(ctx, tx, "access", `ALTER TABLE revisions ADD COLUMN access BLOB`); err != nil {
+		return err
+	}
+	if err = ensureRevisionColumn(ctx, tx, "network_head", `ALTER TABLE revisions ADD COLUMN network_head TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err = ensureTableColumn(ctx, tx, "network_events", "version", `ALTER TABLE network_events ADD COLUMN version INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if err = ensureTableColumn(ctx, tx, "network_events", "parents", `ALTER TABLE network_events ADD COLUMN parents BLOB NOT NULL DEFAULT 'null'`); err != nil {
+		return err
+	}
+	if err = ensureTableColumn(ctx, tx, "network_events", "selected_parent", `ALTER TABLE network_events ADD COLUMN selected_parent TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err = ensureTableColumn(ctx, tx, "network_events", "recovery_ids", `ALTER TABLE network_events ADD COLUMN recovery_ids BLOB NOT NULL DEFAULT 'null'`); err != nil {
 		return err
 	}
 	legacy, err := loadLegacyWorkspaces(ctx, tx)
@@ -117,7 +148,11 @@ func (store *Store) initialize(ctx context.Context) error {
 }
 
 func ensureRevisionColumn(ctx context.Context, tx *sql.Tx, wanted, alter string) error {
-	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(revisions)`)
+	return ensureTableColumn(ctx, tx, "revisions", wanted, alter)
+}
+
+func ensureTableColumn(ctx context.Context, tx *sql.Tx, table, wanted, alter string) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return err
 	}

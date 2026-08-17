@@ -242,6 +242,9 @@ func (store *Store) persistUpdate(ctx context.Context, name string, expectedRevi
 	if err != nil {
 		return err
 	}
+	if err = requireNoAccessConflict(tx, workspaceID); err != nil {
+		return err
+	}
 	policy, err := policyAtTx(tx, head)
 	if err != nil {
 		return err

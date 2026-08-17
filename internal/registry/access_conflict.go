@@ -1,0 +1,270 @@
+package registry
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+
+	"github.com/kuchmenko/workspace/internal/config"
+)
+
+var ErrWorkspaceAccessConflict = errors.New("workspace has an unresolved access conflict")
+
+type WorkspaceAccessConflict struct {
+	ID          string                `json:"id"`
+	WorkspaceID string                `json:"workspace_id"`
+	Base        string                `json:"base"`
+	Heads       []WorkspaceAccessHead `json:"heads"`
+}
+
+type WorkspaceAccessHead struct {
+	ID     string       `json:"id"`
+	Epoch  int64        `json:"epoch"`
+	Policy AccessPolicy `json:"policy"`
+}
+
+type accessDivergence struct {
+	base  string
+	heads []string
+}
+
+func (accessDivergence) Error() string {
+	return ErrWorkspaceAccessConflict.Error()
+}
+
+func (accessDivergence) Unwrap() error {
+	return ErrWorkspaceAccessConflict
+}
+
+func (store *Store) AccessConflict(ctx context.Context, name string) (WorkspaceAccessConflict, error) {
+	workspace, err := store.LoadByName(ctx, name)
+	if err != nil {
+		return WorkspaceAccessConflict{}, err
+	}
+	var conflict WorkspaceAccessConflict
+	conflict.WorkspaceID = workspace.WorkspaceID
+	err = store.db.QueryRowContext(ctx, `SELECT conflict_id,base_revision_id FROM workspace_access_conflicts WHERE workspace_id=?`, workspace.WorkspaceID).Scan(&conflict.ID, &conflict.Base)
+	if err != nil {
+		return WorkspaceAccessConflict{}, err
+	}
+	heads, err := store.loadHeads(ctx, workspace.WorkspaceID)
+	if err != nil {
+		return WorkspaceAccessConflict{}, err
+	}
+	for _, head := range heads {
+		policy, policyErr := store.policyAt(ctx, head)
+		if policyErr != nil {
+			return WorkspaceAccessConflict{}, policyErr
+		}
+		var epoch int64
+		if policyErr = store.db.QueryRowContext(ctx, `SELECT epoch FROM revisions WHERE id=?`, head).Scan(&epoch); policyErr != nil {
+			return WorkspaceAccessConflict{}, policyErr
+		}
+		conflict.Heads = append(conflict.Heads, WorkspaceAccessHead{ID: head, Epoch: epoch, Policy: policy})
+	}
+	return conflict, nil
+}
+
+func accessConflictBase(tx *sql.Tx, workspaceID string) (string, bool, error) {
+	var base string
+	err := tx.QueryRow(`SELECT base_revision_id FROM workspace_access_conflicts WHERE workspace_id=?`, workspaceID).Scan(&base)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return base, err == nil, err
+}
+
+func requireNoAccessConflict(tx *sql.Tx, workspaceID string) error {
+	_, found, err := accessConflictBase(tx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if found {
+		return ErrWorkspaceAccessConflict
+	}
+	return nil
+}
+
+func (store *Store) hasAccessConflict(ctx context.Context, workspaceID string) (bool, error) {
+	var found int
+	err := store.db.QueryRowContext(ctx, `SELECT 1 FROM workspace_access_conflicts WHERE workspace_id=?`, workspaceID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (store *Store) authorizationPolicy(ctx context.Context, workspace Workspace) (AccessPolicy, error) {
+	var base string
+	err := store.db.QueryRowContext(ctx, `SELECT base_revision_id FROM workspace_access_conflicts WHERE workspace_id=?`, workspace.WorkspaceID).Scan(&base)
+	if errors.Is(err, sql.ErrNoRows) {
+		base = workspace.Head
+	} else if err != nil {
+		return AccessPolicy{}, err
+	}
+	return store.policyAt(ctx, base)
+}
+
+func persistAccessDivergence(ctx context.Context, tx *sql.Tx, name, workspaceID string, candidates []string) error {
+	heads, err := reduceHeads(tx, candidates)
+	if err != nil {
+		return err
+	}
+	base, err := commonAncestorSet(tx, heads)
+	if err != nil {
+		return err
+	}
+	conflictID := accessConflictID(workspaceID, base, heads)
+	if err = replaceHeads(ctx, tx, workspaceID, heads); err != nil {
+		return err
+	}
+	var epoch int64
+	for _, head := range heads {
+		var candidate int64
+		if err = tx.QueryRow(`SELECT epoch FROM revisions WHERE id=?`, head).Scan(&candidate); err != nil {
+			return err
+		}
+		epoch = max(epoch, candidate)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_access_conflicts(workspace_id,conflict_id,base_revision_id) VALUES(?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET conflict_id=excluded.conflict_id,base_revision_id=excluded.base_revision_id`, workspaceID, conflictID, base); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=? WHERE name=?`, epoch, name); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return ErrWorkspaceAccessConflict
+}
+
+func commonAncestorSet(tx *sql.Tx, heads []string) (string, error) {
+	if len(heads) < 2 {
+		return "", errors.New("access conflict requires multiple heads")
+	}
+	base := heads[0]
+	for _, head := range heads[1:] {
+		var found bool
+		var err error
+		base, found, err = commonAncestor(tx, base, head)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", errors.New("access conflict heads have no common ancestor")
+		}
+	}
+	return base, nil
+}
+
+func accessConflictID(workspaceID, base string, heads []string) string {
+	body, _ := json.Marshal(struct {
+		Domain      string   `json:"domain"`
+		WorkspaceID string   `json:"workspace_id"`
+		Base        string   `json:"base"`
+		Heads       []string `json:"heads"`
+	}{Domain: "workspace-access-conflict-v1", WorkspaceID: workspaceID, Base: base, Heads: heads})
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:])
+}
+
+func (store *Store) ResolveAccessConflict(ctx context.Context, name, conflictID, policyHead, stateHead string) (Workspace, error) {
+	localActive, _ := store.localNetworkPresence(ctx)
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Workspace{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var workspaceID, root string
+	var revisionNumber int64
+	if err = tx.QueryRowContext(ctx, `SELECT p.workspace_id,w.root,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=?`, name).Scan(&workspaceID, &root, &revisionNumber); err != nil {
+		return Workspace{}, err
+	}
+	var storedID, base string
+	if err = tx.QueryRow(`SELECT conflict_id,base_revision_id FROM workspace_access_conflicts WHERE workspace_id=?`, workspaceID).Scan(&storedID, &base); err != nil {
+		return Workspace{}, err
+	}
+	if storedID != conflictID {
+		return Workspace{}, errors.New("workspace access conflict changed")
+	}
+	heads, err := loadHeadsFrom(ctx, tx, workspaceID)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if !containsString(heads, policyHead) || !containsString(heads, stateHead) {
+		return Workspace{}, errors.New("resolution heads must belong to the current access conflict")
+	}
+	basePolicy, err := policyAtTx(tx, base)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if basePolicy.Role(store.identity.ID(), localActive) != WorkspaceAdmin {
+		return Workspace{}, errors.New("local device is not an administrator at the access conflict base")
+	}
+	policy, err := policyAtTx(tx, policyHead)
+	if err != nil {
+		return Workspace{}, err
+	}
+	snapshot, err := loadRevisionSnapshot(tx, stateHead)
+	if err != nil {
+		return Workspace{}, err
+	}
+	conflicts, err := loadRevisionConflicts(tx, stateHead)
+	if err != nil {
+		return Workspace{}, err
+	}
+	var epoch int64
+	for _, head := range heads {
+		var candidate int64
+		if err = tx.QueryRow(`SELECT epoch FROM revisions WHERE id=?`, head).Scan(&candidate); err != nil {
+			return Workspace{}, err
+		}
+		epoch = max(epoch, candidate)
+	}
+	revision, err := makeRevision(workspaceID, epoch+1, "access-resolution", heads, snapshot, conflicts, policy, store.identity)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if err = insertRevision(tx, revision); err != nil {
+		return Workspace{}, err
+	}
+	state, err := decodeSnapshot(snapshot)
+	if err != nil {
+		return Workspace{}, err
+	}
+	state.RestoreRoot(root)
+	body, err := config.EncodeWorkspace(state)
+	if err != nil {
+		return Workspace{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return Workspace{}, errors.New("workspace changed during access conflict resolution")
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND workspace_id=?`, revision.Epoch, revision.ID, name, workspaceID)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return Workspace{}, errors.New("workspace changed during access conflict resolution")
+	}
+	if err = replaceHeads(ctx, tx, workspaceID, []string{revision.ID}); err != nil {
+		return Workspace{}, err
+	}
+	if err = replaceConflicts(ctx, tx, workspaceID, revision.ID, conflicts); err != nil {
+		return Workspace{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_access_conflicts WHERE workspace_id=?`, workspaceID); err != nil {
+		return Workspace{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Workspace{}, err
+	}
+	return store.LoadByName(ctx, name)
+}

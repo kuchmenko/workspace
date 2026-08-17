@@ -44,6 +44,32 @@ func TestLoadCurrentWorkspaceUsesWSRoot(t *testing.T) {
 	}
 }
 
+func TestAliasCommandUsesSoleRegistryWorkspaceOutsideItsRoot(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))
+	root := t.TempDir()
+	command := newWorkspaceCmd()
+	command.SetOut(&bytes.Buffer{})
+	command.SetArgs([]string{"create", root, "--name", "selected"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	resetCLIWorkspace()
+	t.Chdir(t.TempDir())
+	t.Cleanup(resetCLIWorkspace)
+	parent := newAliasCmd()
+	aliasCommand, _, err := parent.Find([]string{"list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareCommand(aliasCommand, nil); err != nil {
+		t.Fatal(err)
+	}
+	if registryState.Name != "selected" || wsRoot != root {
+		t.Fatalf("loaded workspace = %#v", registryState)
+	}
+}
+
 func resetCLIWorkspace() {
 	if registryStore != nil {
 		_ = registryStore.Close()

@@ -87,7 +87,7 @@ func peerServerTLS(cert tls.Certificate, identity device.Identity, name string, 
 				return err
 			}
 			if !trusted(device.IDForPublicKey(public)) {
-				return errors.New("peer is not an active network device")
+				return errors.New("peer is not a known network device")
 			}
 			return nil
 		},

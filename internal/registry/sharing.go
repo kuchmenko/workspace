@@ -56,10 +56,21 @@ func validateShareableSnapshot(body []byte) error {
 }
 
 func remoteContainsCredentials(raw string) bool {
+	if separator := strings.IndexByte(raw, ':'); separator > 0 && strings.Contains(raw[:separator], "@") && !strings.Contains(raw[:separator], "://") {
+		user, _, _ := strings.Cut(raw[:separator], "@")
+		return user != "git"
+	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
+	if err != nil {
+		return false
+	}
+	httpRemote := strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")
+	if httpRemote && (parsed.RawQuery != "" || parsed.Fragment != "") {
+		return true
+	}
+	if parsed.User == nil {
 		return false
 	}
 	_, password := parsed.User.Password()
-	return password || strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")
+	return password || httpRemote
 }

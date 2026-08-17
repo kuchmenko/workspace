@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,7 +48,18 @@ type PairResult struct {
 const (
 	pairExchangeTimeout = 30 * time.Second
 	maxPairMessageBytes = 1 << 20
+	maxPairConnections  = 8
+	maxPairCodeFailures = 5
 )
+
+var errInvalidPairCode = errors.New("pairing code is invalid")
+
+type pairAttempt struct {
+	result PairResult
+	err    error
+	retry  bool
+	source string
+}
 
 type joinRequest struct {
 	Version int    `json:"version"`
@@ -109,34 +121,82 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	if options.Ready != nil {
 		options.Ready(code, listener.Addr().String())
 	}
-	return acceptPairAttempts(ctx, listener, cert, code, options)
+	pairContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	return acceptPairAttempts(pairContext, listener, cert, code, options)
 }
 
 func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Certificate, code string, options PairOptions) (PairResult, error) {
-	for attempts := 0; attempts < 5; attempts++ {
-		connection, acceptErr := acceptContext(ctx, listener)
-		if acceptErr != nil {
-			return PairResult{}, acceptErr
+	connections := make(chan net.Conn)
+	acceptErrors := make(chan error, 1)
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				select {
+				case acceptErrors <- err:
+				default:
+				}
+				return
+			}
+			select {
+			case connections <- connection:
+			case <-ctx.Done():
+				_ = connection.Close()
+				return
+			}
 		}
-		attemptCtx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
-		stop := watchConnection(attemptCtx, connection)
-		if acceptErr = writePairCertificate(connection, cert); acceptErr != nil {
-			stop()
-			cancel()
-			_ = connection.Close()
-			continue
+	}()
+	results := make(chan pairAttempt, maxPairConnections)
+	semaphore := make(chan struct{}, maxPairConnections)
+	failures := map[string]int{}
+	for {
+		select {
+		case <-ctx.Done():
+			return PairResult{}, ctx.Err()
+		case err := <-acceptErrors:
+			if ctx.Err() != nil {
+				return PairResult{}, ctx.Err()
+			}
+			return PairResult{}, err
+		case connection := <-connections:
+			source := pairSource(connection.RemoteAddr())
+			if failures[source] >= maxPairCodeFailures {
+				_ = connection.Close()
+				continue
+			}
+			select {
+			case semaphore <- struct{}{}:
+				go runPairAttempt(ctx, connection, cert, code, options, semaphore, results, source)
+			default:
+				_ = connection.Close()
+			}
+		case attempt := <-results:
+			if errors.Is(attempt.err, errInvalidPairCode) {
+				failures[attempt.source]++
+			}
+			if attempt.retry {
+				continue
+			}
+			return attempt.result, attempt.err
 		}
-		connection = tls.Server(connection, pairingServerTLS(cert))
-		result, retry, pairErr := acceptPairConnection(attemptCtx, connection, code, options)
-		stop()
-		cancel()
-		_ = connection.Close()
-		if retry {
-			continue
-		}
-		return result, pairErr
 	}
-	return PairResult{}, errors.New("pairing attempt limit reached")
+}
+
+func runPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore chan struct{}, results chan<- pairAttempt, source string) {
+	defer func() { <-semaphore }()
+	defer func() { _ = connection.Close() }()
+	attemptCtx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
+	defer cancel()
+	stop := watchConnection(attemptCtx, connection)
+	defer stop()
+	if err := writePairCertificate(connection, cert); err != nil {
+		results <- pairAttempt{err: err, retry: true, source: source}
+		return
+	}
+	tlsConnection := tls.Server(connection, pairingServerTLS(cert))
+	result, retry, err := acceptPairConnection(attemptCtx, tlsConnection, code, options)
+	results <- pairAttempt{result: result, err: err, retry: retry, source: source}
 }
 
 func acceptPairConnection(ctx context.Context, connection net.Conn, code string, options PairOptions) (PairResult, bool, error) {
@@ -165,7 +225,7 @@ func receivePairRequest(ctx context.Context, connection net.Conn, code string) (
 	}
 	if request.Version != 1 || request.Code != code {
 		_ = json.NewEncoder(connection).Encode(pairChallenge{Error: "pairing code is invalid"})
-		return nil, "", true, errors.New("pairing code is invalid")
+		return nil, "", true, errInvalidPairCode
 	}
 	if err = json.NewEncoder(connection).Encode(pairChallenge{Accepted: true}); err != nil {
 		return nil, "", false, err
@@ -175,6 +235,14 @@ func receivePairRequest(ctx context.Context, connection net.Conn, code string) (
 		peerName = peerCertificateName
 	}
 	return peerKey, peerName, false, nil
+}
+
+func pairSource(address net.Addr) string {
+	host, _, err := net.SplitHostPort(address.String())
+	if err != nil {
+		return address.String()
+	}
+	return host
 }
 
 func confirmPairConnection(connection net.Conn, peerName, authentication string, confirm Confirm) error {
@@ -324,32 +392,11 @@ func readPairCertificate(connection net.Conn) (*x509.Certificate, error) {
 }
 
 func pairingCode() (string, error) {
-	var body [4]byte
+	var body [12]byte
 	if _, err := rand.Read(body[:]); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%06d", binary.BigEndian.Uint32(body[:])%1000000), nil
-}
-
-func acceptContext(ctx context.Context, listener net.Listener) (net.Conn, error) {
-	result := make(chan struct {
-		connection net.Conn
-		err        error
-	}, 1)
-	go func() {
-		connection, err := listener.Accept()
-		result <- struct {
-			connection net.Conn
-			err        error
-		}{connection: connection, err: err}
-	}()
-	select {
-	case accepted := <-result:
-		return accepted.connection, accepted.err
-	case <-ctx.Done():
-		_ = listener.Close()
-		return nil, ctx.Err()
-	}
+	return fmt.Sprintf("%s-%06d", hex.EncodeToString(body[:8]), binary.BigEndian.Uint32(body[8:])%1000000), nil
 }
 
 func deviceRecord(devices []registry.DeviceRecord, publicKey ed25519.PublicKey) (registry.DeviceRecord, bool) {

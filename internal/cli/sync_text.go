@@ -91,17 +91,19 @@ func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stder
 func writeTopLevelWorkspaceSync(stdout, stderr io.Writer, results []peernetwork.SyncResult, failures []string) error {
 	failureIndex := 0
 	for _, result := range results {
-		fmt.Fprintf(stdout, "workspace-sync: %s %s\n", result.Device, result.Status)
+		device := terminalText(result.Device)
+		status := terminalText(result.Status)
+		fmt.Fprintf(stdout, "workspace-sync: %s %s\n", device, status)
 		switch result.Status {
 		case "unavailable":
-			fmt.Fprintf(stderr, "workspace-sync: %s is unavailable; continuing offline\n", result.Device)
+			fmt.Fprintf(stderr, "workspace-sync: %s is unavailable; continuing offline\n", device)
 		case "rejected":
 			if failureIndex < len(failures) {
-				return errors.New(failures[failureIndex])
+				return errors.New(terminalText(failures[failureIndex]))
 			}
-			return fmt.Errorf("workspace sync with %s was rejected", result.Device)
+			return fmt.Errorf("workspace sync with %s was rejected", device)
 		case "conflicted":
-			return fmt.Errorf("workspace sync with %s has unresolved conflicts", result.Device)
+			return fmt.Errorf("workspace sync with %s has unresolved conflicts", device)
 		}
 		if result.Status == "unavailable" || result.Status == "rejected" {
 			failureIndex++

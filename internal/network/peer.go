@@ -139,8 +139,8 @@ func trustedPeer(store *registry.Store) func(string) bool {
 		if loadErr != nil {
 			return false
 		}
-		_, trusted := activeDevice(current.Devices, id)
-		return trusted
+		_, known := deviceByID(current.Devices, id)
+		return known
 	}
 }
 
@@ -225,13 +225,16 @@ func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, s
 	if err = decodeLimited(connection, maxPeerMessageBytes, &response); err != nil {
 		return PeerInfo{}, err
 	}
-	if response.Error != "" {
-		return PeerInfo{}, errors.New(response.Error)
-	}
 	if response.Info.DeviceID != target.ID {
 		return PeerInfo{}, errors.New("peer response identity does not match certificate")
 	}
-	if _, err = store.MergeNetwork(ctx, response.Network); err != nil {
+	if _, err = store.MergeNetworkFrom(ctx, response.Network, target.ID); err != nil && !errors.Is(err, registry.ErrNetworkConflict) {
+		return PeerInfo{}, err
+	}
+	if response.Error != "" {
+		return PeerInfo{}, errors.New(response.Error)
+	}
+	if errors.Is(err, registry.ErrNetworkConflict) {
 		return PeerInfo{}, err
 	}
 	return response.Info, nil
@@ -290,10 +293,6 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		_ = encoder.Encode(peerResponse{Error: "unsupported peer request"})
 		return
 	}
-	if _, err := store.MergeNetwork(context.Background(), request.Network); err != nil {
-		_ = encoder.Encode(peerResponse{Error: err.Error()})
-		return
-	}
 	peerID, err := authenticatedPeerID(connection)
 	if err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
@@ -304,12 +303,50 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
+	_, known := deviceByID(state.Devices, peerID)
+	if !known {
+		_ = encoder.Encode(peerResponse{Error: "peer is not a known network device"})
+		return
+	}
 	bundle, err := store.ExportNetwork(context.Background())
 	if err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
 		return
 	}
 	response := peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle}
+	_, mergeErr := store.MergeNetworkFrom(context.Background(), request.Network, peerID)
+	if mergeErr != nil && !errors.Is(mergeErr, registry.ErrNetworkConflict) {
+		response.Error = mergeErr.Error()
+		_ = encoder.Encode(response)
+		return
+	}
+	state, err = store.Network(context.Background())
+	if err != nil {
+		response.Error = err.Error()
+		_ = encoder.Encode(response)
+		return
+	}
+	bundle, err = store.ExportNetwork(context.Background())
+	if err != nil {
+		response.Error = err.Error()
+		_ = encoder.Encode(response)
+		return
+	}
+	response.Info.Epoch = state.Epoch
+	response.Network = bundle
+	if mergeErr != nil {
+		response.Error = mergeErr.Error()
+		_ = encoder.Encode(response)
+		return
+	}
+	peer, known := deviceByID(state.Devices, peerID)
+	if !known || !peer.Active {
+		if request.Action != "status" {
+			response.Error = "peer is not an active network device"
+		}
+		_ = encoder.Encode(response)
+		return
+	}
 	if err = handleWorkspaceRequest(context.Background(), store, peerID, request, &response); err != nil {
 		response.Error = err.Error()
 	}

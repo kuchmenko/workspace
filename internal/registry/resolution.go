@@ -87,6 +87,9 @@ func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, pat
 	if err != nil {
 		return prepared, err
 	}
+	if err = requireNoAccessConflict(tx, prepared.workspaceID); err != nil {
+		return prepared, err
+	}
 	if err = requireConflict(ctx, tx, prepared.workspaceID, prepared.head, path); err != nil {
 		return prepared, err
 	}
