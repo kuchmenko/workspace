@@ -108,6 +108,9 @@ func (store *Store) prepareResolution(ctx context.Context, tx *sql.Tx, name, pat
 	if err != nil {
 		return prepared, err
 	}
+	if err = validateSharedUpdate(prepared.policy, store.identity.ID(), resolved); err != nil {
+		return prepared, err
+	}
 	prepared.state, err = decodeSnapshot(resolved)
 	if err != nil {
 		return prepared, err

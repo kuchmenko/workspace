@@ -483,7 +483,7 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	if err != nil {
 		return "", nil, nil, err
 	}
-	conflicts, err = mergeRevisionConflicts(tx, parents, conflicts)
+	conflicts, err = mergeRevisionConflicts(tx, base, parents, conflicts)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -531,7 +531,11 @@ func mergeBaseAndPolicy(tx *sql.Tx, localHead, remoteHead string) (string, Acces
 	return base, leftPolicy, nil
 }
 
-func mergeRevisionConflicts(tx *sql.Tx, parents []string, conflicts []Conflict) ([]Conflict, error) {
+func mergeRevisionConflicts(tx *sql.Tx, base string, parents []string, conflicts []Conflict) ([]Conflict, error) {
+	baseConflicts, err := loadRevisionConflicts(tx, base)
+	if err != nil {
+		return nil, err
+	}
 	left, err := loadRevisionConflicts(tx, parents[0])
 	if err != nil {
 		return nil, err
@@ -540,7 +544,29 @@ func mergeRevisionConflicts(tx *sql.Tx, parents []string, conflicts []Conflict) 
 	if err != nil {
 		return nil, err
 	}
+	left = unresolvedOnBothBranches(baseConflicts, left, right)
+	right = unresolvedOnBothBranches(baseConflicts, right, left)
 	return combineConflicts(left, right, conflicts)
+}
+
+func unresolvedOnBothBranches(base, current, other []Conflict) []Conflict {
+	basePaths := conflictPaths(base)
+	otherPaths := conflictPaths(other)
+	result := make([]Conflict, 0, len(current))
+	for _, conflict := range current {
+		if !basePaths[conflict.Path] || otherPaths[conflict.Path] {
+			result = append(result, conflict)
+		}
+	}
+	return result
+}
+
+func conflictPaths(conflicts []Conflict) map[string]bool {
+	paths := make(map[string]bool, len(conflicts))
+	for _, conflict := range conflicts {
+		paths[conflict.Path] = true
+	}
+	return paths
 }
 
 func revisionKindIDsBetween(tx *sql.Tx, head, base, kind string) (map[string]bool, error) {

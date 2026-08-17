@@ -284,6 +284,98 @@ func TestThreeStoresPreserveConflictAcrossUnrelatedMerge(t *testing.T) {
 	}
 }
 
+func TestConflictResolutionSurvivesConcurrentOrdinaryUpdate(t *testing.T) {
+	ctx := context.Background()
+	left, right := openTestStore(t), openTestStore(t)
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	if _, err := left.Create(ctx, "shared", leftRoot, testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := left.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Attach(ctx, "shared", rightRoot, initial); err != nil {
+		t.Fatal(err)
+	}
+	updateAlias(t, left, leftRoot, "editor", "helix")
+	updateAlias(t, right, rightRoot, "editor", "nano")
+	rightBranch, err := right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, conflicts, integrateErr := left.Integrate(ctx, "shared", rightBranch); integrateErr != nil || len(conflicts) != 1 {
+		t.Fatalf("left conflict = %#v, error = %v", conflicts, integrateErr)
+	}
+	leftConflict, err := left.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, conflicts, integrateErr := right.Integrate(ctx, "shared", leftConflict); integrateErr != nil || len(conflicts) != 1 {
+		t.Fatalf("right conflict = %#v, error = %v", conflicts, integrateErr)
+	}
+	if _, err = left.Resolve(ctx, "shared", "/aliases/editor", []byte(`"nano"`)); err != nil {
+		t.Fatal(err)
+	}
+	updateAlias(t, right, rightRoot, "shell", "zsh")
+	rightUpdate, err := right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, conflicts, err := left.Integrate(ctx, "shared", rightUpdate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 0 || merged.State.Aliases["editor"] != "nano" || merged.State.Aliases["shell"] != "zsh" {
+		t.Fatalf("merged workspace = %#v, conflicts = %#v", merged, conflicts)
+	}
+}
+
+func TestConflictResolutionRejectsCredentialBearingRemote(t *testing.T) {
+	ctx := context.Background()
+	left, right := pairedRegistryStores(t)
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	state := testWorkspace()
+	state.Projects["repo"] = config.Project{Remote: "https://example.com/repo.git", Path: "repo", Status: config.StatusActive, Category: config.CategoryPersonal}
+	if _, err := left.Create(ctx, "shared", leftRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{left.identity.ID(): WorkspaceAdmin}}
+	if _, err := left.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := left.ExportFor(ctx, "shared", right.identity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.AttachFrom(ctx, "shared", rightRoot, initial, left.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	updateProjectRemote := func(store *Store, root, remote string) {
+		t.Helper()
+		if _, mutationErr := store.Mutate(ctx, root, func(workspace *config.Workspace) error {
+			project := workspace.Projects["repo"]
+			project.Remote = remote
+			workspace.Projects["repo"] = project
+			return nil
+		}); mutationErr != nil {
+			t.Fatal(mutationErr)
+		}
+	}
+	updateProjectRemote(left, leftRoot, "https://example.com/left.git")
+	updateProjectRemote(right, rightRoot, "https://example.com/right.git")
+	rightBranch, err := right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, conflicts, integrateErr := left.Integrate(ctx, "shared", rightBranch); integrateErr != nil || len(conflicts) != 1 || conflicts[0].Path != "/projects/repo/remote" {
+		t.Fatalf("remote conflict = %#v, error = %v", conflicts, integrateErr)
+	}
+	if _, err = left.Resolve(ctx, "shared", "/projects/repo/remote", []byte(`"https://user:secret@example.com/repo.git"`)); err == nil {
+		t.Fatal("credential-bearing remote resolution succeeded")
+	}
+}
+
 func TestStoreMigratesExistingRegistryToSignedGenesis(t *testing.T) {
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, "registry.db")
