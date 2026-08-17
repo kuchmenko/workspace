@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -207,6 +208,17 @@ func TestWorkspaceAccessOutputEscapesPeerDeviceNames(t *testing.T) {
 	}
 	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "writer\nforged") {
 		t.Fatalf("access output contains peer control characters: %q", output.String())
+	}
+}
+
+func TestWorkspaceConflictOutputEscapesReplicatedPath(t *testing.T) {
+	conflicts := []registry.Conflict{{Path: "/aliases/peer\nforged\x1b]0;owned\a", Base: json.RawMessage(`"base"`)}}
+	var output bytes.Buffer
+	if err := writeWorkspaceConflicts(&output, conflicts); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(output.String(), "\x1b\a") || strings.Contains(output.String(), "peer\nforged") {
+		t.Fatalf("conflict output contains replicated control characters: %q", output.String())
 	}
 }
 

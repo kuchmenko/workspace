@@ -90,6 +90,13 @@ func TestPairResponseAcceptsValidNetworkHistoryBeyondOneMiB(t *testing.T) {
 	}
 }
 
+func TestPairingFailureEscapesPeerControlCharacters(t *testing.T) {
+	err := pairingFailure("rejected\nforged\x1b]0;owned\a")
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Fatalf("pairing failure contains peer control characters: %q", err)
+	}
+}
+
 func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 	archStore, archIdentity := networkTestStore(t)
 	asahiStore, asahiIdentity := networkTestStore(t)

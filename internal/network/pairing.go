@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/device"
@@ -356,7 +357,7 @@ func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	if !challenge.Accepted {
-		return PairResult{}, fmt.Errorf("pairing failed: %s", challenge.Error)
+		return PairResult{}, pairingFailure(challenge.Error)
 	}
 	confirmed, err := options.Confirm(peerName, authentication)
 	if err != nil {
@@ -370,7 +371,7 @@ func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, err
 	}
 	if !response.Accepted {
-		return PairResult{}, fmt.Errorf("pairing failed: %s", response.Error)
+		return PairResult{}, pairingFailure(response.Error)
 	}
 	state, err := options.Store.ImportNetwork(ctx, response.Network, device.IDForPublicKey(peerKey))
 	if err != nil {
@@ -381,6 +382,22 @@ func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 		return PairResult{}, errors.New("inviting device is missing from network state")
 	}
 	return PairResult{Peer: peer}, nil
+}
+
+func pairingFailure(reason string) error {
+	return fmt.Errorf("pairing failed: %s", safePeerText(reason))
+}
+
+func safePeerText(value string) string {
+	var escaped strings.Builder
+	for _, character := range value {
+		if character <= 0x1f || character == 0x7f || character >= 0x80 && character <= 0x9f {
+			fmt.Fprintf(&escaped, "\\x%02X", character)
+			continue
+		}
+		escaped.WriteRune(character)
+	}
+	return escaped.String()
 }
 
 func requireUnpairedStore(ctx context.Context, store *registry.Store) error {

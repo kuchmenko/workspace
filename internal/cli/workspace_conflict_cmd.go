@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/spf13/cobra"
@@ -30,14 +31,20 @@ func newWorkspaceConflictsCmd() *cobra.Command {
 				encoder.SetIndent("", "  ")
 				return encoder.Encode(conflicts)
 			}
-			for _, conflict := range conflicts {
-				fmt.Fprintf(command.OutOrStdout(), "%s\tbase=%s\tleft=%s\tright=%s\n", conflict.Path, displayJSON(conflict.Base), displayJSON(conflict.Left), displayJSON(conflict.Right))
-			}
-			return nil
+			return writeWorkspaceConflicts(command.OutOrStdout(), conflicts)
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "output JSON")
 	return command
+}
+
+func writeWorkspaceConflicts(writer io.Writer, conflicts []registry.Conflict) error {
+	for _, conflict := range conflicts {
+		if _, err := fmt.Fprintf(writer, "%s\tbase=%s\tleft=%s\tright=%s\n", terminalText(conflict.Path), displayJSON(conflict.Base), displayJSON(conflict.Left), displayJSON(conflict.Right)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func newWorkspaceResolveCmd() *cobra.Command {
