@@ -430,24 +430,36 @@ func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store
 	var results []peernetwork.SyncResult
 	var failures []string
 	for _, workspace := range workspaces {
-		for _, target := range state.Devices {
-			if err = ctx.Err(); err != nil {
-				return nil, nil, err
-			}
-			if target.ID == identity.ID() || !target.Active {
-				continue
-			}
-			if _, allowed := store.ExportFor(ctx, workspace.Name, target.ID); allowed != nil {
-				continue
-			}
-			result, failure := synchronizeWorkspacePeerContext(ctx, store, identity, name, workspace.Name, target, endpoints[target.ID])
-			if err = ctx.Err(); err != nil {
-				return nil, nil, err
-			}
-			results = append(results, result)
-			if failure != "" {
-				failures = append(failures, failure)
-			}
+		workspaceResults, workspaceFailures, syncErr := synchronizeWorkspaceDevicesContext(ctx, store, identity, name, workspace.Name, state.Devices, endpoints)
+		if syncErr != nil {
+			return nil, nil, syncErr
+		}
+		results = append(results, workspaceResults...)
+		failures = append(failures, workspaceFailures...)
+	}
+	return results, failures, nil
+}
+
+func synchronizeWorkspaceDevicesContext(ctx context.Context, store *registry.Store, identity device.Identity, name, workspace string, devices []registry.DeviceRecord, endpoints map[string]string) ([]peernetwork.SyncResult, []string, error) {
+	var results []peernetwork.SyncResult
+	var failures []string
+	for _, target := range devices {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if target.ID == identity.ID() || !target.Active {
+			continue
+		}
+		if _, allowed := store.ExportFor(ctx, workspace, target.ID); allowed != nil {
+			continue
+		}
+		result, failure := synchronizeWorkspacePeerContext(ctx, store, identity, name, workspace, target, endpoints[target.ID])
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		results = append(results, result)
+		if failure != "" {
+			failures = append(failures, failure)
 		}
 	}
 	return results, failures, nil

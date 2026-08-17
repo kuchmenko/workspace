@@ -76,24 +76,28 @@ func (identity Identity) Signer() crypto.Signer {
 }
 
 func writePrivateKey(path string, private []byte) error {
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	directoryPath := filepath.Dir(path)
+	file, err := os.CreateTemp(directoryPath, ".identity-*")
 	if err != nil {
 		return err
 	}
+	temporaryPath := file.Name()
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if _, err = file.Write(private); err != nil {
 		_ = file.Close()
-		_ = os.Remove(path)
 		return err
 	}
 	if err = file.Sync(); err != nil {
 		_ = file.Close()
-		_ = os.Remove(path)
 		return err
 	}
 	if err = file.Close(); err != nil {
 		return err
 	}
-	directory, err := os.Open(filepath.Dir(path))
+	if err = os.Link(temporaryPath, path); err != nil {
+		return err
+	}
+	directory, err := os.Open(directoryPath)
 	if err != nil {
 		return err
 	}

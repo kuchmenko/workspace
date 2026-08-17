@@ -88,7 +88,7 @@ func syncWorkspace(ctx context.Context, store *registry.Store, peerID string, in
 		if !errors.Is(err, registry.ErrWorkspaceAccessConflict) {
 			return err
 		}
-		after, err = store.LoadByName(ctx, name)
+		_, err = store.LoadByName(ctx, name)
 		if err != nil {
 			return err
 		}

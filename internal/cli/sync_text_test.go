@@ -210,7 +210,7 @@ func TestWriteTopLevelWorkspaceSyncContinuesOfflineAndRejectsInvalidHistory(t *t
 	if err = writeTopLevelWorkspaceSync(&stdout, &stderr, results, nil); err != nil {
 		t.Fatal(err)
 	}
-	if strings.ContainsAny(stdout.String()+stderr.String(), "\x1b\x9b") || !strings.Contains(stdout.String(), `asahi\x1B[2J\x9B0m`) {
+	if strings.ContainsAny(stdout.String()+stderr.String(), "\x1b\u009b") || !strings.Contains(stdout.String(), `asahi\x1B[2J\x9B0m`) {
 		t.Fatalf("unsafe workspace sync output stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }

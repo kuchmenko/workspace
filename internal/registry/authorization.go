@@ -423,20 +423,29 @@ func authorizeProofs(revision Revision, policy AccessPolicy, devices map[string]
 		if !known || string(record.PublicKey) != string(proof.PublicKey) {
 			return errors.New("revision author is not a known network device")
 		}
-		if revision.Kind == "access-recovery" {
-			if recoveryAuthorizedByNetwork(network, revision.ID, revision.NetworkHead, proof.DeviceID, policy) {
-				continue
-			}
-			return errors.New("workspace admin recovery is not signed by a known network admin")
+		if err := authorizeProof(revision, proof.DeviceID, policy, network); err != nil {
+			return err
 		}
-		role := policy.Role(proof.DeviceID, true)
-		accessChange := revision.Kind == "access" || revision.Kind == "access-resolution"
-		if accessChange && role != WorkspaceAdmin {
+	}
+	return nil
+}
+
+func authorizeProof(revision Revision, deviceID string, policy AccessPolicy, network NetworkBundle) error {
+	if revision.Kind == "access-recovery" {
+		if recoveryAuthorizedByNetwork(network, revision.ID, revision.NetworkHead, deviceID, policy) {
+			return nil
+		}
+		return errors.New("workspace admin recovery is not signed by a known network admin")
+	}
+	role := policy.Role(deviceID, true)
+	if revision.Kind == "access" || revision.Kind == "access-resolution" {
+		if role != WorkspaceAdmin {
 			return errors.New("access revision is not signed by a workspace admin")
 		}
-		if !accessChange && role != WorkspaceAdmin && role != WorkspaceWriter {
-			return errors.New("revision is not signed by a workspace writer")
-		}
+		return nil
+	}
+	if role != WorkspaceAdmin && role != WorkspaceWriter {
+		return errors.New("revision is not signed by a workspace writer")
 	}
 	return nil
 }
@@ -446,20 +455,26 @@ func recoveryAuthorizedByNetwork(bundle NetworkBundle, revisionID, authorityHead
 	if err != nil || !networkHeadSelectedBy(bundle, current, authorityHead) {
 		return false
 	}
-	ratified := false
-	for _, event := range bundle.Events {
-		if event.Action == "recover" && len(event.Parents) == 1 && event.Parents[0] == authorityHead && event.SignerID == deviceID && containsString(event.RecoveryIDs, revisionID) && networkHeadSelectedBy(bundle, current, event.ID) {
-			ratified = true
-			break
-		}
-	}
-	if !ratified {
+	if !networkRecoveryRatified(bundle, current, revisionID, authorityHead, deviceID) {
 		return false
 	}
 	historical, err := networkBundleAtHead(bundle, authorityHead)
 	if err != nil {
 		return false
 	}
+	return recoveryAuthorizedByHistoricalNetwork(historical, deviceID, policy)
+}
+
+func networkRecoveryRatified(bundle NetworkBundle, current, revisionID, authorityHead, deviceID string) bool {
+	for _, event := range bundle.Events {
+		if event.Action == "recover" && len(event.Parents) == 1 && event.Parents[0] == authorityHead && event.SignerID == deviceID && containsString(event.RecoveryIDs, revisionID) && networkHeadSelectedBy(bundle, current, event.ID) {
+			return true
+		}
+	}
+	return false
+}
+
+func recoveryAuthorizedByHistoricalNetwork(historical NetworkBundle, deviceID string, policy AccessPolicy) bool {
 	analysis, err := analyzeNetwork(historical)
 	if err != nil || analysis.conflict != nil {
 		return false

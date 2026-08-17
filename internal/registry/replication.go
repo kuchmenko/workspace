@@ -183,18 +183,9 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 	if err != nil {
 		return nil, err
 	}
-	_, accessConflicted, conflictErr := accessConflictBase(tx, base.workspaceID)
-	if conflictErr != nil {
-		return nil, conflictErr
-	}
-	if accessConflicted {
-		reduced, reduceErr := reduceHeads(tx, append(localHeads, remoteHeads...))
-		if reduceErr != nil {
-			return nil, reduceErr
-		}
-		if len(reduced) > 1 {
-			return nil, persistAccessDivergence(ctx, tx, name, base.workspaceID, reduced)
-		}
+	accessConflicted, err := handleExistingAccessConflict(ctx, tx, name, base.workspaceID, localHeads, remoteHeads)
+	if err != nil {
+		return nil, err
 	}
 	role := integrationRole(policy, store.identity.ID(), authorize, active)
 	head, state, conflicts, heads, err := store.integrateHeadSet(tx, bundle, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
@@ -208,20 +199,41 @@ func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bun
 	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
 		return nil, err
 	}
-	if accessConflicted && len(heads) == 1 {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_access_conflicts WHERE workspace_id=?`, base.workspaceID); err != nil {
-			return nil, err
-		}
-	}
-	if authorize {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? AND epoch<=?`, bundle.WorkspaceID, sourceID, bundle.Epoch); err != nil {
-			return nil, err
-		}
+	if err = clearResolvedIncomingState(ctx, tx, bundle, sourceID, authorize, accessConflicted, heads); err != nil {
+		return nil, err
 	}
 	if err = commitIncoming(ctx, tx, base.workspaceID, heads); err != nil {
 		return nil, err
 	}
 	return conflicts, nil
+}
+
+func handleExistingAccessConflict(ctx context.Context, tx *sql.Tx, name, workspaceID string, localHeads, remoteHeads []string) (bool, error) {
+	_, conflicted, err := accessConflictBase(tx, workspaceID)
+	if err != nil || !conflicted {
+		return conflicted, err
+	}
+	reduced, err := reduceHeads(tx, append(localHeads, remoteHeads...))
+	if err != nil {
+		return true, err
+	}
+	if len(reduced) > 1 {
+		return true, persistAccessDivergence(ctx, tx, name, workspaceID, reduced)
+	}
+	return true, nil
+}
+
+func clearResolvedIncomingState(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID string, authorize, accessConflicted bool, heads []string) error {
+	if accessConflicted && len(heads) == 1 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_access_conflicts WHERE workspace_id=?`, bundle.WorkspaceID); err != nil {
+			return err
+		}
+	}
+	if authorize {
+		_, err := tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? AND epoch<=?`, bundle.WorkspaceID, sourceID, bundle.Epoch)
+		return err
+	}
+	return nil
 }
 
 func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool) (incomingBase, AccessPolicy, error) {
@@ -410,34 +422,9 @@ func (store *Store) integrateHeads(tx *sql.Tx, bundle Bundle, workspaceID string
 }
 
 func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
-	base, found, err := commonAncestor(tx, localHead, remoteHead)
+	base, leftPolicy, err := mergeBaseAndPolicy(tx, localHead, remoteHead)
 	if err != nil {
 		return "", nil, nil, err
-	}
-	if !found {
-		return "", nil, nil, errors.New("divergent revisions have no common ancestor")
-	}
-	localResolutions, err := revisionKindIDsBetween(tx, localHead, base, "access-resolution")
-	if err != nil {
-		return "", nil, nil, err
-	}
-	remoteResolutions, err := revisionKindIDsBetween(tx, remoteHead, base, "access-resolution")
-	if err != nil {
-		return "", nil, nil, err
-	}
-	if !equalStringSets(localResolutions, remoteResolutions) {
-		return "", nil, nil, errors.New("stale access branch cannot reopen a resolved conflict")
-	}
-	leftPolicy, err := policyAtTx(tx, localHead)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	rightPolicy, err := policyAtTx(tx, remoteHead)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	if !equalPolicy(leftPolicy, rightPolicy) {
-		return "", nil, nil, accessDivergence{base: base, heads: []string{localHead, remoteHead}}
 	}
 	parents := []string{localHead, remoteHead}
 	sort.Strings(parents)
@@ -449,15 +436,7 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	if err != nil {
 		return "", nil, nil, err
 	}
-	leftConflicts, err := loadRevisionConflicts(tx, parents[0])
-	if err != nil {
-		return "", nil, nil, err
-	}
-	rightConflicts, err := loadRevisionConflicts(tx, parents[1])
-	if err != nil {
-		return "", nil, nil, err
-	}
-	conflicts, err = combineConflicts(leftConflicts, rightConflicts, conflicts)
+	conflicts, err = mergeRevisionConflicts(tx, parents, conflicts)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -470,6 +449,51 @@ func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, loca
 	}
 	state, err := decodeSnapshot(mergedBody)
 	return merged.ID, state, conflicts, err
+}
+
+func mergeBaseAndPolicy(tx *sql.Tx, localHead, remoteHead string) (string, AccessPolicy, error) {
+	base, found, err := commonAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !found {
+		return "", AccessPolicy{}, errors.New("divergent revisions have no common ancestor")
+	}
+	localResolutions, err := revisionKindIDsBetween(tx, localHead, base, "access-resolution")
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	remoteResolutions, err := revisionKindIDsBetween(tx, remoteHead, base, "access-resolution")
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !equalStringSets(localResolutions, remoteResolutions) {
+		return "", AccessPolicy{}, errors.New("stale access branch cannot reopen a resolved conflict")
+	}
+	leftPolicy, err := policyAtTx(tx, localHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	rightPolicy, err := policyAtTx(tx, remoteHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !equalPolicy(leftPolicy, rightPolicy) {
+		return "", AccessPolicy{}, accessDivergence{base: base, heads: []string{localHead, remoteHead}}
+	}
+	return base, leftPolicy, nil
+}
+
+func mergeRevisionConflicts(tx *sql.Tx, parents []string, conflicts []Conflict) ([]Conflict, error) {
+	left, err := loadRevisionConflicts(tx, parents[0])
+	if err != nil {
+		return nil, err
+	}
+	right, err := loadRevisionConflicts(tx, parents[1])
+	if err != nil {
+		return nil, err
+	}
+	return combineConflicts(left, right, conflicts)
 }
 
 func revisionKindIDsBetween(tx *sql.Tx, head, base, kind string) (map[string]bool, error) {
@@ -514,10 +538,6 @@ func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []by
 	}
 	rightBody, err := loadRevisionSnapshot(tx, parents[1])
 	return baseBody, leftBody, rightBody, err
-}
-
-func (store *Store) loadRevisions(ctx context.Context, workspaceID string) ([]Revision, error) {
-	return loadRevisionsFrom(ctx, store.db, workspaceID)
 }
 
 func loadRevisionsFrom(ctx context.Context, reader sqlReader, workspaceID string) ([]Revision, error) {
@@ -569,10 +589,6 @@ func scanRevisions(rows *sql.Rows, workspaceID string) ([]Revision, error) {
 	return revisions, rows.Err()
 }
 
-func (store *Store) loadParents(ctx context.Context, revisionID string) ([]string, error) {
-	return loadParentsFrom(ctx, store.db, revisionID)
-}
-
 func loadParentsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]string, error) {
 	rows, err := reader.QueryContext(ctx, `SELECT parent_id FROM revision_parents WHERE revision_id=? ORDER BY position`, revisionID)
 	if err != nil {
@@ -588,10 +604,6 @@ func loadParentsFrom(ctx context.Context, reader sqlReader, revisionID string) (
 		parents = append(parents, parent)
 	}
 	return parents, rows.Err()
-}
-
-func (store *Store) loadProofs(ctx context.Context, revisionID string) ([]Proof, error) {
-	return loadProofsFrom(ctx, store.db, revisionID)
 }
 
 func loadProofsFrom(ctx context.Context, reader sqlReader, revisionID string) ([]Proof, error) {

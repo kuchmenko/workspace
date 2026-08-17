@@ -241,48 +241,21 @@ func (store *Store) persistNetwork(ctx context.Context, bundle NetworkBundle, al
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var existing string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM networks LIMIT 1`).Scan(&existing)
-	if err == nil && existing != bundle.ID {
-		return errors.New("device already belongs to another network")
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err = validateNetworkPersistence(ctx, tx, bundle.ID, allowNew); err != nil {
 		return err
-	}
-	if errors.Is(err, sql.ErrNoRows) && !allowNew {
-		return errors.New("device does not belong to a network")
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO networks(id,epoch) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET epoch=MAX(epoch,excluded.epoch)`, bundle.ID, bundle.Epoch); err != nil {
 		return err
 	}
-	for _, event := range bundle.Events {
-		if err = insertNetworkEvent(ctx, tx, event); err != nil {
-			return err
-		}
+	if err = insertNetworkEvents(ctx, tx, bundle.Events); err != nil {
+		return err
 	}
-	current, err := exportNetworkTx(ctx, tx, bundle.ID)
+	current, analysis, err := analyzePersistedNetwork(ctx, tx, bundle.ID)
 	if err != nil {
 		return err
 	}
-	analysis, err := analyzeNetwork(current)
-	if err != nil {
+	if err = store.reconcilePersistedNetwork(ctx, tx, current, analysis); err != nil {
 		return err
-	}
-	if err = persistNetworkConflict(ctx, tx, analysis); err != nil {
-		return err
-	}
-	if analysis.conflict == nil {
-		networkHead, headErr := currentCausalNetworkHead(current)
-		if headErr != nil {
-			return headErr
-		}
-		var recoveryIDs []string
-		if err = store.reconcileNetworkAccessTx(ctx, tx, analysis.state, networkHead, &recoveryIDs); err != nil {
-			return err
-		}
-		if err = store.ratifyRecoveriesTx(ctx, tx, bundle.ID, networkHead, current.Epoch, recoveryIDs); err != nil {
-			return err
-		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
@@ -291,6 +264,60 @@ func (store *Store) persistNetwork(ctx context.Context, bundle NetworkBundle, al
 		return ErrNetworkConflict
 	}
 	return nil
+}
+
+func validateNetworkPersistence(ctx context.Context, tx *sql.Tx, networkID string, allowNew bool) error {
+	var existing string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM networks LIMIT 1`).Scan(&existing)
+	if err == nil && existing != networkID {
+		return errors.New("device already belongs to another network")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if errors.Is(err, sql.ErrNoRows) && !allowNew {
+		return errors.New("device does not belong to a network")
+	}
+	return nil
+}
+
+func insertNetworkEvents(ctx context.Context, tx *sql.Tx, events []NetworkEvent) error {
+	for _, event := range events {
+		if err := insertNetworkEvent(ctx, tx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func analyzePersistedNetwork(ctx context.Context, tx *sql.Tx, networkID string) (NetworkBundle, networkAnalysis, error) {
+	current, err := exportNetworkTx(ctx, tx, networkID)
+	if err != nil {
+		return NetworkBundle{}, networkAnalysis{}, err
+	}
+	analysis, err := analyzeNetwork(current)
+	if err != nil {
+		return NetworkBundle{}, networkAnalysis{}, err
+	}
+	return current, analysis, nil
+}
+
+func (store *Store) reconcilePersistedNetwork(ctx context.Context, tx *sql.Tx, bundle NetworkBundle, analysis networkAnalysis) error {
+	if err := persistNetworkConflict(ctx, tx, analysis); err != nil {
+		return err
+	}
+	if analysis.conflict != nil {
+		return nil
+	}
+	networkHead, err := currentCausalNetworkHead(bundle)
+	if err != nil {
+		return err
+	}
+	var recoveryIDs []string
+	if err = store.reconcileNetworkAccessTx(ctx, tx, analysis.state, networkHead, &recoveryIDs); err != nil {
+		return err
+	}
+	return store.ratifyRecoveriesTx(ctx, tx, bundle.ID, networkHead, bundle.Epoch, recoveryIDs)
 }
 
 func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey ed25519.PublicKey, role string) (NetworkState, error) {

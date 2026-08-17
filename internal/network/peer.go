@@ -283,29 +283,10 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 }
 
 func servePeerConnection(store *registry.Store, self registry.DeviceRecord, connection net.Conn) {
-	var request peerRequest
 	encoder := json.NewEncoder(connection)
-	if err := decodeLimited(connection, maxPeerMessageBytes, &request); err != nil {
-		_ = encoder.Encode(peerResponse{Error: err.Error()})
-		return
-	}
-	if request.Version != 1 {
-		_ = encoder.Encode(peerResponse{Error: "unsupported peer request"})
-		return
-	}
-	peerID, err := authenticatedPeerID(connection)
+	request, peerID, state, err := receivePeerRequest(store, connection)
 	if err != nil {
 		_ = encoder.Encode(peerResponse{Error: err.Error()})
-		return
-	}
-	state, err := store.Network(context.Background())
-	if err != nil {
-		_ = encoder.Encode(peerResponse{Error: err.Error()})
-		return
-	}
-	_, known := deviceByID(state.Devices, peerID)
-	if !known {
-		_ = encoder.Encode(peerResponse{Error: "peer is not a known network device"})
 		return
 	}
 	bundle, err := store.ExportNetwork(context.Background())
@@ -351,6 +332,28 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		response.Error = err.Error()
 	}
 	_ = encoder.Encode(response)
+}
+
+func receivePeerRequest(store *registry.Store, connection net.Conn) (peerRequest, string, registry.NetworkState, error) {
+	var request peerRequest
+	if err := decodeLimited(connection, maxPeerMessageBytes, &request); err != nil {
+		return peerRequest{}, "", registry.NetworkState{}, err
+	}
+	if request.Version != 1 {
+		return peerRequest{}, "", registry.NetworkState{}, errors.New("unsupported peer request")
+	}
+	peerID, err := authenticatedPeerID(connection)
+	if err != nil {
+		return peerRequest{}, "", registry.NetworkState{}, err
+	}
+	state, err := store.Network(context.Background())
+	if err != nil {
+		return peerRequest{}, "", registry.NetworkState{}, err
+	}
+	if _, known := deviceByID(state.Devices, peerID); !known {
+		return peerRequest{}, "", registry.NetworkState{}, errors.New("peer is not a known network device")
+	}
+	return request, peerID, state, nil
 }
 
 func authenticatedPeerID(connection net.Conn) (string, error) {

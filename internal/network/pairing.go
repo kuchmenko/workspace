@@ -129,24 +129,7 @@ func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Certificate, code string, options PairOptions) (PairResult, error) {
 	connections := make(chan net.Conn)
 	acceptErrors := make(chan error, 1)
-	go func() {
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				select {
-				case acceptErrors <- err:
-				default:
-				}
-				return
-			}
-			select {
-			case connections <- connection:
-			case <-ctx.Done():
-				_ = connection.Close()
-				return
-			}
-		}
-	}()
+	go acceptPairConnections(ctx, listener, connections, acceptErrors)
 	results := make(chan pairAttempt, maxPairConnections)
 	semaphore := make(chan struct{}, maxPairConnections)
 	failures := map[string]int{}
@@ -160,27 +143,54 @@ func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Cer
 			}
 			return PairResult{}, err
 		case connection := <-connections:
-			source := pairSource(connection.RemoteAddr())
-			if failures[source] >= maxPairCodeFailures {
-				_ = connection.Close()
-				continue
-			}
-			select {
-			case semaphore <- struct{}{}:
-				go runPairAttempt(ctx, connection, cert, code, options, semaphore, results, source)
-			default:
-				_ = connection.Close()
-			}
+			startPairAttempt(ctx, connection, cert, code, options, semaphore, results, failures)
 		case attempt := <-results:
-			if errors.Is(attempt.err, errInvalidPairCode) {
-				failures[attempt.source]++
-			}
-			if attempt.retry {
+			if retryPairAttempt(attempt, failures) {
 				continue
 			}
 			return attempt.result, attempt.err
 		}
 	}
+}
+
+func acceptPairConnections(ctx context.Context, listener net.Listener, connections chan<- net.Conn, acceptErrors chan<- error) {
+	for {
+		connection, err := listener.Accept()
+		if err != nil {
+			select {
+			case acceptErrors <- err:
+			default:
+			}
+			return
+		}
+		select {
+		case connections <- connection:
+		case <-ctx.Done():
+			_ = connection.Close()
+			return
+		}
+	}
+}
+
+func startPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore chan struct{}, results chan<- pairAttempt, failures map[string]int) {
+	source := pairSource(connection.RemoteAddr())
+	if failures[source] >= maxPairCodeFailures {
+		_ = connection.Close()
+		return
+	}
+	select {
+	case semaphore <- struct{}{}:
+		go runPairAttempt(ctx, connection, cert, code, options, semaphore, results, source)
+	default:
+		_ = connection.Close()
+	}
+}
+
+func retryPairAttempt(attempt pairAttempt, failures map[string]int) bool {
+	if errors.Is(attempt.err, errInvalidPairCode) {
+		failures[attempt.source]++
+	}
+	return attempt.retry
 }
 
 func runPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore chan struct{}, results chan<- pairAttempt, source string) {

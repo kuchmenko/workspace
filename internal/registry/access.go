@@ -432,109 +432,142 @@ func reconcilePolicy(policy AccessPolicy, active map[string]bool) (AccessPolicy,
 	return policy, changed
 }
 
+type networkAccessCandidate struct {
+	name, workspaceID, head string
+	epoch, revision         int64
+}
+
 func (store *Store) reconcileNetworkAccessTx(ctx context.Context, tx *sql.Tx, network NetworkState, networkHead string, recoveryIDs *[]string) error {
+	active, networkAdmin := store.networkAccessAuthority(network)
+	candidates, err := loadNetworkAccessCandidates(ctx, tx)
+	if err != nil {
+		return err
+	}
+	for _, item := range candidates {
+		recoveryID, reconcileErr := store.reconcileNetworkAccessCandidate(ctx, tx, item, active, networkAdmin, networkHead)
+		if reconcileErr != nil {
+			return reconcileErr
+		}
+		if recoveryID != "" {
+			*recoveryIDs = append(*recoveryIDs, recoveryID)
+		}
+	}
+	return nil
+}
+
+func (store *Store) networkAccessAuthority(network NetworkState) (map[string]bool, bool) {
 	active := make(map[string]bool, len(network.Devices))
 	networkAdmin := false
 	for _, record := range network.Devices {
 		active[record.ID] = record.Active
-		if record.ID == store.identity.ID() && record.Active && record.Role == NetworkAdmin {
-			networkAdmin = true
-		}
+		networkAdmin = networkAdmin || record.ID == store.identity.ID() && record.Active && record.Role == NetworkAdmin
 	}
+	return active, networkAdmin
+}
+
+func loadNetworkAccessCandidates(ctx context.Context, tx *sql.Tx) ([]networkAccessCandidate, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT p.name,p.workspace_id,p.epoch,p.head_id,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name ORDER BY p.name`)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	type candidate struct {
-		name, workspaceID, head string
-		epoch, revision         int64
-	}
-	var candidates []candidate
+	defer func() { _ = rows.Close() }()
+	var candidates []networkAccessCandidate
 	for rows.Next() {
-		var item candidate
+		var item networkAccessCandidate
 		if err = rows.Scan(&item.name, &item.workspaceID, &item.epoch, &item.head, &item.revision); err != nil {
-			_ = rows.Close()
-			return err
+			return nil, err
 		}
 		candidates = append(candidates, item)
 	}
-	if err = rows.Close(); err != nil {
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
+func (store *Store) reconcileNetworkAccessCandidate(ctx context.Context, tx *sql.Tx, item networkAccessCandidate, active map[string]bool, networkAdmin bool, networkHead string) (string, error) {
+	if _, conflicted, err := accessConflictBase(tx, item.workspaceID); err != nil || conflicted {
+		return "", err
+	}
+	policy, err := policyAtTx(tx, item.head)
+	if err != nil {
+		return "", err
+	}
+	previous := cloneAccessPolicy(policy)
+	kind := "access"
+	if !hasActiveWorkspaceAdmin(policy, active) {
+		if !networkAdmin {
+			return "", nil
+		}
+		policy.Roles[store.identity.ID()] = WorkspaceAdmin
+		kind = "access-recovery"
+	} else if policy.Role(store.identity.ID(), active[store.identity.ID()]) != WorkspaceAdmin {
+		return "", nil
+	}
+	policy, changed := reconcilePolicy(policy, active)
+	if !changed && kind != "access-recovery" {
+		return "", nil
+	}
+	revision, err := store.makeNetworkAccessRevision(tx, item, previous, policy, kind, networkHead)
+	if err != nil {
+		return "", err
+	}
+	if err = persistNetworkAccessRevision(ctx, tx, item, revision); err != nil {
+		return "", err
+	}
+	if kind == "access-recovery" {
+		return revision.ID, nil
+	}
+	return "", nil
+}
+
+func (store *Store) makeNetworkAccessRevision(tx *sql.Tx, item networkAccessCandidate, previous, policy AccessPolicy, kind, networkHead string) (Revision, error) {
+	snapshot, err := loadRevisionSnapshot(tx, item.head)
+	if err != nil {
+		return Revision{}, err
+	}
+	conflicts, err := loadRevisionConflicts(tx, item.head)
+	if err != nil {
+		return Revision{}, err
+	}
+	epoch := item.epoch
+	authorityHead := ""
+	if kind == "access-recovery" {
+		epoch++
+		authorityHead = networkHead
+	} else if policyRestricts(previous, policy) {
+		epoch++
+	}
+	return makeRevisionAtNetworkHead(item.workspaceID, epoch, kind, []string{item.head}, snapshot, conflicts, policy, authorityHead, store.identity)
+}
+
+func persistNetworkAccessRevision(ctx context.Context, tx *sql.Tx, item networkAccessCandidate, revision Revision) error {
+	if err := insertRevision(tx, revision); err != nil {
 		return err
 	}
-	for _, item := range candidates {
-		if _, conflicted, conflictErr := accessConflictBase(tx, item.workspaceID); conflictErr != nil {
-			return conflictErr
-		} else if conflicted {
-			continue
-		}
-		policy, policyErr := policyAtTx(tx, item.head)
-		if policyErr != nil {
-			return policyErr
-		}
-		previous := cloneAccessPolicy(policy)
-		kind := "access"
-		if !hasActiveWorkspaceAdmin(policy, active) {
-			if !networkAdmin {
-				continue
-			}
-			policy.Roles[store.identity.ID()] = WorkspaceAdmin
-			kind = "access-recovery"
-		} else if policy.Role(store.identity.ID(), active[store.identity.ID()]) != WorkspaceAdmin {
-			continue
-		}
-		policy, changed := reconcilePolicy(policy, active)
-		if kind == "access-recovery" {
-			changed = true
-		}
-		if !changed {
-			continue
-		}
-		snapshot, loadErr := loadRevisionSnapshot(tx, item.head)
-		if loadErr != nil {
-			return loadErr
-		}
-		conflicts, loadErr := loadRevisionConflicts(tx, item.head)
-		if loadErr != nil {
-			return loadErr
-		}
-		epoch := item.epoch
-		if kind == "access-recovery" || policyRestricts(previous, policy) {
-			epoch++
-		}
-		authorityHead := ""
-		if kind == "access-recovery" {
-			authorityHead = networkHead
-		}
-		revision, makeErr := makeRevisionAtNetworkHead(item.workspaceID, epoch, kind, []string{item.head}, snapshot, conflicts, policy, authorityHead, store.identity)
-		if makeErr != nil {
-			return makeErr
-		}
-		if makeErr = insertRevision(tx, revision); makeErr != nil {
-			return makeErr
-		}
-		if kind == "access-recovery" {
-			*recoveryIDs = append(*recoveryIDs, revision.ID)
-		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, revision.ID, item.name, item.head)
-		if updateErr != nil {
-			return updateErr
-		}
-		if affected, _ := result.RowsAffected(); affected != 1 {
-			return errors.New("workspace changed during network access reconciliation")
-		}
-		if updateErr = replaceHeads(ctx, tx, item.workspaceID, []string{revision.ID}); updateErr != nil {
-			return updateErr
-		}
-		if updateErr = replaceConflicts(ctx, tx, item.workspaceID, revision.ID, conflicts); updateErr != nil {
-			return updateErr
-		}
-		result, updateErr = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, item.name, item.revision)
-		if updateErr != nil {
-			return updateErr
-		}
-		if affected, _ := result.RowsAffected(); affected != 1 {
-			return errors.New("workspace changed during network access reconciliation")
-		}
+	result, err := tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, revision.Epoch, revision.ID, item.name, item.head)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during network access reconciliation")
+	}
+	if err = replaceHeads(ctx, tx, item.workspaceID, []string{revision.ID}); err != nil {
+		return err
+	}
+	conflicts, err := loadRevisionConflicts(tx, revision.ID)
+	if err != nil {
+		return err
+	}
+	if err = replaceConflicts(ctx, tx, item.workspaceID, revision.ID, conflicts); err != nil {
+		return err
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, item.name, item.revision)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during network access reconciliation")
 	}
 	return nil
 }

@@ -28,50 +28,69 @@ type networkAnalysis struct {
 	conflict *NetworkConflict
 }
 
+type networkHistory struct {
+	legacy   []NetworkEvent
+	causal   []NetworkEvent
+	maxEpoch int64
+}
+
 func analyzeNetwork(bundle NetworkBundle) (networkAnalysis, error) {
 	if len(bundle.Events) > 10000 {
 		return networkAnalysis{}, errors.New("network event limit exceeded")
 	}
-	legacy := make([]NetworkEvent, 0, len(bundle.Events))
-	causal := make([]NetworkEvent, 0, len(bundle.Events))
-	all := make(map[string]NetworkEvent, len(bundle.Events))
-	maxEpoch := int64(0)
-	for _, event := range bundle.Events {
-		if event.NetworkID != bundle.ID || event.Epoch < 1 || event.Epoch > bundle.Epoch {
-			return networkAnalysis{}, errors.New("network event scope is invalid")
-		}
-		if _, found := all[event.ID]; found {
-			return networkAnalysis{}, errors.New("network contains duplicate events")
-		}
-		if err := verifyNetworkEvent(event); err != nil {
-			return networkAnalysis{}, err
-		}
-		all[event.ID] = event
-		maxEpoch = max(maxEpoch, event.Epoch)
-		if event.Version == 0 {
-			legacy = append(legacy, event)
-		} else {
-			causal = append(causal, event)
-		}
-	}
-	if bundle.ID == "" || len(legacy) == 0 {
-		return networkAnalysis{}, errors.New("network bundle is incomplete")
-	}
-	if bundle.Epoch != maxEpoch {
-		return networkAnalysis{}, fmt.Errorf("network epoch %d does not match causal history %d", bundle.Epoch, maxEpoch)
-	}
-	legacyEpoch := int64(0)
-	for _, event := range legacy {
-		legacyEpoch = max(legacyEpoch, event.Epoch)
-	}
-	base, err := materializeLegacyNetwork(NetworkBundle{ID: bundle.ID, Epoch: legacyEpoch, Events: legacy})
+	history, err := validateNetworkHistory(bundle)
 	if err != nil {
 		return networkAnalysis{}, err
 	}
-	if len(causal) == 0 {
+	legacyEpoch := int64(0)
+	for _, event := range history.legacy {
+		legacyEpoch = max(legacyEpoch, event.Epoch)
+	}
+	base, err := materializeLegacyNetwork(NetworkBundle{ID: bundle.ID, Epoch: legacyEpoch, Events: history.legacy})
+	if err != nil {
+		return networkAnalysis{}, err
+	}
+	if len(history.causal) == 0 {
 		return networkAnalysis{state: base}, nil
 	}
-	legacyIDs := networkEventIDs(legacy)
+	states, events, children, err := materializeCausalNetwork(history.causal, base, networkEventIDs(history.legacy))
+	if err != nil {
+		return networkAnalysis{}, err
+	}
+	return analyzeNetworkHeads(bundle.ID, base, states, events, children)
+}
+
+func validateNetworkHistory(bundle NetworkBundle) (networkHistory, error) {
+	history := networkHistory{legacy: make([]NetworkEvent, 0, len(bundle.Events)), causal: make([]NetworkEvent, 0, len(bundle.Events))}
+	all := make(map[string]NetworkEvent, len(bundle.Events))
+	for _, event := range bundle.Events {
+		if event.NetworkID != bundle.ID || event.Epoch < 1 || event.Epoch > bundle.Epoch {
+			return networkHistory{}, errors.New("network event scope is invalid")
+		}
+		if _, found := all[event.ID]; found {
+			return networkHistory{}, errors.New("network contains duplicate events")
+		}
+		if err := verifyNetworkEvent(event); err != nil {
+			return networkHistory{}, err
+		}
+		all[event.ID] = event
+		history.maxEpoch = max(history.maxEpoch, event.Epoch)
+		if event.Version == 0 {
+			history.legacy = append(history.legacy, event)
+		} else {
+			history.causal = append(history.causal, event)
+		}
+	}
+	if bundle.ID == "" || len(history.legacy) == 0 {
+		return networkHistory{}, errors.New("network bundle is incomplete")
+	}
+	if bundle.Epoch != history.maxEpoch {
+		return networkHistory{}, fmt.Errorf("network epoch %d does not match causal history %d", bundle.Epoch, history.maxEpoch)
+	}
+	return history, nil
+}
+
+func materializeCausalNetwork(causal []NetworkEvent, base NetworkState, legacyIDs []string) (map[string]NetworkState, map[string]NetworkEvent, map[string]bool, error) {
 	states := make(map[string]NetworkState, len(causal))
 	events := make(map[string]NetworkEvent, len(causal))
 	children := make(map[string]bool, len(causal))
@@ -83,31 +102,43 @@ func analyzeNetwork(bundle NetworkBundle) (networkAnalysis, error) {
 	})
 	remaining := append([]NetworkEvent(nil), causal...)
 	for len(remaining) > 0 {
-		progress := false
-		next := remaining[:0]
-		for _, event := range remaining {
-			state, ready, applyErr := applyCausalNetworkEvent(event, base, legacyIDs, states, events)
-			if applyErr != nil {
-				return networkAnalysis{}, applyErr
-			}
-			if !ready {
-				next = append(next, event)
-				continue
-			}
-			states[event.ID] = state
-			events[event.ID] = event
-			for _, parent := range event.Parents {
-				if _, found := states[parent]; found {
-					children[parent] = true
-				}
-			}
-			progress = true
+		next, progress, err := applyCausalNetworkPass(remaining, base, legacyIDs, states, events, children)
+		if err != nil {
+			return nil, nil, nil, err
 		}
 		if !progress {
-			return networkAnalysis{}, errors.New("network causal history is incomplete or cyclic")
+			return nil, nil, nil, errors.New("network causal history is incomplete or cyclic")
 		}
 		remaining = next
 	}
+	return states, events, children, nil
+}
+
+func applyCausalNetworkPass(remaining []NetworkEvent, base NetworkState, legacyIDs []string, states map[string]NetworkState, events map[string]NetworkEvent, children map[string]bool) ([]NetworkEvent, bool, error) {
+	progress := false
+	next := remaining[:0]
+	for _, event := range remaining {
+		state, ready, err := applyCausalNetworkEvent(event, base, legacyIDs, states, events)
+		if err != nil {
+			return nil, false, err
+		}
+		if !ready {
+			next = append(next, event)
+			continue
+		}
+		states[event.ID] = state
+		events[event.ID] = event
+		for _, parent := range event.Parents {
+			if _, found := states[parent]; found {
+				children[parent] = true
+			}
+		}
+		progress = true
+	}
+	return next, progress, nil
+}
+
+func analyzeNetworkHeads(networkID string, base NetworkState, states map[string]NetworkState, events map[string]NetworkEvent, children map[string]bool) (networkAnalysis, error) {
 	var heads []string
 	for id := range states {
 		if !children[id] {
@@ -122,11 +153,11 @@ func analyzeNetwork(bundle NetworkBundle) (networkAnalysis, error) {
 	if !equalNetworkResolutionSets(heads, baseID, events) {
 		return networkAnalysis{}, errors.New("stale network branch cannot reopen a resolved membership conflict")
 	}
-	conflict := NetworkConflict{NetworkID: bundle.ID, Base: baseID}
+	conflict := NetworkConflict{NetworkID: networkID, Base: baseID}
 	for _, id := range heads {
 		conflict.Heads = append(conflict.Heads, events[id])
 	}
-	conflict.ID = networkConflictID(bundle.ID, baseID, heads)
+	conflict.ID = networkConflictID(networkID, baseID, heads)
 	return networkAnalysis{state: conflictState, conflict: &conflict}, nil
 }
 
@@ -134,73 +165,82 @@ func applyCausalNetworkEvent(event NetworkEvent, legacyBase NetworkState, legacy
 	if event.Version != 1 || len(event.Parents) == 0 || len(event.Parents) > 10000 || !sort.StringsAreSorted(event.Parents) || containsDuplicate(event.Parents) {
 		return NetworkState{}, false, errors.New("network event causal metadata is invalid")
 	}
-	parentsAreLegacy := equalStrings(event.Parents, legacyIDs)
 	if event.Action == "recover" {
-		if event.SelectedParent != "" || len(event.Parents) != 1 || len(event.RecoveryIDs) == 0 || len(event.RecoveryIDs) > maxRevisionItems || !sort.StringsAreSorted(event.RecoveryIDs) || containsDuplicate(event.RecoveryIDs) || event.DeviceID != "" || event.DeviceName != "" || len(event.DevicePublicKey) != 0 || event.Role != "" {
-			return NetworkState{}, false, errors.New("network recovery ratification is invalid")
-		}
-		parent, found := states[event.Parents[0]]
-		if !found {
-			return NetworkState{}, false, nil
-		}
-		if event.Epoch != parent.Epoch+1 {
-			return NetworkState{}, false, errors.New("network recovery epoch does not follow its parent")
-		}
-		if err := requireNetworkEventAdmin(parent, event); err != nil {
-			return NetworkState{}, false, err
-		}
-		result := cloneNetworkState(parent)
-		result.Epoch = event.Epoch
-		return result, true, nil
+		return applyNetworkRecoveryEvent(event, states)
 	}
 	if event.Action != "resolve" {
-		if len(event.RecoveryIDs) != 0 {
-			return NetworkState{}, false, errors.New("network membership change contains recovery metadata")
-		}
-		if event.SelectedParent != "" {
-			return NetworkState{}, false, errors.New("network change cannot select a resolution parent")
-		}
-		var parent NetworkState
-		switch {
-		case parentsAreLegacy:
-			parent = legacyBase
-		case len(event.Parents) == 1:
-			var found bool
-			parent, found = states[event.Parents[0]]
-			if !found {
-				return NetworkState{}, false, nil
-			}
-		default:
-			return NetworkState{}, false, errors.New("network change must descend from one causal frontier")
-		}
-		if event.Epoch != parent.Epoch+1 {
-			return NetworkState{}, false, errors.New("network event epoch does not follow its parent")
-		}
-		if err := requireNetworkEventAdmin(parent, event); err != nil {
-			return NetworkState{}, false, err
-		}
-		result := cloneNetworkState(parent)
-		result.Epoch = event.Epoch
-		devices := deviceMap(result.Devices)
-		if err := applyNetworkEvent(event, devices); err != nil {
-			return NetworkState{}, false, err
-		}
-		result.Devices = sortedDevices(devices)
-		if activeAdminCount(result.Devices) == 0 {
-			return NetworkState{}, false, errors.New("network change removes the last active admin")
-		}
-		return result, true, nil
+		return applyNetworkChangeEvent(event, legacyBase, legacyIDs, states)
 	}
-	if len(event.Parents) < 2 || event.SelectedParent == "" || len(event.RecoveryIDs) != 0 || !containsString(event.Parents, event.SelectedParent) || event.DeviceID != "" || event.DeviceName != "" || len(event.DevicePublicKey) != 0 || event.Role != "" {
+	return applyNetworkResolutionEvent(event, legacyBase, states, events)
+}
+
+func applyNetworkRecoveryEvent(event NetworkEvent, states map[string]NetworkState) (NetworkState, bool, error) {
+	if event.SelectedParent != "" || len(event.Parents) != 1 || len(event.RecoveryIDs) == 0 || len(event.RecoveryIDs) > maxRevisionItems || !sort.StringsAreSorted(event.RecoveryIDs) || containsDuplicate(event.RecoveryIDs) || event.DeviceID != "" || event.DeviceName != "" || len(event.DevicePublicKey) != 0 || event.Role != "" {
+		return NetworkState{}, false, errors.New("network recovery ratification is invalid")
+	}
+	parent, found := states[event.Parents[0]]
+	if !found {
+		return NetworkState{}, false, nil
+	}
+	if event.Epoch != parent.Epoch+1 {
+		return NetworkState{}, false, errors.New("network recovery epoch does not follow its parent")
+	}
+	if err := requireNetworkEventAdmin(parent, event); err != nil {
+		return NetworkState{}, false, err
+	}
+	result := cloneNetworkState(parent)
+	result.Epoch = event.Epoch
+	return result, true, nil
+}
+
+func applyNetworkChangeEvent(event NetworkEvent, legacyBase NetworkState, legacyIDs []string, states map[string]NetworkState) (NetworkState, bool, error) {
+	if len(event.RecoveryIDs) != 0 {
+		return NetworkState{}, false, errors.New("network membership change contains recovery metadata")
+	}
+	if event.SelectedParent != "" {
+		return NetworkState{}, false, errors.New("network change cannot select a resolution parent")
+	}
+	parent, ready, err := networkChangeParent(event, legacyBase, legacyIDs, states)
+	if err != nil || !ready {
+		return NetworkState{}, ready, err
+	}
+	if event.Epoch != parent.Epoch+1 {
+		return NetworkState{}, false, errors.New("network event epoch does not follow its parent")
+	}
+	if err = requireNetworkEventAdmin(parent, event); err != nil {
+		return NetworkState{}, false, err
+	}
+	result := cloneNetworkState(parent)
+	result.Epoch = event.Epoch
+	devices := deviceMap(result.Devices)
+	if err = applyNetworkEvent(event, devices); err != nil {
+		return NetworkState{}, false, err
+	}
+	result.Devices = sortedDevices(devices)
+	if activeAdminCount(result.Devices) == 0 {
+		return NetworkState{}, false, errors.New("network change removes the last active admin")
+	}
+	return result, true, nil
+}
+
+func networkChangeParent(event NetworkEvent, legacyBase NetworkState, legacyIDs []string, states map[string]NetworkState) (NetworkState, bool, error) {
+	if equalStrings(event.Parents, legacyIDs) {
+		return legacyBase, true, nil
+	}
+	if len(event.Parents) != 1 {
+		return NetworkState{}, false, errors.New("network change must descend from one causal frontier")
+	}
+	parent, found := states[event.Parents[0]]
+	return parent, found, nil
+}
+
+func applyNetworkResolutionEvent(event NetworkEvent, legacyBase NetworkState, states map[string]NetworkState, events map[string]NetworkEvent) (NetworkState, bool, error) {
+	if !validNetworkResolutionShape(event) {
 		return NetworkState{}, false, errors.New("network resolution is invalid")
 	}
-	parentStates := make([]NetworkState, 0, len(event.Parents))
-	for _, parentID := range event.Parents {
-		parent, found := states[parentID]
-		if !found {
-			return NetworkState{}, false, nil
-		}
-		parentStates = append(parentStates, parent)
+	maxEpoch, ready := networkParentEpoch(event.Parents, states)
+	if !ready {
+		return NetworkState{}, false, nil
 	}
 	baseID, authorizationState := commonNetworkAncestor(event.Parents, states, events, legacyBase)
 	if !equalNetworkResolutionSets(event.Parents, baseID, events) {
@@ -210,15 +250,27 @@ func applyCausalNetworkEvent(event NetworkEvent, legacyBase NetworkState, legacy
 		return NetworkState{}, false, err
 	}
 	result := cloneNetworkState(states[event.SelectedParent])
-	maxEpoch := int64(0)
-	for _, parent := range parentStates {
-		maxEpoch = max(maxEpoch, parent.Epoch)
-	}
 	if event.Epoch != maxEpoch+1 || activeAdminCount(result.Devices) == 0 {
 		return NetworkState{}, false, errors.New("network resolution epoch or selected state is invalid")
 	}
 	result.Epoch = event.Epoch
 	return result, true, nil
+}
+
+func validNetworkResolutionShape(event NetworkEvent) bool {
+	return len(event.Parents) >= 2 && event.SelectedParent != "" && len(event.RecoveryIDs) == 0 && containsString(event.Parents, event.SelectedParent) && event.DeviceID == "" && event.DeviceName == "" && len(event.DevicePublicKey) == 0 && event.Role == ""
+}
+
+func networkParentEpoch(parents []string, states map[string]NetworkState) (int64, bool) {
+	var epoch int64
+	for _, parentID := range parents {
+		parent, found := states[parentID]
+		if !found {
+			return 0, false
+		}
+		epoch = max(epoch, parent.Epoch)
+	}
+	return epoch, true
 }
 
 func commonNetworkAncestor(heads []string, states map[string]NetworkState, events map[string]NetworkEvent, legacy NetworkState) (string, NetworkState) {
@@ -551,10 +603,8 @@ func (store *Store) persistNetworkEvents(ctx context.Context, networkID string, 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, event := range events {
-		if err = insertNetworkEvent(ctx, tx, event); err != nil {
-			return err
-		}
+	if err = insertNetworkEvents(ctx, tx, events); err != nil {
+		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE networks SET epoch=MAX(epoch,?) WHERE id=?`, epoch, networkID)
 	if err != nil {
@@ -563,29 +613,12 @@ func (store *Store) persistNetworkEvents(ctx context.Context, networkID string, 
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return errors.New("network changed during membership update")
 	}
-	bundle, err := exportNetworkTx(ctx, tx, networkID)
+	bundle, analysis, err := analyzePersistedNetwork(ctx, tx, networkID)
 	if err != nil {
 		return err
 	}
-	analysis, err := analyzeNetwork(bundle)
-	if err != nil {
+	if err = store.reconcilePersistedNetwork(ctx, tx, bundle, analysis); err != nil {
 		return err
-	}
-	if err = persistNetworkConflict(ctx, tx, analysis); err != nil {
-		return err
-	}
-	if analysis.conflict == nil {
-		networkHead, headErr := currentCausalNetworkHead(bundle)
-		if headErr != nil {
-			return headErr
-		}
-		var recoveryIDs []string
-		if err = store.reconcileNetworkAccessTx(ctx, tx, analysis.state, networkHead, &recoveryIDs); err != nil {
-			return err
-		}
-		if err = store.ratifyRecoveriesTx(ctx, tx, networkID, networkHead, bundle.Epoch, recoveryIDs); err != nil {
-			return err
-		}
 	}
 	if err = tx.Commit(); err != nil {
 		return err
