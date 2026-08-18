@@ -117,6 +117,23 @@ func TestReplicaForwardsDivergentHeadsWithoutAuthoringMerge(t *testing.T) {
 	}
 }
 
+func TestValidateBundleHeadsAllowsMatchingPoliciesAtSameOlderEpoch(t *testing.T) {
+	oldPolicy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter}
+	newPolicy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{"admin": WorkspaceAdmin}}
+	revisions := map[string]Revision{
+		"a": {ID: "a", Epoch: 1, Access: &oldPolicy},
+		"b": {ID: "b", Epoch: 2, Access: &newPolicy},
+		"c": {ID: "c", Epoch: 1, Access: &oldPolicy},
+	}
+	heads, err := validateBundleHeads(Bundle{Epoch: 2, Heads: []string{"a", "b", "c"}}, revisions)
+	if err != nil {
+		t.Fatalf("valid old/new/old head frontier rejected: %v", err)
+	}
+	if !equalStrings(heads, []string{"a", "b", "c"}) {
+		t.Fatalf("heads = %v", heads)
+	}
+}
+
 func TestWorkspaceBundlesAreReorderedAndRepeatedIdempotently(t *testing.T) {
 	ctx := context.Background()
 	left, right, bundle := sharedWriterBundle(t)

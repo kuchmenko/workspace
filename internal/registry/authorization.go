@@ -177,10 +177,8 @@ func validateBundleHeads(bundle Bundle, revisions map[string]Revision) ([]string
 	}
 	if len(heads) > 1 {
 		policy := revisionPolicyMap(revisions, heads[0])
-		mixedEpoch := false
 		for _, head := range heads[1:] {
-			mixedEpoch = mixedEpoch || revisions[head].Epoch != revisions[heads[0]].Epoch
-			if mixedEpoch && equalPolicy(policy, revisionPolicyMap(revisions, head)) {
+			if revisions[head].Epoch != revisions[heads[0]].Epoch && equalPolicy(policy, revisionPolicyMap(revisions, head)) {
 				return nil, errors.New("mixed-epoch heads require divergent access policies")
 			}
 		}
