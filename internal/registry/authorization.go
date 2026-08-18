@@ -314,7 +314,7 @@ func readyRevisions(remaining, validated map[string]Revision) []string {
 
 func authorizeRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, previouslyAccepted bool) error {
 	if revision.Access == nil {
-		return authorizeLegacyRevision(revision, validated, deviceKeys(devices))
+		return authorizeLegacyRevision(revision, validated, devices, network, previouslyAccepted)
 	}
 	policy, err := normalizePolicy(*revision.Access)
 	if err != nil {
@@ -347,16 +347,26 @@ func legacyAuthorityPolicy(validated map[string]Revision) AccessPolicy {
 	return policy
 }
 
-func authorizeLegacyRevision(revision Revision, validated map[string]Revision, keys map[string]string) error {
+func authorizeLegacyRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, previouslyAccepted bool) error {
 	if len(revision.Parents) != 0 && !allParentsLegacy(revision, validated) {
 		return errors.New("policy-less revision follows a policy anchor")
 	}
+	keys := deviceKeys(devices)
 	for _, proof := range revision.Proofs {
 		if keys[proof.DeviceID] != string(proof.PublicKey) {
 			return errors.New("legacy revision author is not a known network device")
 		}
 	}
-	return nil
+	if previouslyAccepted {
+		return nil
+	}
+	if len(revision.Parents) == 0 {
+		if hasActiveAuthor(revision, devices) {
+			return nil
+		}
+		return errors.New("legacy workspace genesis is not signed by an active network device")
+	}
+	return authorizeProofs(revision, legacyAuthorityPolicy(validated), devices, network, false)
 }
 
 func validateRevisionPolicy(revision Revision, policy AccessPolicy, validated map[string]Revision) (AccessPolicy, error) {

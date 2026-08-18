@@ -315,6 +315,55 @@ func TestLegacyAccessAnchorCannotSelfAuthorize(t *testing.T) {
 	}
 }
 
+func TestReplicaCannotCreatePolicylessBranchFromAcceptedLegacyHistory(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	attacker := openTestStore(t)
+	receiver := openTestStore(t)
+	connectRegistryStores(t, admin, attacker, receiver)
+	snapshot, err := encodeSnapshot(testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := revisionCore{Protocol: protocolVersion, WorkspaceID: "legacy-workspace", Epoch: 1, Kind: "genesis", Snapshot: snapshot}
+	body, err := json.Marshal(core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(body)
+	genesis := Revision{
+		ID: hex.EncodeToString(digest[:]), WorkspaceID: core.WorkspaceID, Epoch: 1, Kind: "genesis", Snapshot: snapshot,
+		Proofs: []Proof{{DeviceID: admin.identity.ID(), PublicKey: admin.identity.PublicKey(), Signature: admin.identity.Sign(digest[:])}},
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		attacker.identity.ID(): WorkspaceReplica,
+		receiver.identity.ID(): WorkspaceReplica,
+	}}
+	anchor, err := makeRevision(core.WorkspaceID, 1, "access", []string{genesis.ID}, snapshot, nil, policy, admin.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legitimate := Bundle{WorkspaceID: core.WorkspaceID, Epoch: 1, Heads: []string{anchor.ID}, Revisions: []Revision{genesis, anchor}}
+	if _, err = receiver.AttachFrom(ctx, "shared", t.TempDir(), legitimate, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	forgedCore := revisionCore{Protocol: protocolVersion, WorkspaceID: core.WorkspaceID, Epoch: 1, Kind: "ordinary", Parents: []string{genesis.ID}, Snapshot: snapshot}
+	forgedBody, err := json.Marshal(forgedCore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgedDigest := sha256.Sum256(forgedBody)
+	forged := Revision{
+		ID: hex.EncodeToString(forgedDigest[:]), WorkspaceID: core.WorkspaceID, Epoch: 1, Kind: "ordinary", Parents: []string{genesis.ID}, Snapshot: snapshot,
+		Proofs: []Proof{{DeviceID: attacker.identity.ID(), PublicKey: attacker.identity.PublicKey(), Signature: attacker.identity.Sign(forgedDigest[:])}},
+	}
+	bundle := Bundle{WorkspaceID: core.WorkspaceID, Epoch: 1, Heads: []string{anchor.ID, forged.ID}, Revisions: []Revision{genesis, anchor, forged}}
+	if _, _, err = receiver.IntegrateFrom(ctx, "shared", bundle, attacker.identity.ID()); err == nil || !strings.Contains(err.Error(), "not signed by a workspace writer") {
+		t.Fatalf("forged policy-less branch error = %v", err)
+	}
+}
+
 func sharedWriterBundle(t *testing.T) (*Store, *Store, Bundle) {
 	t.Helper()
 	ctx := context.Background()
