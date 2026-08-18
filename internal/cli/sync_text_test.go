@@ -38,9 +38,25 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 		},
 	}
 	registerSyncTestWorkspace(t, root, workspace)
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err = store.SaveOriginBaselines(context.Background(), registered.WorkspaceID, map[string]string{"app": "baseline"}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	plan := workspacesync.BuildPlan(root, workspace)
 	var stdout, stderr bytes.Buffer
-	err := runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
+	err = runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != syncExitFailed {
 		t.Fatalf("error = %v, want exit %d", err, syncExitFailed)
@@ -54,6 +70,18 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no project changes made") {
 		t.Fatalf("missing no-mutation summary: %s", stdout.String())
+	}
+	store, err = registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	baselines, err := store.OriginBaselines(context.Background(), registered.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baselines) != 1 || baselines["app"] != "baseline" {
+		t.Fatalf("origin baselines changed after failed preflight: %#v", baselines)
 	}
 }
 

@@ -92,52 +92,28 @@ type Plan struct {
 }
 
 func BuildPlan(root string, ws *config.Workspace) Plan {
+	return BuildPlanWithBaselines(root, ws, nil)
+}
+
+func BuildPlanWithBaselines(root string, ws *config.Workspace, baselines map[string]string) Plan {
 	plan := Plan{Root: root}
 	for _, name := range slices.Sorted(maps.Keys(ws.Projects)) {
 		project := ws.Projects[name]
 		if project.Status != config.StatusActive {
 			continue
 		}
-		plan.addProject(name, project)
+		plan.addProject(name, project, baselines[name])
 	}
 	plan.buildEndpoints()
 	return plan
 }
 
 func RefreshPlan(root string, ws *config.Workspace, before Plan) Plan {
-	plan := BuildPlan(root, ws)
-	previous := make(map[string]ProjectPlan, len(before.Projects))
+	baselines := make(map[string]string, len(before.Projects))
 	for _, project := range before.Projects {
-		previous[project.Name] = project
+		baselines[project.Name] = project.BaselineRemote
 	}
-	refreshEndpoints := false
-	for index := range plan.Projects {
-		project := &plan.Projects[index]
-		prior, ok := previous[project.Name]
-		if !ok {
-			continue
-		}
-		project.BaselineRemote = prior.BaselineRemote
-		if project.Snapshot.Remote == project.BaselineRemote {
-			continue
-		}
-		project.OriginURL = project.Snapshot.Remote
-		for targetIndex := range plan.Targets {
-			if plan.Targets[targetIndex].ID != project.OriginID {
-				continue
-			}
-			base := projectNetworkBase(root, *project)
-			plan.Targets[targetIndex] = newTarget(project.OriginID, TargetProjectOrigin, project.Name, "", project.Snapshot.Remote, project.BarePath, base)
-			refreshEndpoints = true
-			break
-		}
-	}
-	if refreshEndpoints {
-		plan.Endpoints = nil
-		plan.SourceGroups = nil
-		plan.buildEndpoints()
-	}
-	return plan
+	return BuildPlanWithBaselines(root, ws, baselines)
 }
 
 func RequiresFreshPreflight(before, after Plan) bool {
@@ -161,7 +137,7 @@ func projectSnapshotsEqual(left, right ProjectSnapshot) bool {
 		maps.Equal(left.Mirrors, right.Mirrors)
 }
 
-func (p *Plan) addProject(name string, project config.Project) {
+func (p *Plan) addProject(name string, project config.Project, baseline string) {
 	mainPath, err := layout.ProjectPath(p.Root, project.Path)
 	if err != nil {
 		p.Projects = append(p.Projects, ProjectPlan{
@@ -177,7 +153,7 @@ func (p *Plan) addProject(name string, project config.Project) {
 		MainPath:       mainPath,
 		BarePath:       layout.BarePath(mainPath),
 		Snapshot:       snapshotProject(project),
-		BaselineRemote: project.Remote,
+		BaselineRemote: baseline,
 		OriginID:       "project:" + name + ":origin",
 		MirrorURLs:     make(map[string]string),
 	}
@@ -187,7 +163,7 @@ func (p *Plan) addProject(name string, project config.Project) {
 	if repository := conversionRepository(projectPlan); repository != "" {
 		if local, err := git.ConfiguredRemoteURL(repository, "origin"); err == nil {
 			projectPlan.LocalOrigin = local
-			if local != project.Remote {
+			if local != project.Remote && project.Remote == baseline {
 				originURL = local
 			}
 		}

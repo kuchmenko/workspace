@@ -70,11 +70,11 @@ func syncRunCanceled(err error) bool {
 
 func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, workspacesync.Plan, error) {
 	var selection workspacesync.Selection
-	current, err := loadSyncWorkspace(ctx, root)
+	current, baselines, err := loadSyncWorkspace(ctx, root)
 	if err != nil {
 		return registry.Workspace{}, selection, workspacesync.Plan{}, err
 	}
-	plan := workspacesync.BuildPlan(root, current.State)
+	plan := workspacesync.BuildPlanWithBaselines(root, current.State, baselines)
 	if !interactive {
 		selection, err = preflightSyncHeadless(ctx, plan, stdout, stderr)
 		if err != nil {
@@ -101,17 +101,22 @@ func refreshHeadlessSelection(ctx context.Context, plan, before workspacesync.Pl
 	return preflightSyncHeadless(ctx, plan, stdout, stderr)
 }
 
-func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, error) {
+func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, map[string]string, error) {
 	store, err := registry.OpenDefault()
 	if err != nil {
-		return registry.Workspace{}, err
+		return registry.Workspace{}, nil, err
 	}
 	defer func() { _ = store.Close() }()
 	workspace, err := store.LoadByRoot(ctx, root)
 	if err != nil {
-		return registry.Workspace{}, err
+		return registry.Workspace{}, nil, err
 	}
-	return requireResolvedWorkspace(ctx, store, workspace)
+	workspace, err = requireResolvedWorkspace(ctx, store, workspace)
+	if err != nil {
+		return registry.Workspace{}, nil, err
+	}
+	baselines, err := store.OriginBaselines(ctx, workspace.WorkspaceID)
+	return workspace, baselines, err
 }
 
 func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (registry.Workspace, error) {

@@ -21,11 +21,23 @@ func (r *Runner) reconcileProjectOrigin(planned ProjectPlan, project *config.Pro
 	local := planned.LocalOrigin
 	shared := project.Remote
 	switch {
+	case baseline == "" && local == shared:
+		r.origins[planned.Name] = shared
+		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
+		return false, nil
+	case baseline == "":
+		diagnostic := fmt.Sprintf("origin baseline is missing while local is %q and shared is %q", git.RedactRemote(local), git.RedactRemote(shared))
+		r.recordProjectConflict(planned.Name, "", conflict.KindOriginDivergence, diagnostic)
+		r.addConflictResult(report, planned.Name, "", conflict.KindOriginDivergence, diagnostic, onEvent)
+		result := OperationResult{Status: ResultSkipped, Operation: "project-sync", Project: planned.Name, Reason: SkipPlanChanged, Diagnostic: diagnostic}
+		return false, &result
 	case shared == baseline && local == baseline:
+		r.origins[planned.Name] = shared
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
 		return false, nil
 	case shared == baseline:
 		project.Remote = local
+		r.origins[planned.Name] = local
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
 		return true, nil
 	case local == baseline:
@@ -33,9 +45,11 @@ func (r *Runner) reconcileProjectOrigin(planned ProjectPlan, project *config.Pro
 			result := failedProject(planned.Name, "update-origin", err)
 			return false, &result
 		}
+		r.origins[planned.Name] = shared
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
 		return false, nil
 	case local == shared:
+		r.origins[planned.Name] = shared
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
 		return false, nil
 	default:

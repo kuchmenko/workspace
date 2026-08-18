@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS workspace_access_conflicts (
  conflict_id TEXT NOT NULL UNIQUE,
  base_revision_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS local_project_origins (
+ workspace_id TEXT NOT NULL,
+ project TEXT NOT NULL,
+ remote TEXT NOT NULL,
+ PRIMARY KEY(workspace_id,project)
+);
 CREATE TABLE IF NOT EXISTS workspace_imports (
  id TEXT PRIMARY KEY,
  peer_id TEXT NOT NULL,
