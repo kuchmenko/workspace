@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -19,14 +20,17 @@ import (
 )
 
 func certificate(identity device.Identity, name string) (tls.Certificate, error) {
-	return makeCertificate(identity, name, name, []string{name})
+	if ip := net.ParseIP(name); ip != nil {
+		return makeCertificate(identity, name, name, nil, []net.IP{ip})
+	}
+	return makeCertificate(identity, name, name, []string{name}, nil)
 }
 
 func peerCertificate(identity device.Identity, name string) (tls.Certificate, error) {
-	return makeCertificate(identity, name, identity.ID(), []string{identity.ID()})
+	return makeCertificate(identity, name, identity.ID(), []string{identity.ID()}, nil)
 }
 
-func makeCertificate(identity device.Identity, name, issuer string, dnsNames []string) (tls.Certificate, error) {
+func makeCertificate(identity device.Identity, name, issuer string, dnsNames []string, ipAddresses []net.IP) (tls.Certificate, error) {
 	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serial, err := rand.Int(rand.Reader, serialLimit)
 	if err != nil {
@@ -37,6 +41,7 @@ func makeCertificate(identity device.Identity, name, issuer string, dnsNames []s
 		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: name},
 		DNSNames:     dnsNames,
+		IPAddresses:  ipAddresses,
 		NotBefore:    now.Add(-time.Minute),
 		NotAfter:     now.Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

@@ -90,6 +90,38 @@ func TestPairResponseAcceptsValidNetworkHistoryBeyondOneMiB(t *testing.T) {
 	}
 }
 
+func TestPairAcceptsIPAddressDeviceName(t *testing.T) {
+	for _, name := range []string{"127.0.0.1", "::1"} {
+		t.Run(name, func(t *testing.T) {
+			inviterStore, inviterIdentity := networkTestStore(t)
+			joinerStore, joinerIdentity := networkTestStore(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			ready := make(chan pairReady, 1)
+			serverOutcome := make(chan error, 1)
+			go func() {
+				_, err := Pair(ctx, PairOptions{
+					Store: inviterStore, Identity: inviterIdentity, Name: name, Role: registry.NetworkAdmin,
+					ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+					Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+					Confirm: func(string, string) (bool, error) { return true, nil },
+				})
+				serverOutcome <- err
+			}()
+			pairing := <-ready
+			if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+				Store: joinerStore, Identity: joinerIdentity, Name: "joiner", Code: pairing.code,
+				Confirm: func(string, string) (bool, error) { return true, nil },
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-serverOutcome; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestPairingFailureEscapesPeerControlCharacters(t *testing.T) {
 	err := pairingFailure("rejected\nforged\x1b]0;owned\a")
 	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
