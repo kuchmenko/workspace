@@ -21,9 +21,10 @@ import (
 const DefaultListenAddress = ":17337"
 
 const (
-	peerExchangeTimeout = 10 * time.Second
-	maxPeerMessageBytes = 64 << 20
-	maxPeerConnections  = 32
+	peerExchangeTimeout     = 10 * time.Second
+	peerFrameBytesPerSecond = 256 << 10
+	maxPeerMessageBytes     = 64 << 20
+	maxPeerConnections      = 32
 )
 
 type RejectedError struct {
@@ -421,6 +422,9 @@ func encodePeerFrame(writer io.Writer, value any) error {
 	if int64(len(body)) >= maxPeerMessageBytes {
 		return fmt.Errorf("peer message exceeds %d byte limit", maxPeerMessageBytes)
 	}
+	if connection, ok := writer.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		_ = connection.SetWriteDeadline(time.Now().Add(peerFrameTimeout(int64(len(body)))))
+	}
 	header := fmt.Sprintf("%08x", len(body))
 	if _, err = io.WriteString(writer, header); err != nil {
 		return err
@@ -430,6 +434,10 @@ func encodePeerFrame(writer io.Writer, value any) error {
 }
 
 func decodePeerFrame(reader io.Reader, value any) error {
+	connection, hasDeadline := reader.(interface{ SetReadDeadline(time.Time) error })
+	if hasDeadline {
+		_ = connection.SetReadDeadline(time.Now().Add(peerExchangeTimeout))
+	}
 	var header [8]byte
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
 		return err
@@ -441,11 +449,18 @@ func decodePeerFrame(reader io.Reader, value any) error {
 	if size < 1 || size >= maxPeerMessageBytes {
 		return fmt.Errorf("peer message exceeds %d byte limit", maxPeerMessageBytes)
 	}
+	if hasDeadline {
+		_ = connection.SetReadDeadline(time.Now().Add(peerFrameTimeout(size)))
+	}
 	body := make([]byte, size)
 	if _, err := io.ReadFull(reader, body); err != nil {
 		return err
 	}
 	return json.Unmarshal(body, value)
+}
+
+func peerFrameTimeout(bytes int64) time.Duration {
+	return peerExchangeTimeout + time.Duration(bytes)*time.Second/peerFrameBytesPerSecond
 }
 
 func writePeerResponse(connection net.Conn, response peerResponse) {

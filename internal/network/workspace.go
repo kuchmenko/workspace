@@ -536,8 +536,6 @@ func networkDevice(ctx context.Context, store *registry.Store, id string) (regis
 }
 
 func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, request peerRequest) (peerResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
-	defer cancel()
 	cert, err := peerCertificate(identity, name)
 	if err != nil {
 		return peerResponse{}, err
@@ -547,7 +545,9 @@ func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRec
 		return peerResponse{}, err
 	}
 	dialer := tls.Dialer{Config: config}
-	connection, err := dialer.DialContext(ctx, "tcp", endpoint)
+	dialContext, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
+	connection, err := dialer.DialContext(dialContext, "tcp", endpoint)
+	cancel()
 	if err != nil {
 		return peerResponse{}, UnavailableError{err: err}
 	}

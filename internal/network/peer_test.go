@@ -114,6 +114,46 @@ func TestPeerFrameRejectsOversizedBodyBeforeReadingIt(t *testing.T) {
 	}
 }
 
+func TestPeerFrameTimeoutAllowsLargeRevisionBatch(t *testing.T) {
+	timeout := peerFrameTimeout(11 << 20)
+	if timeout <= peerExchangeTimeout {
+		t.Fatalf("large frame timeout = %s, want over %s", timeout, peerExchangeTimeout)
+	}
+	if timeout > 5*time.Minute {
+		t.Fatalf("large frame timeout = %s, want bounded", timeout)
+	}
+	var frame deadlineBuffer
+	if err := encodePeerFrame(&frame, map[string]string{"payload": strings.Repeat("x", 1<<20)}); err != nil {
+		t.Fatal(err)
+	}
+	if time.Until(frame.writeDeadline) <= peerExchangeTimeout {
+		t.Fatalf("write deadline = %s, want transfer-aware", frame.writeDeadline)
+	}
+	var decoded map[string]string
+	if err := decodePeerFrame(&frame, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(frame.readDeadlines) != 2 || frame.readDeadlines[1].Sub(frame.readDeadlines[0]) <= 0 {
+		t.Fatalf("read deadlines = %v, want extended body deadline", frame.readDeadlines)
+	}
+}
+
+type deadlineBuffer struct {
+	bytes.Buffer
+	readDeadlines []time.Time
+	writeDeadline time.Time
+}
+
+func (buffer *deadlineBuffer) SetReadDeadline(deadline time.Time) error {
+	buffer.readDeadlines = append(buffer.readDeadlines, deadline)
+	return nil
+}
+
+func (buffer *deadlineBuffer) SetWriteDeadline(deadline time.Time) error {
+	buffer.writeDeadline = deadline
+	return nil
+}
+
 type countingReader struct {
 	io.Reader
 	read int
