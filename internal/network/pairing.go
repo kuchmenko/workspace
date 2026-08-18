@@ -85,6 +85,10 @@ type pairResponse struct {
 	Network  registry.NetworkBundle `json:"network"`
 }
 
+type pairAcknowledgement struct {
+	Imported bool `json:"imported"`
+}
+
 func Pair(ctx context.Context, options PairOptions) (PairResult, error) {
 	if options.Store == nil || options.Confirm == nil {
 		return PairResult{}, errors.New("pair store and confirmation are required")
@@ -132,8 +136,8 @@ func acceptPairAttempts(ctx context.Context, listener net.Listener, cert tls.Cer
 	go acceptPairConnections(ctx, listener, connections, acceptErrors)
 	results := make(chan pairAttempt, maxPairConnections)
 	semaphore := make(chan struct{}, maxPairConnections)
-	confirmation := make(chan struct{}, 1)
-	confirmation <- struct{}{}
+	confirmation := make(chan ed25519.PublicKey, 1)
+	confirmation <- nil
 	failures := map[string]int{}
 	for {
 		select {
@@ -174,7 +178,7 @@ func acceptPairConnections(ctx context.Context, listener net.Listener, connectio
 	}
 }
 
-func startPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore, confirmation chan struct{}, results chan<- pairAttempt, failures map[string]int) {
+func startPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore chan struct{}, confirmation chan ed25519.PublicKey, results chan<- pairAttempt, failures map[string]int) {
 	source := pairSource(connection.RemoteAddr())
 	if failures[source] >= maxPairCodeFailures {
 		_ = connection.Close()
@@ -195,7 +199,7 @@ func retryPairAttempt(attempt pairAttempt, failures map[string]int) bool {
 	return attempt.retry
 }
 
-func runPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore, confirmation chan struct{}, results chan<- pairAttempt, source string) {
+func runPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certificate, code string, options PairOptions, semaphore chan struct{}, confirmation chan ed25519.PublicKey, results chan<- pairAttempt, source string) {
 	defer func() { <-semaphore }()
 	defer func() { _ = connection.Close() }()
 	attemptCtx, cancel := context.WithTimeout(ctx, pairExchangeTimeout)
@@ -211,20 +215,29 @@ func runPairAttempt(ctx context.Context, connection net.Conn, cert tls.Certifica
 	results <- pairAttempt{result: result, err: err, retry: retry, source: source}
 }
 
-func acceptPairConnection(ctx context.Context, connection net.Conn, code string, options PairOptions, confirmation <-chan struct{}) (PairResult, bool, error) {
+func acceptPairConnection(ctx context.Context, connection net.Conn, code string, options PairOptions, confirmation chan ed25519.PublicKey) (PairResult, bool, error) {
 	peerKey, peerName, retry, err := receivePairRequest(ctx, connection, code)
 	if err != nil {
 		return PairResult{}, retry, err
 	}
+	var confirmedKey ed25519.PublicKey
 	select {
-	case <-confirmation:
+	case confirmedKey = <-confirmation:
 	case <-ctx.Done():
 		return PairResult{}, false, ctx.Err()
+	}
+	if confirmedKey != nil && !peerKey.Equal(confirmedKey) {
+		confirmation <- confirmedKey
+		return PairResult{}, true, errors.New("pairing recovery identity does not match")
 	}
 	if err = confirmPairConnection(connection, peerName, authenticationString(options.Identity.PublicKey(), peerKey), options.Confirm); err != nil {
 		return PairResult{}, false, err
 	}
-	return persistPairedDevice(ctx, connection, peerKey, peerName, options)
+	result, retry, err := persistPairedDevice(ctx, connection, peerKey, peerName, options)
+	if retry {
+		confirmation <- peerKey
+	}
+	return result, retry, err
 }
 
 func receivePairRequest(ctx context.Context, connection net.Conn, code string) (ed25519.PublicKey, string, bool, error) {
@@ -297,7 +310,14 @@ func persistPairedDevice(ctx context.Context, connection net.Conn, peerKey ed255
 		return PairResult{}, false, err
 	}
 	if err = json.NewEncoder(connection).Encode(pairResponse{Accepted: true, Network: bundle}); err != nil {
-		return PairResult{}, false, err
+		return PairResult{}, true, err
+	}
+	var acknowledgement pairAcknowledgement
+	if err = decodeLimited(connection, maxPairMessageBytes, &acknowledgement); err != nil {
+		return PairResult{}, true, err
+	}
+	if !acknowledgement.Imported {
+		return PairResult{}, true, errors.New("joining device did not import network")
 	}
 	peer, found := deviceRecord(state.Devices, peerKey)
 	if !found {
@@ -373,22 +393,33 @@ func joinEndpoint(ctx context.Context, endpoint string, options JoinOptions) (Pa
 	if err = json.NewEncoder(connection).Encode(joinConfirmation{Confirmed: confirmed}); err != nil {
 		return PairResult{}, err
 	}
-	var response pairResponse
-	if err = decodeLimited(connection, maxPairResponseBytes, &response); err != nil {
-		return PairResult{}, err
-	}
-	if !response.Accepted {
-		return PairResult{}, pairingFailure(response.Error)
-	}
-	state, err := options.Store.ImportNetwork(ctx, response.Network, device.IDForPublicKey(peerKey))
+	peer, err := finishPairJoin(ctx, connection, options.Store, peerKey)
 	if err != nil {
 		return PairResult{}, err
 	}
+	return PairResult{Peer: peer}, nil
+}
+
+func finishPairJoin(ctx context.Context, connection net.Conn, store *registry.Store, peerKey ed25519.PublicKey) (registry.DeviceRecord, error) {
+	var response pairResponse
+	if err := decodeLimited(connection, maxPairResponseBytes, &response); err != nil {
+		return registry.DeviceRecord{}, err
+	}
+	if !response.Accepted {
+		return registry.DeviceRecord{}, pairingFailure(response.Error)
+	}
+	state, err := store.ImportNetwork(ctx, response.Network, device.IDForPublicKey(peerKey))
+	if err != nil {
+		return registry.DeviceRecord{}, err
+	}
+	if err = json.NewEncoder(connection).Encode(pairAcknowledgement{Imported: true}); err != nil {
+		return registry.DeviceRecord{}, err
+	}
 	peer, found := deviceRecord(state.Devices, peerKey)
 	if !found {
-		return PairResult{}, errors.New("inviting device is missing from network state")
+		return registry.DeviceRecord{}, errors.New("inviting device is missing from network state")
 	}
-	return PairResult{Peer: peer}, nil
+	return peer, nil
 }
 
 func pairingFailure(reason string) error {

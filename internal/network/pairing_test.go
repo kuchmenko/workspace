@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
@@ -208,6 +209,45 @@ func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
 	}
 	if !reflect.DeepEqual(archNetwork, asahiNetwork) {
 		t.Fatalf("network state differs:\narch=%#v\nasahi=%#v", archNetwork, asahiNetwork)
+	}
+}
+
+func TestPairRetriesSameConfirmedIdentityAfterFinalResponseLoss(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	_, joinerIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	options := PairOptions{Store: inviterStore, Identity: inviterIdentity, Name: "inviter", Role: registry.NetworkMember}
+
+	server, client := net.Pipe()
+	_ = client.Close()
+	_, retry, err := persistPairedDevice(ctx, server, joinerIdentity.PublicKey(), "joiner", options)
+	_ = server.Close()
+	if err == nil || !retry {
+		t.Fatalf("lost final response returned retry=%v, err=%v", retry, err)
+	}
+
+	server, client = net.Pipe()
+	clientOutcome := make(chan error, 1)
+	go func() {
+		var response pairResponse
+		err := json.NewDecoder(client).Decode(&response)
+		if err == nil {
+			err = json.NewEncoder(client).Encode(pairAcknowledgement{Imported: true})
+		}
+		clientOutcome <- err
+	}()
+	result, retry, err := persistPairedDevice(ctx, server, joinerIdentity.PublicKey(), "joiner", options)
+	_ = server.Close()
+	_ = client.Close()
+	if err != nil || retry {
+		t.Fatalf("retry returned retry=%v, err=%v", retry, err)
+	}
+	if clientErr := <-clientOutcome; clientErr != nil {
+		t.Fatal(clientErr)
+	}
+	if result.Peer.ID != joinerIdentity.ID() {
+		t.Fatalf("paired peer = %#v", result.Peer)
 	}
 }
 
