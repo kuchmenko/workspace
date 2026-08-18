@@ -327,7 +327,11 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 			rightDevice = record
 		}
 	}
-	results, failures, err := synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	command := &cobra.Command{}
+	command.SetContext(ctx)
+	var stderr bytes.Buffer
+	command.SetErr(&stderr)
+	results, failures, err := synchronizeWorkspacePeers(command, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
 	if err != nil || len(results) != 1 || results[0].Status != "unavailable" || len(failures) != 1 {
 		t.Fatalf("unattached results=%#v failures=%v error=%v", results, failures, err)
 	}
@@ -344,12 +348,11 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	results, failures, err = synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	results, failures, err = synchronizeWorkspacePeers(command, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
 	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Status != "pulled" {
 		t.Fatalf("results=%#v failures=%v error=%v", results, failures, err)
 	}
-	var stderr bytes.Buffer
-	pulled, err := reloadSynchronizedWorkspace(ctx, left, leftRoot, &stderr)
+	pulled, err := left.LoadByRoot(ctx, leftRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +382,7 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("peer server did not stop")
 	}
-	results, failures, err = synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{pulled}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	results, failures, err = synchronizeWorkspacePeers(command, left, leftIdentity, "arch", []registry.Workspace{pulled}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
 	if err != nil || len(results) != 1 || results[0].Status != "unavailable" || len(failures) != 1 {
 		t.Fatalf("offline results=%#v failures=%v error=%v", results, failures, err)
 	}

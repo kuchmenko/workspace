@@ -424,7 +424,11 @@ func runWorkspaceSync(command *cobra.Command, args []string, jsonOutput bool) er
 }
 
 func synchronizeWorkspacePeers(command *cobra.Command, store *registry.Store, identity device.Identity, name string, workspaces []registry.Workspace, online []peernetwork.PeerEndpoint) ([]peernetwork.SyncResult, []string, error) {
-	return synchronizeWorkspacePeersContext(command.Context(), store, identity, name, workspaces, online)
+	results, failures, err := synchronizeWorkspacePeersContext(command.Context(), store, identity, name, workspaces, online)
+	if err == nil && len(workspaces) == 1 {
+		_, err = reloadSynchronizedWorkspace(command.Context(), store, workspaces[0].Root, command.ErrOrStderr())
+	}
+	return results, failures, err
 }
 
 func synchronizeWorkspacePeersContext(ctx context.Context, store *registry.Store, identity device.Identity, name string, workspaces []registry.Workspace, online []peernetwork.PeerEndpoint) ([]peernetwork.SyncResult, []string, error) {
