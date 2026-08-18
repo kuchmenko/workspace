@@ -188,10 +188,10 @@ func (m syncModel) viewDashboard(canceling bool) string {
 func renderRecentEvent(event workspacesync.Event) string {
 	label := event.Operation
 	if event.Project != "" {
-		label += " " + event.Project
+		label += " " + terminalText(event.Project)
 	}
 	if event.Mirror != "" {
-		label += "/" + event.Mirror
+		label += "/" + terminalText(event.Mirror)
 	}
 	line := fmt.Sprintf("%-9s %s", event.Status, label)
 	if event.Status == workspacesync.ResultFailed {

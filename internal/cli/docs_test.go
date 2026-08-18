@@ -21,6 +21,7 @@ func TestAgentContractProductionInventory(t *testing.T) {
 		"ws sync",
 		"ws workspace create",
 		"ws workspace list",
+		"ws workspace set-root",
 		"ws worktree add",
 		"ws worktree list",
 		"ws worktree push",

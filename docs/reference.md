@@ -22,16 +22,18 @@ ws sync                    # preflight, review, and execute in foreground
 ws sync resolve            # interactive prompt for unresolved conflicts
 ```
 
-`ws sync` builds a fresh plan and probes unique workspace, project, and
-mirror endpoints before any mutation. With terminal stdin and stdout it
+`ws sync` first exchanges the selected SQLite workspace registry with reachable
+trusted peers, then builds a fresh plan and probes unique project and mirror
+endpoints before project mutation. With terminal stdin and stdout it
 opens an interactive source/project/mirror review, supports run-only
 exclusions and verified known-provider HTTPS-to-SSH origin conversion,
 then asks for confirmation. The frozen selection executes sequentially:
 project clone/fetch, selected mirror pushes, safe main
-worktree fast-forwards, branch metadata refresh, and orphan detection.
+worktree fast-forwards, branch metadata refresh, and orphan detection. A final
+registry exchange publishes resulting metadata to online peers.
 
-With redirected stdin or stdout it emits ANSI-free text and requires every
-endpoint to pass preflight. Any failed probe exits before mutation.
+With redirected stdin or stdout it emits ANSI-free text and requires every Git
+endpoint to pass preflight. Any failed probe exits before project mutation.
 
 Exit codes: `0` success, `1` failed preflight/execution or conflict, `130`
 canceled.
@@ -233,11 +235,27 @@ ws workspace create [path] --name <name>                     # path defaults to 
 ws workspace import <workspace.toml> --name <name> --root <path>
 ws workspace export <name>                                   # TOML on stdout
 ws workspace list                                            # names and roots
+ws workspace set-root <workspace> <path>                     # rebind locally; does not move files
+ws workspace share <name> --with all --role writer
+ws workspace share <name> --with <device>[,<device>...] --role <role>
+ws workspace access <name>
+ws workspace access set <name> <device> <admin|writer|replica>
+ws workspace access remove <name> <device>
+ws workspace available [--json]
+ws workspace attach <workspace> --root <path> [--name <local-name>]
+ws workspace sync [workspace] [--json]
+ws workspace conflicts <workspace> [--json]
+ws workspace resolve <workspace> <path> --take <base|left|right>
+ws workspace resolve <workspace> <path> --value <json>
 ```
 
-Create and import write `$XDG_STATE_HOME/ws/registry.db`; export is the only
-command that emits TOML. These commands do not schedule or synchronize
-anything; run `ws sync` for project Git state.
+Create, import, and set-root write `$XDG_STATE_HOME/ws/registry.db`; export is
+the only command that emits TOML. Set-root changes only the machine-local root
+mapping and does not move files or create a synchronized revision. Workspace
+sharing and synchronization exchange signed registry revisions with
+authenticated online peers. They do not transfer repositories. `ws workspace
+sync` performs only that exchange; top-level `ws sync` wraps registry exchange
+around project Git synchronization.
 
 ## Authentication
 

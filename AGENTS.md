@@ -21,9 +21,10 @@ The core invariants are:
 2. **Named local workspaces.** Each SQLite workspace has a unique name and
    canonical root. Commands select the longest containing root unless an exact
    root is supplied. Explorer reads every workspace in the SQLite registry.
-3. **Foreground-only synchronization.** `ws sync` performs preflight,
-   review, confirmation, execution, and summary. There is no background
-   service, watcher, timer, IPC channel, or retry scheduler.
+3. **Foreground-only synchronization.** `ws sync` performs project Git
+   preflight, review, confirmation, execution, and summary. `ws workspace sync`
+   explicitly exchanges registry revisions with online peers. Neither runs a
+   background watcher, timer, or retry scheduler.
 4. **No project branch auto-push to origin.** `ws sync` fetches project
    state and may fast-forward an eligible main worktree, but origin branch
    pushes are explicit through `ws worktree push` or plain `git push`.
@@ -206,6 +207,12 @@ per-project `auto_sync` field. Fix failures and invoke `ws sync` again.
 SQLite is the runtime authority. Import and export are explicit interchange
 operations; project Git sync does not transfer registry state.
 
+Paired devices may explicitly exchange signed, content-addressed workspace
+registry revisions over authenticated TLS. Each workspace has an independent
+`local`, `all`, or `selected` policy with `admin`, `writer`, and `replica`
+roles. Device-network membership does not expose a workspace. Roots remain
+machine-local, and peer sync never transfers project files or credentials.
+
 ### Sidecars
 
 `ws add`, `ws create`, `ws bootstrap`, and `ws migrate` use sidecars at
@@ -346,8 +353,12 @@ configuration is migrated to branch metadata on load and removed on save.
 | `ws workspace import <workspace.toml> --name <name> --root <path>` | Import TOML interchange data into a named SQLite workspace. |
 | `ws workspace export <name>` | Export a workspace as TOML. |
 | `ws workspace list` | List named local workspaces and roots. |
+| `ws workspace share/access` | Manage signed per-workspace device policy and roles. |
+| `ws workspace available/attach` | Discover and attach an authorized workspace from an online peer. |
+| `ws workspace sync [name]` | Explicitly exchange signed registry revisions with online peers. |
+| `ws workspace conflicts/resolve` | Inspect and resolve deterministic registry merge conflicts. |
 
-These commands do not synchronize anything.
+Workspace peer commands do not invoke project Git synchronization.
 
 ### Worktrees
 
@@ -391,7 +402,8 @@ These commands do not synchronize anything.
 - `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
   counters; never contains identifiers, arguments, diagnostics, or history.
 
-There are no service, socket, pid, log, watcher, or IPC runtime files.
+`ws network serve` is a foreground peer listener; it creates no managed
+service, pid file, log file, watcher, timer, or IPC runtime file.
 
 ## Conventions
 
@@ -406,8 +418,8 @@ There are no service, socket, pid, log, watcher, or IPC runtime files.
   outside `internal/tui` are regressions.
 - Normal operation may change `registry.db`, conflict state, command sidecars,
   machine config, and generated alias state according to the invoked command.
-  Only explicit import/export commands touch `workspace.toml`. Nothing runs in
-  the background.
+  Only explicit import/export commands touch `workspace.toml`. Peer serving
+  and synchronization run only for their foreground invocation.
 - `ws sync` never pushes project branches to origin or performs project
   merge, rebase, reset, force, or deletion.
 - Do not hand-edit `[[projects.X.branches]]` except to resolve a confirmed
@@ -462,6 +474,10 @@ Current coverage locations include:
   model transitions.
 - `internal/config/machine_test.go`: local workspace-root registry and legacy
   root migration.
+- `internal/registry/*_test.go`: signed workspace policy, revision DAG,
+  authorization, deterministic merges, migration, and conflict resolution.
+- `internal/network/workspace_test.go`: authenticated workspace discovery,
+  fetch, and bidirectional revision synchronization.
 - `internal/agent/workspaces_test.go`: multi-workspace explorer loading.
 - `internal/cli/doctor_*_test.go`: system and project health checks.
 
@@ -578,7 +594,8 @@ Changes that do require approval include:
 ## Other Agent Conventions
 
 - Use `ws` for workspace operations: `ws status`, `ws sync`,
-  `ws sync resolve`, `ws workspace create/import/export/list`, and
+  `ws sync resolve`, `ws workspace create/import/export/list`,
+  `ws workspace share/access/available/attach/sync/conflicts/resolve`, and
   `ws worktree add/list/push/rm`.
 - Start non-trivial work with
   `ws worktree add workspace <type>/<kebab-topic>`; do not branch in main.

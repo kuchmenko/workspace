@@ -14,21 +14,26 @@ import (
 func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:         "sync",
-		Short:       "Synchronize registered project repositories",
+		Short:       "Synchronize workspace state and registered projects",
 		Annotations: agentAnnotations("sync", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectWrite, "text", "0,1,130"),
 		Args:        cobra.NoArgs,
 		Long: `Synchronize this workspace right now.
 
-Before changing anything, builds a fresh plan and probes every unique
-project and mirror endpoint noninteractively. In a terminal,
+First exchanges the selected SQLite workspace registry with reachable trusted
+peers. Then builds a fresh project plan and probes every unique project and
+mirror endpoint noninteractively. In a terminal,
 review sources and targets, optionally exclude them for this run, and choose
 only verified known-provider HTTPS-to-SSH origin conversions. With redirected
-input or output, every endpoint must pass or no changes are made.
+input or output, every Git endpoint must pass or no project changes are made.
 
 After confirmation, clones or fetches selected active projects, pushes
 selected mirrors, fast-forwards eligible main
 worktrees, refreshes last_active_* for local-ahead registered branches, and
-detects origin-deleted branches as branch-orphan conflicts.
+detects origin-deleted branches as branch-orphan conflicts. Finally exchanges
+the registry again so resulting metadata reaches online peers.
+
+An unavailable peer does not block offline work. Rejected workspace history or
+an unresolved registry conflict stops project synchronization.
 
 Project branches are never pushed to origin by 'ws sync'; that's an explicit
 user action via 'ws worktree push'.

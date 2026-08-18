@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -18,8 +20,16 @@ func newWorkspaceCmd() *cobra.Command {
 	cmd.AddCommand(
 		newWorkspaceCreateCmd(),
 		newWorkspaceListCmd(),
+		newWorkspaceSetRootCmd(),
 		newWorkspaceImportCmd(),
 		newWorkspaceExportCmd(),
+		newWorkspaceShareCmd(),
+		newWorkspaceAccessCmd(),
+		newWorkspaceAvailableCmd(),
+		newWorkspaceAttachCmd(),
+		newWorkspaceSyncCmd(),
+		newWorkspaceConflictsCmd(),
+		newWorkspaceResolveCmd(),
 	)
 	return cmd
 }
@@ -82,6 +92,33 @@ func newWorkspaceListCmd() *cobra.Command {
 			for _, workspace := range workspaces {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", workspace.Name, workspace.Root)
 			}
+			return nil
+		},
+	}
+}
+
+func newWorkspaceSetRootCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:         "set-root <workspace> <path>",
+		Short:       "Change a workspace's machine-local root",
+		Annotations: agentAnnotations("workspace-set-root", AgentInteractionNone, AgentApprovalRequired, AgentEffectWrite, AgentEffectNone, "text", "0,1"),
+		Args:        cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			local, err := registry.OpenDefault()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = local.Close() }()
+			workspace, err := local.SetRoot(cmd.Context(), args[0], args[1])
+			if err != nil {
+				return err
+			}
+			if err = alias.WriteStateFile(workspace.State, workspace.Root); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not update alias state file: %v\n", err)
+			} else {
+				metrics.RecordAliasStateGenerated()
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s root=%s\n", workspace.Name, workspace.Root)
 			return nil
 		},
 	}

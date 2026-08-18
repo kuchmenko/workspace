@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -64,6 +65,115 @@ func TestStorePersistsWorkspaceMutations(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsLocalRevisionBeyondTransferLimit(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	root := t.TempDir()
+	created, err := store.Create(ctx, "personal", root, testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := created.State
+	state.Aliases["oversized"] = strings.Repeat("x", maxRevisionBytes)
+	if _, err = store.Update(ctx, "personal", created.Revision, state); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized local update error = %v", err)
+	}
+	unchanged, err := store.LoadByName(ctx, "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Head != created.Head || unchanged.Revision != created.Revision {
+		t.Fatalf("oversized local update changed workspace: %#v", unchanged)
+	}
+}
+
+func TestStoreRejectsRevisionWhoseSerializedConflictsExceedTransferLimit(t *testing.T) {
+	store := openTestStore(t)
+	snapshot, err := encodeSnapshot(testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scalar := []byte(`"` + strings.Repeat("x", maxRevisionBytes-1024) + `"`)
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{store.identity.ID(): WorkspaceAdmin}}
+	revision, err := makeRevision("workspace", 1, "genesis", nil, snapshot, []Conflict{{Path: "/value", Base: scalar, Left: scalar, Right: scalar}}, policy, store.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireBytes, err := revisionWireBytes(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wireBytes < maxRevisionBatchWireBytes {
+		t.Fatalf("serialized revision size = %d, want at least %d", wireBytes, maxRevisionBatchWireBytes)
+	}
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = insertRevision(tx, revision); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized serialized revision error = %v", err)
+	}
+	var count int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM revisions WHERE id=?`, revision.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("oversized serialized revision was persisted")
+	}
+}
+
+func TestStoreRejectsUpdateWhenNetworkStateCannotLoad(t *testing.T) {
+	ctx := context.Background()
+	store, peer := pairedRegistryStores(t)
+	root := t.TempDir()
+	_, err := store.Create(ctx, "shared", root, testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{peer.identity.ID(): WorkspaceAdmin}, Denied: []string{store.identity.ID()}}
+	if _, err = store.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.db.ExecContext(ctx, `DROP TABLE network_events`); err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created.State.Aliases["unauthorized"] = "write"
+	if _, err = store.Update(ctx, "shared", created.Revision, created.State); err == nil {
+		t.Fatal("update succeeded while network authorization state was unavailable")
+	}
+}
+
+func TestOpenRejectsMissingIdentityForInitializedRegistry(t *testing.T) {
+	directory := t.TempDir()
+	database := filepath.Join(directory, "registry.db")
+	identity := filepath.Join(directory, "identity.key")
+	store, err := Open(database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.EnsureNetwork(context.Background(), "arch"); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Remove(identity); err != nil {
+		t.Fatal(err)
+	}
+	if reopened, openErr := Open(database); openErr == nil {
+		_ = reopened.Close()
+		t.Fatal("initialized registry opened with a replacement identity")
+	}
+	if _, err = os.Stat(identity); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement identity stat error = %v", err)
+	}
+}
+
 func TestStoreRejectsDuplicateAndStaleWrites(t *testing.T) {
 	t.Parallel()
 
@@ -91,6 +201,88 @@ func TestStoreRejectsDuplicateAndStaleWrites(t *testing.T) {
 	}
 	if _, err = store.Update(ctx, created.Name, created.Revision, state); !errors.Is(err, ErrStaleRevision) {
 		t.Fatalf("stale update error = %v", err)
+	}
+}
+
+func TestStoreSetRootChangesOnlyLocalRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	oldRoot := t.TempDir()
+	newRoot := t.TempDir()
+	created, err := store.Create(ctx, "personal", oldRoot, &config.Workspace{
+		Meta:    config.Meta{Version: 1},
+		Aliases: map[string]string{"ws": "personal/workspace"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revisionsBefore int
+	if err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions`).Scan(&revisionsBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := store.SetRoot(ctx, created.Name, newRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Root != newRoot || updated.Revision != created.Revision || updated.WorkspaceID != created.WorkspaceID || updated.Epoch != created.Epoch || updated.Head != created.Head {
+		t.Fatalf("updated workspace = %#v, created = %#v", updated, created)
+	}
+	if updated.State.Aliases["ws"] != "personal/workspace" {
+		t.Fatalf("aliases = %#v", updated.State.Aliases)
+	}
+	var revisionsAfter int
+	if err = store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM revisions`).Scan(&revisionsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if revisionsAfter != revisionsBefore {
+		t.Fatalf("revision count = %d, want %d", revisionsAfter, revisionsBefore)
+	}
+	if _, err = store.LoadByRoot(ctx, oldRoot); !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Fatalf("old root lookup error = %v", err)
+	}
+	found, err := store.LoadByRoot(ctx, newRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found.Name != created.Name {
+		t.Fatalf("workspace at new root = %q", found.Name)
+	}
+}
+
+func TestStoreSetRootRejectsOwnedRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "registry.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	firstRoot := t.TempDir()
+	secondRoot := t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}}
+	if _, err = store.Create(ctx, "first", firstRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Create(ctx, "second", secondRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.SetRoot(ctx, "second", firstRoot); err == nil {
+		t.Fatal("setting an owned root succeeded")
+	}
+	second, err := store.LoadByName(ctx, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Root != secondRoot {
+		t.Fatalf("second root = %q, want %q", second.Root, secondRoot)
 	}
 }
 

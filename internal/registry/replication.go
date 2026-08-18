@@ -1,0 +1,623 @@
+package registry
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"sort"
+
+	"github.com/kuchmenko/workspace/internal/config"
+)
+
+func (store *Store) Export(ctx context.Context, name string) (Bundle, error) {
+	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Bundle{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	workspace, err := loadWorkspaceByName(ctx, tx, name)
+	if err != nil {
+		return Bundle{}, err
+	}
+	revisions, err := loadRevisionsFrom(ctx, tx, workspace.WorkspaceID)
+	if err != nil {
+		return Bundle{}, err
+	}
+	heads, err := loadHeadsFrom(ctx, tx, workspace.WorkspaceID)
+	if err != nil {
+		return Bundle{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Bundle{}, err
+	}
+	return Bundle{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: revisions}, nil
+}
+
+func (store *Store) Attach(ctx context.Context, name, root string, bundle Bundle) (Workspace, error) {
+	return store.attach(ctx, name, root, bundle, "", false)
+}
+
+func (store *Store) AttachFrom(ctx context.Context, name, root string, bundle Bundle, sourceID string) (Workspace, error) {
+	return store.attach(ctx, name, root, bundle, sourceID, true)
+}
+
+func (store *Store) attach(ctx context.Context, name, root string, bundle Bundle, sourceID string, authorize bool) (Workspace, error) {
+	prepared, err := store.prepareAttachment(ctx, name, root, bundle, sourceID, authorize)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if err = store.persistAttachment(ctx, prepared, bundle); err != nil {
+		return Workspace{}, err
+	}
+	return store.LoadByName(ctx, prepared.name)
+}
+
+type attachment struct {
+	name, root, head string
+	heads            []string
+	body             []byte
+}
+
+func (store *Store) prepareAttachment(ctx context.Context, name, root string, bundle Bundle, sourceID string, authorize bool) (attachment, error) {
+	name, err := validateWorkspaceName(name)
+	if err != nil {
+		return attachment{}, err
+	}
+	canonical, err := canonicalRoot(root)
+	if err != nil {
+		return attachment{}, err
+	}
+	heads, err := store.validateBundle(ctx, bundle, authorize)
+	if err != nil {
+		return attachment{}, err
+	}
+	if len(heads) != 1 {
+		return attachment{}, errors.New("cannot attach a workspace with unresolved divergent heads")
+	}
+	head := heads[0]
+	if authorize && !store.attachmentAuthorized(ctx, bundle, head, sourceID) {
+		return attachment{}, errors.New("local device or workspace source is not authorized")
+	}
+	state, err := stateAt(bundle.Revisions, head)
+	if err != nil {
+		return attachment{}, err
+	}
+	body, err := config.EncodeWorkspace(state)
+	if err != nil {
+		return attachment{}, err
+	}
+	return attachment{name: name, root: canonical, head: head, heads: heads, body: body}, nil
+}
+
+func (store *Store) attachmentAuthorized(ctx context.Context, bundle Bundle, head, sourceID string) bool {
+	active, err := store.activeNetworkDevices(ctx)
+	if err != nil {
+		return false
+	}
+	policy := revisionPolicy(bundle.Revisions, head)
+	return policy.Role(store.identity.ID(), active[store.identity.ID()]) != "" && policy.Role(sourceID, active[sourceID]) != ""
+}
+
+func (store *Store) persistAttachment(ctx context.Context, prepared attachment, bundle Bundle) error {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, revision := range bundle.Revisions {
+		if err = insertRevision(tx, revision); err != nil {
+			return err
+		}
+	}
+	if err = validateStoredParents(tx, bundle.WorkspaceID); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspaces(name,root,revision,registry) VALUES(?,?,1,?)`, prepared.name, prepared.root, prepared.body); err != nil {
+		return fmt.Errorf("attach workspace: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_protocol(name,workspace_id,epoch,head_id) VALUES(?,?,?,?)`, prepared.name, bundle.WorkspaceID, bundle.Epoch, prepared.head); err != nil {
+		return err
+	}
+	if err = replaceHeads(ctx, tx, bundle.WorkspaceID, prepared.heads); err != nil {
+		return err
+	}
+	if err = replaceConflicts(ctx, tx, bundle.WorkspaceID, prepared.head, revisionConflicts(bundle.Revisions, prepared.head)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (store *Store) Integrate(ctx context.Context, name string, bundle Bundle) (Workspace, []Conflict, error) {
+	return store.integrate(ctx, name, bundle, "", false)
+}
+
+func (store *Store) IntegrateFrom(ctx context.Context, name string, bundle Bundle, sourceID string) (Workspace, []Conflict, error) {
+	return store.integrate(ctx, name, bundle, sourceID, true)
+}
+
+func (store *Store) integrate(ctx context.Context, name string, bundle Bundle, sourceID string, authorize bool) (Workspace, []Conflict, error) {
+	remoteHeads, err := store.validateBundle(ctx, bundle, authorize)
+	if err != nil {
+		return Workspace{}, nil, err
+	}
+	active, err := store.integrationDevices(ctx, sourceID, authorize)
+	if err != nil {
+		return Workspace{}, nil, err
+	}
+	conflicts, err := store.persistIncoming(ctx, name, bundle, sourceID, authorize, active, remoteHeads)
+	if err != nil {
+		return Workspace{}, nil, err
+	}
+	workspace, err := store.LoadByName(ctx, name)
+	return workspace, conflicts, err
+}
+
+func (store *Store) integrationDevices(ctx context.Context, sourceID string, authorize bool) (map[string]bool, error) {
+	if !authorize {
+		return map[string]bool{}, nil
+	}
+	active, err := store.activeNetworkDevices(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if sourceID == "" || !active[sourceID] {
+		return nil, errors.New("workspace source is not an active network device")
+	}
+	return active, nil
+}
+
+func (store *Store) persistIncoming(ctx context.Context, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, remoteHeads []string) ([]Conflict, error) {
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	return store.persistIncomingTx(ctx, tx, name, bundle, sourceID, authorize, active, remoteHeads, true)
+}
+
+func (store *Store) persistIncomingTx(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, remoteHeads []string, insertRevisions bool) ([]Conflict, error) {
+	base, policy, err := prepareIncoming(ctx, tx, name, bundle, sourceID, authorize, active, insertRevisions)
+	if err != nil {
+		return nil, err
+	}
+	localHeads, err := loadHeadsFrom(ctx, tx, base.workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	adoptAccess, err := canAdoptAuthoritativeAccessTransition(tx, bundle, base, remoteHeads)
+	if err != nil {
+		return nil, err
+	}
+	if adoptAccess {
+		return persistAuthoritativeAccessTransition(ctx, tx, name, bundle, sourceID, authorize, base, remoteHeads[0])
+	}
+	accessConflicted, err := handleExistingAccessConflict(ctx, tx, name, base.workspaceID, localHeads, remoteHeads)
+	if err != nil {
+		return nil, err
+	}
+	role := integrationRole(policy, store.identity.ID(), authorize, active)
+	head, state, conflicts, heads, err := store.integrateHeadSet(tx, base.workspaceID, bundle.Epoch, base.head, remoteHeads, role)
+	if err != nil {
+		var divergence accessDivergence
+		if errors.As(err, &divergence) {
+			return nil, persistAccessDivergence(ctx, tx, name, base.workspaceID, append(localHeads, remoteHeads...))
+		}
+		return nil, err
+	}
+	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
+		return nil, err
+	}
+	if err = clearResolvedIncomingState(ctx, tx, bundle, sourceID, authorize, accessConflicted, heads); err != nil {
+		return nil, err
+	}
+	if err = commitIncoming(ctx, tx, base.workspaceID, heads); err != nil {
+		return nil, err
+	}
+	return conflicts, nil
+}
+
+func canAdoptAuthoritativeAccessTransition(tx *sql.Tx, bundle Bundle, base incomingBase, remoteHeads []string) (bool, error) {
+	if bundle.Epoch <= base.epoch || len(remoteHeads) != 1 || !bundleHeadsAreAccessChanges(bundle) {
+		return false, nil
+	}
+	ancestor, found, err := commonAncestor(tx, base.head, remoteHeads[0])
+	if err != nil || !found {
+		return false, err
+	}
+	localPolicy, err := policyAtTx(tx, base.head)
+	if err != nil {
+		return false, err
+	}
+	ancestorPolicy, err := policyAtTx(tx, ancestor)
+	if err != nil {
+		return false, err
+	}
+	return equalPolicy(localPolicy, ancestorPolicy), nil
+}
+
+func persistAuthoritativeAccessTransition(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, base incomingBase, head string) ([]Conflict, error) {
+	state, err := loadRevisionState(tx, head)
+	if err != nil {
+		return nil, err
+	}
+	conflicts, err := loadRevisionConflicts(tx, head)
+	if err != nil {
+		return nil, err
+	}
+	if err = persistIncomingState(ctx, tx, state, base, name, head, bundle.Epoch, conflicts); err != nil {
+		return nil, err
+	}
+	if err = clearResolvedIncomingState(ctx, tx, bundle, sourceID, authorize, true, []string{head}); err != nil {
+		return nil, err
+	}
+	if err = commitIncoming(ctx, tx, base.workspaceID, []string{head}); err != nil {
+		return nil, err
+	}
+	return conflicts, nil
+}
+
+func handleExistingAccessConflict(ctx context.Context, tx *sql.Tx, name, workspaceID string, localHeads, remoteHeads []string) (bool, error) {
+	_, conflicted, err := accessConflictBase(tx, workspaceID)
+	if err != nil || !conflicted {
+		return conflicted, err
+	}
+	reduced, err := reduceHeads(tx, append(localHeads, remoteHeads...))
+	if err != nil {
+		return true, err
+	}
+	if len(reduced) > 1 {
+		return true, persistAccessDivergence(ctx, tx, name, workspaceID, reduced)
+	}
+	return true, nil
+}
+
+func clearResolvedIncomingState(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID string, authorize, accessConflicted bool, heads []string) error {
+	if accessConflicted && len(heads) == 1 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workspace_access_conflicts WHERE workspace_id=?`, bundle.WorkspaceID); err != nil {
+			return err
+		}
+	}
+	if authorize {
+		_, err := tx.ExecContext(ctx, `DELETE FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=? AND epoch<=?`, bundle.WorkspaceID, sourceID, bundle.Epoch)
+		return err
+	}
+	return nil
+}
+
+func prepareIncoming(ctx context.Context, tx *sql.Tx, name string, bundle Bundle, sourceID string, authorize bool, active map[string]bool, insertRevisions bool) (incomingBase, AccessPolicy, error) {
+	base, err := loadIncomingBase(ctx, tx, name)
+	if err != nil {
+		return base, AccessPolicy{}, err
+	}
+	if base.workspaceID != bundle.WorkspaceID {
+		return base, AccessPolicy{}, errors.New("workspace ID does not match")
+	}
+	policyHead := base.head
+	if conflictBase, found, conflictErr := accessConflictBase(tx, base.workspaceID); conflictErr != nil {
+		return base, AccessPolicy{}, conflictErr
+	} else if found {
+		policyHead = conflictBase
+	}
+	policy, err := policyAtTx(tx, policyHead)
+	if err != nil {
+		return base, policy, err
+	}
+	if err = acceptBundleEpoch(ctx, tx, bundle, sourceID, authorize, base.epoch); err != nil {
+		return base, policy, err
+	}
+	if err = requireAuthorizedSource(policy, sourceID, authorize, active); err != nil {
+		return base, policy, err
+	}
+	if insertRevisions {
+		err = insertIncomingRevisions(tx, base.workspaceID, bundle.Revisions)
+	}
+	return base, policy, err
+}
+
+func requireAuthorizedSource(policy AccessPolicy, sourceID string, authorize bool, active map[string]bool) error {
+	if authorize && policy.Role(sourceID, active[sourceID]) == "" {
+		return errors.New("workspace source is not authorized")
+	}
+	return nil
+}
+
+func persistIncomingState(ctx context.Context, tx *sql.Tx, state *config.Workspace, base incomingBase, name, head string, epoch int64, conflicts []Conflict) error {
+	if state == nil {
+		return nil
+	}
+	return persistIntegration(ctx, tx, state, base.root, name, base.workspaceID, base.head, head, epoch, base.revision, conflicts)
+}
+
+func commitIncoming(ctx context.Context, tx *sql.Tx, workspaceID string, heads []string) error {
+	if err := replaceHeads(ctx, tx, workspaceID, heads); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+type incomingBase struct {
+	workspaceID string
+	head        string
+	root        string
+	epoch       int64
+	revision    int64
+}
+
+func loadIncomingBase(ctx context.Context, tx *sql.Tx, name string) (incomingBase, error) {
+	var base incomingBase
+	err := tx.QueryRowContext(ctx, `SELECT p.workspace_id,p.epoch,p.head_id,w.root,w.revision FROM workspace_protocol p JOIN workspaces w ON w.name=p.name WHERE p.name=?`, name).Scan(&base.workspaceID, &base.epoch, &base.head, &base.root, &base.revision)
+	return base, err
+}
+
+func acceptBundleEpoch(ctx context.Context, tx *sql.Tx, bundle Bundle, sourceID string, authorize bool, localEpoch int64) error {
+	if bundle.Epoch >= localEpoch {
+		return nil
+	}
+	if bundleHeadsAreAccessChanges(bundle) {
+		return nil
+	}
+	if !authorize {
+		return ErrWorkspaceEpochStale
+	}
+	if err := quarantineBundle(ctx, tx, bundle, sourceID, "workspace epoch is stale"); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return ErrWorkspaceEpochStale
+}
+
+func bundleHeadsAreAccessChanges(bundle Bundle) bool {
+	revisions := make(map[string]Revision, len(bundle.Revisions))
+	for _, revision := range bundle.Revisions {
+		revisions[revision.ID] = revision
+	}
+	for _, head := range bundle.Heads {
+		kind := revisions[head].Kind
+		if kind != "access" && kind != "access-recovery" && kind != "access-resolution" {
+			return false
+		}
+	}
+	return len(bundle.Heads) > 0
+}
+
+func integrationRole(policy AccessPolicy, localID string, authorize bool, active map[string]bool) string {
+	if authorize {
+		return policy.Role(localID, active[localID])
+	}
+	return policy.Role(localID, true)
+}
+
+func insertIncomingRevisions(tx *sql.Tx, workspaceID string, revisions []Revision) error {
+	for _, incoming := range revisions {
+		if err := insertRevision(tx, incoming); err != nil {
+			return err
+		}
+	}
+	return validateStoredParents(tx, workspaceID)
+}
+
+func persistIntegration(ctx context.Context, tx *sql.Tx, state *config.Workspace, root, name, workspaceID, localHead, head string, epoch, revisionNumber int64, conflicts []Conflict) error {
+	state.RestoreRoot(root)
+	body, err := config.EncodeWorkspace(state)
+	if err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET registry=?,revision=revision+1 WHERE name=? AND revision=?`, body, name, revisionNumber)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during integration")
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, head, name, localHead)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return errors.New("workspace changed during integration")
+	}
+	return replaceConflicts(ctx, tx, workspaceID, head, conflicts)
+}
+
+func (store *Store) integrateHeadSet(tx *sql.Tx, workspaceID string, epoch int64, localHead string, remoteHeads []string, role string) (string, *config.Workspace, []Conflict, []string, error) {
+	current := localHead
+	var state *config.Workspace
+	var conflicts []Conflict
+	for _, remoteHead := range remoteHeads {
+		if role == WorkspaceReplica {
+			continue
+		}
+		next, nextState, nextConflicts, err := store.integrateHeads(tx, workspaceID, epoch, current, remoteHead)
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		current = next
+		if nextState != nil {
+			state, conflicts = nextState, nextConflicts
+		}
+	}
+	if role != WorkspaceReplica {
+		return current, state, conflicts, []string{current}, nil
+	}
+	heads, err := reduceHeads(tx, append(remoteHeads, localHead))
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	if len(heads) == 1 && heads[0] != localHead {
+		state, err = loadRevisionState(tx, heads[0])
+		if err != nil {
+			return "", nil, nil, nil, err
+		}
+		conflicts, err = loadRevisionConflicts(tx, heads[0])
+		return heads[0], state, conflicts, heads, err
+	}
+	return localHead, nil, nil, heads, nil
+}
+
+func (store *Store) integrateHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	remoteIsAncestor, err := isAncestor(tx, remoteHead, localHead)
+	if err != nil || localHead == remoteHead || remoteIsAncestor {
+		return localHead, nil, nil, err
+	}
+	localIsAncestor, err := isAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if localIsAncestor {
+		state, err := loadRevisionState(tx, remoteHead)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		conflicts, err := loadRevisionConflicts(tx, remoteHead)
+		return remoteHead, state, conflicts, err
+	}
+	return store.mergeHeads(tx, workspaceID, epoch, localHead, remoteHead)
+}
+
+func (store *Store) mergeHeads(tx *sql.Tx, workspaceID string, epoch int64, localHead, remoteHead string) (string, *config.Workspace, []Conflict, error) {
+	base, leftPolicy, err := mergeBaseAndPolicy(tx, localHead, remoteHead)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	parents := []string{localHead, remoteHead}
+	sort.Strings(parents)
+	baseBody, leftBody, rightBody, err := loadMergeSnapshots(tx, base, parents)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	mergedBody, conflicts, err := mergeSnapshots(baseBody, leftBody, rightBody)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	conflicts, err = mergeRevisionConflicts(tx, base, parents, conflicts)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	merged, err := makeRevision(workspaceID, epoch, "merge", parents, mergedBody, conflicts, leftPolicy, store.identity)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if err = insertRevision(tx, merged); err != nil {
+		return "", nil, nil, err
+	}
+	state, err := decodeSnapshot(mergedBody)
+	return merged.ID, state, conflicts, err
+}
+
+func mergeBaseAndPolicy(tx *sql.Tx, localHead, remoteHead string) (string, AccessPolicy, error) {
+	base, found, err := commonAncestor(tx, localHead, remoteHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !found {
+		return "", AccessPolicy{}, errors.New("divergent revisions have no common ancestor")
+	}
+	localResolutions, err := revisionKindIDsBetween(tx, localHead, base, "access-resolution")
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	remoteResolutions, err := revisionKindIDsBetween(tx, remoteHead, base, "access-resolution")
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !equalStringSets(localResolutions, remoteResolutions) {
+		return "", AccessPolicy{}, errors.New("stale access branch cannot reopen a resolved conflict")
+	}
+	leftPolicy, err := policyAtTx(tx, localHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	rightPolicy, err := policyAtTx(tx, remoteHead)
+	if err != nil {
+		return "", AccessPolicy{}, err
+	}
+	if !equalPolicy(leftPolicy, rightPolicy) {
+		return "", AccessPolicy{}, accessDivergence{base: base, heads: []string{localHead, remoteHead}}
+	}
+	return base, leftPolicy, nil
+}
+
+func mergeRevisionConflicts(tx *sql.Tx, base string, parents []string, conflicts []Conflict) ([]Conflict, error) {
+	baseConflicts, err := loadRevisionConflicts(tx, base)
+	if err != nil {
+		return nil, err
+	}
+	left, err := loadRevisionConflicts(tx, parents[0])
+	if err != nil {
+		return nil, err
+	}
+	right, err := loadRevisionConflicts(tx, parents[1])
+	if err != nil {
+		return nil, err
+	}
+	left = unresolvedOnBothBranches(baseConflicts, left, right)
+	right = unresolvedOnBothBranches(baseConflicts, right, left)
+	return combineConflicts(left, right, conflicts)
+}
+
+func unresolvedOnBothBranches(base, current, other []Conflict) []Conflict {
+	basePaths := conflictPaths(base)
+	otherPaths := conflictPaths(other)
+	result := make([]Conflict, 0, len(current))
+	for _, conflict := range current {
+		if !basePaths[conflict.Path] || otherPaths[conflict.Path] {
+			result = append(result, conflict)
+		}
+	}
+	return result
+}
+
+func conflictPaths(conflicts []Conflict) map[string]bool {
+	paths := make(map[string]bool, len(conflicts))
+	for _, conflict := range conflicts {
+		paths[conflict.Path] = true
+	}
+	return paths
+}
+
+func revisionKindIDsBetween(tx *sql.Tx, head, base, kind string) (map[string]bool, error) {
+	rows, err := tx.Query(`WITH RECURSIVE ancestors(id) AS (
+		SELECT ? UNION SELECT p.parent_id FROM revision_parents p JOIN ancestors a ON p.revision_id=a.id WHERE a.id<>?
+	) SELECT r.id FROM revisions r JOIN ancestors a ON a.id=r.id WHERE a.id<>? AND r.kind=?`, head, base, base, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	result := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
+}
+
+func equalStringSets(left, right map[string]bool) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if !right[value] {
+			return false
+		}
+	}
+	return true
+}
+
+func loadMergeSnapshots(tx *sql.Tx, base string, parents []string) ([]byte, []byte, []byte, error) {
+	baseBody, err := loadRevisionSnapshot(tx, base)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	leftBody, err := loadRevisionSnapshot(tx, parents[0])
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	rightBody, err := loadRevisionSnapshot(tx, parents[1])
+	return baseBody, leftBody, rightBody, err
+}

@@ -1,0 +1,442 @@
+package network
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/kuchmenko/workspace/internal/device"
+	"github.com/kuchmenko/workspace/internal/registry"
+)
+
+type pairReady struct {
+	code     string
+	endpoint string
+}
+
+var networkTestStorePaths sync.Map
+
+type pairOutcome struct {
+	result PairResult
+	err    error
+}
+
+func TestCanceledPairLeavesStoreUnpaired(t *testing.T) {
+	store, identity := networkTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	ready := make(chan struct{}, 1)
+	outcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: store, Identity: identity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(string, string) { ready <- struct{}{} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		outcome <- err
+	}()
+	<-ready
+	cancel()
+	if err := <-outcome; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Pair error = %v, want context canceled", err)
+	}
+	if _, err := store.Network(context.Background()); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Network error = %v, want no network", err)
+	}
+}
+
+func TestPairResponseAcceptsValidNetworkHistoryBeyondOneMiB(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	joinerStore, joinerIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := inviterStore.EnsureNetwork(ctx, strings.Repeat("n", 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: inviterStore, Identity: inviterIdentity, Name: "inviter", Role: registry.NetworkAdmin,
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: joinerStore, Identity: joinerIdentity, Name: "joiner", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+	state, err := joinerStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Devices) != 2 {
+		t.Fatalf("joined network devices = %#v", state.Devices)
+	}
+}
+
+func TestPairAcceptsIPAddressDeviceName(t *testing.T) {
+	for _, name := range []string{"127.0.0.1", "::1"} {
+		t.Run(name, func(t *testing.T) {
+			inviterStore, inviterIdentity := networkTestStore(t)
+			joinerStore, joinerIdentity := networkTestStore(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			ready := make(chan pairReady, 1)
+			serverOutcome := make(chan error, 1)
+			go func() {
+				_, err := Pair(ctx, PairOptions{
+					Store: inviterStore, Identity: inviterIdentity, Name: name, Role: registry.NetworkAdmin,
+					ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+					Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+					Confirm: func(string, string) (bool, error) { return true, nil },
+				})
+				serverOutcome <- err
+			}()
+			pairing := <-ready
+			if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+				Store: joinerStore, Identity: joinerIdentity, Name: "joiner", Code: pairing.code,
+				Confirm: func(string, string) (bool, error) { return true, nil },
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-serverOutcome; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestPairingFailureEscapesPeerControlCharacters(t *testing.T) {
+	err := pairingFailure("rejected\nforged\x1b]0;owned\a")
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Fatalf("pairing failure contains peer control characters: %q", err)
+	}
+}
+
+func TestPairExchangesConfirmedPinnedIdentities(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan pairOutcome, 1)
+	serverAuth := make(chan string, 1)
+	serverConfirming := make(chan struct{})
+	clientConfirming := make(chan struct{})
+	go func() {
+		result, err := Pair(ctx, PairOptions{
+			Store:            archStore,
+			Identity:         archIdentity,
+			Name:             "arch",
+			Role:             registry.NetworkAdmin,
+			ListenAddress:    "127.0.0.1:0",
+			DisableDiscovery: true,
+			Ready:            func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(peerName, authentication string) (bool, error) {
+				if peerName != "asahi" {
+					t.Errorf("server peer name = %q", peerName)
+				}
+				serverAuth <- authentication
+				close(serverConfirming)
+				select {
+				case <-clientConfirming:
+				case <-ctx.Done():
+					return false, ctx.Err()
+				}
+				return true, nil
+			},
+		})
+		serverOutcome <- pairOutcome{result: result, err: err}
+	}()
+	pairing := <-ready
+	var clientAuth string
+	clientResult, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store:    asahiStore,
+		Identity: asahiIdentity,
+		Name:     "asahi",
+		Code:     pairing.code,
+		Confirm: func(peerName, authentication string) (bool, error) {
+			if peerName != "arch" {
+				t.Errorf("client peer name = %q", peerName)
+			}
+			clientAuth = authentication
+			close(clientConfirming)
+			select {
+			case <-serverConfirming:
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+			return true, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := <-serverOutcome
+	if server.err != nil {
+		t.Fatal(server.err)
+	}
+	if clientAuth == "" || clientAuth != <-serverAuth {
+		t.Fatalf("authentication strings did not match: client=%q", clientAuth)
+	}
+	if clientResult.Peer.ID != archIdentity.ID() || server.result.Peer.ID != asahiIdentity.ID() {
+		t.Fatalf("pair results client=%#v server=%#v", clientResult, server.result)
+	}
+	archNetwork, err := archStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asahiNetwork, err := asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(archNetwork, asahiNetwork) {
+		t.Fatalf("network state differs:\narch=%#v\nasahi=%#v", archNetwork, asahiNetwork)
+	}
+}
+
+func TestPairRetriesSameConfirmedIdentityAfterFinalResponseLoss(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	_, joinerIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	options := PairOptions{Store: inviterStore, Identity: inviterIdentity, Name: "inviter", Role: registry.NetworkMember}
+
+	server, client := net.Pipe()
+	_ = client.Close()
+	_, retry, err := persistPairedDevice(ctx, server, joinerIdentity.PublicKey(), "joiner", options)
+	_ = server.Close()
+	if err == nil || !retry {
+		t.Fatalf("lost final response returned retry=%v, err=%v", retry, err)
+	}
+
+	server, client = net.Pipe()
+	clientOutcome := make(chan error, 1)
+	go func() {
+		var response pairResponse
+		err := json.NewDecoder(client).Decode(&response)
+		if err == nil {
+			err = json.NewEncoder(client).Encode(pairAcknowledgement{Imported: true})
+		}
+		clientOutcome <- err
+	}()
+	result, retry, err := persistPairedDevice(ctx, server, joinerIdentity.PublicKey(), "joiner", options)
+	_ = server.Close()
+	_ = client.Close()
+	if err != nil || retry {
+		t.Fatalf("retry returned retry=%v, err=%v", retry, err)
+	}
+	if clientErr := <-clientOutcome; clientErr != nil {
+		t.Fatal(clientErr)
+	}
+	if result.Peer.ID != joinerIdentity.ID() {
+		t.Fatalf("paired peer = %#v", result.Peer)
+	}
+}
+
+func TestPairSerializesConcurrentValidCodeConfirmations(t *testing.T) {
+	inviterStore, inviterIdentity := networkTestStore(t)
+	firstStore, firstIdentity := networkTestStore(t)
+	secondStore, secondIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	confirmations := make(chan string, 2)
+	releaseConfirmation := make(chan struct{})
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: inviterStore, Identity: inviterIdentity, Name: "inviter",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(peerName, _ string) (bool, error) {
+				confirmations <- peerName
+				<-releaseConfirmation
+				return true, nil
+			},
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	join := func(store *registry.Store, identity device.Identity, name string) <-chan error {
+		outcome := make(chan error, 1)
+		go func() {
+			_, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+				Store: store, Identity: identity, Name: name, Code: pairing.code,
+				Confirm: func(string, string) (bool, error) { return true, nil },
+			})
+			outcome <- err
+		}()
+		return outcome
+	}
+	firstOutcome := join(firstStore, firstIdentity, "first")
+	<-confirmations
+	secondOutcome := join(secondStore, secondIdentity, "second")
+	concurrent := false
+	select {
+	case <-confirmations:
+		concurrent = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(releaseConfirmation)
+	serverErr := <-serverOutcome
+	firstErr := <-firstOutcome
+	secondErr := <-secondOutcome
+	if concurrent {
+		t.Fatal("pair confirmation callback ran concurrently")
+	}
+	if serverErr != nil {
+		t.Fatal(serverErr)
+	}
+	if (firstErr == nil) == (secondErr == nil) {
+		t.Fatalf("join errors = first %v, second %v; want exactly one success", firstErr, secondErr)
+	}
+}
+
+func TestPairRejectsUnconfirmedJoinWithoutAddingDevice(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return false, nil },
+	}); err == nil {
+		t.Fatal("unconfirmed join succeeded")
+	}
+	if err := <-serverOutcome; err == nil {
+		t.Fatal("pair server accepted unconfirmed join")
+	}
+	if _, err := archStore.Network(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("Network error = %v, want no network", err)
+	}
+}
+
+func TestPairRejectsJoinerFromAnotherNetworkWithoutAddingDevice(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := archStore.EnsureNetwork(ctx, "arch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := asahiStore.EnsureNetwork(ctx, "asahi"); err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err == nil {
+		t.Fatal("cross-network join succeeded")
+	}
+	cancel()
+	<-serverOutcome
+	state, err := archStore.Network(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Devices) != 1 || state.Devices[0].ID != archIdentity.ID() {
+		t.Fatalf("inviter network changed after cross-network join: %#v", state)
+	}
+}
+
+func TestPairAllowsCorrectCodeAfterRejectedWrongCode(t *testing.T) {
+	archStore, archIdentity := networkTestStore(t)
+	asahiStore, asahiIdentity := networkTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ready := make(chan pairReady, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		_, err := Pair(ctx, PairOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready:   func(code, endpoint string) { ready <- pairReady{code: code, endpoint: endpoint} },
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		})
+		serverOutcome <- err
+	}()
+	pairing := <-ready
+	for attempt := 0; attempt < 10; attempt++ {
+		connection, err := net.Dial("tcp", pairing.endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = connection.Close()
+	}
+	for attempt := 0; attempt < maxPairCodeFailures-1; attempt++ {
+		if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+			Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: "wrong-code",
+			Confirm: func(string, string) (bool, error) { return true, nil },
+		}); err == nil {
+			t.Fatal("wrong pairing code succeeded")
+		}
+	}
+	if _, err := JoinEndpoint(ctx, pairing.endpoint, JoinOptions{
+		Store: asahiStore, Identity: asahiIdentity, Name: "asahi", Code: pairing.code,
+		Confirm: func(string, string) (bool, error) { return true, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func networkTestStore(t *testing.T) (*registry.Store, device.Identity) {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "registry.db")
+	store, err := registry.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	networkTestStorePaths.Store(store, path)
+	t.Cleanup(func() { _ = store.Close() })
+	identity, err := device.Load(filepath.Join(directory, "identity.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, identity
+}

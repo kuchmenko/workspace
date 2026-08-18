@@ -25,8 +25,8 @@ var (
 )
 
 var workspaceIndependentCommands = map[string]bool{
-	"help": true, "completion": true, "docs": true,
-	"explorer": true, "ws": true, "workspace": true,
+	"help": true, "completion": true, "docs": true, "auth": true,
+	"explorer": true, "network": true, "ws": true, "workspace": true,
 }
 
 const skipsWorkspaceAnnotation = "ws.skips-workspace"
@@ -75,6 +75,7 @@ func NewRootCmd() *cobra.Command {
 		newDocsCmd(),
 		newDoctorCmd(),
 		newWorkspaceCmd(),
+		newNetworkCmd(),
 	)
 
 	return root
@@ -90,21 +91,29 @@ func prepareCommand(cmd *cobra.Command, _ []string) error {
 	if cmd.Name() == "setup" {
 		return loadSetupWorkspace()
 	}
-	return loadCurrentWorkspace()
+	err := loadCurrentWorkspace()
+	if err != nil && commandIsAlias(cmd) && wsRoot == "" && strings.TrimSpace(os.Getenv("WS_ROOT")) == "" {
+		return loadSoleRegistryWorkspace()
+	}
+	return err
+}
+
+func commandIsAlias(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Name() == "alias" {
+			return true
+		}
+	}
+	return false
 }
 
 func commandSkipsWorkspace(cmd *cobra.Command) bool {
-	if cmd.Annotations[skipsWorkspaceAnnotation] == "true" {
-		return true
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Annotations[skipsWorkspaceAnnotation] == "true" || workspaceIndependentCommands[current.Name()] && (current.Parent() != nil || current == cmd) {
+			return true
+		}
 	}
-	if workspaceIndependentCommands[cmd.Name()] {
-		return true
-	}
-	if cmd.Parent() == nil {
-		return false
-	}
-	parent := cmd.Parent().Name()
-	return parent == "explorer" || parent == "workspace" || parent == "auth"
+	return false
 }
 
 func loadDoctorWorkspace() error {
@@ -175,6 +184,38 @@ func loadCurrentRegistryWorkspace() (bool, error) {
 	wsRoot = loaded.Root
 	ws = loaded.State
 	return true, nil
+}
+
+func loadSoleRegistryWorkspace() error {
+	path, err := registry.DefaultPath()
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return errors.New("no SQLite workspace found; run `ws workspace import <workspace.toml>` or `ws workspace create`")
+	}
+	if err != nil {
+		return err
+	}
+	store, err := registry.Open(path)
+	if err != nil {
+		return err
+	}
+	workspaces, err := store.List(context.Background())
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
+	if len(workspaces) != 1 {
+		_ = store.Close()
+		return errors.New("alias commands outside a workspace require exactly one registered workspace or --root")
+	}
+	registryStore = store
+	registryState = workspaces[0]
+	wsRoot = registryState.Root
+	ws = registryState.State
+	wsLoadErr = nil
+	return nil
 }
 
 func Execute() {
