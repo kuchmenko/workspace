@@ -1,6 +1,8 @@
 package network
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -71,5 +73,20 @@ func TestDiscoveryEndpointsRetainsEveryAddress(t *testing.T) {
 		if got[index] != want[index] {
 			t.Fatalf("endpoints = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestPeerDiscoverySetupFailureIsOffline(t *testing.T) {
+	peers, err := normalizePeerDiscovery(context.Background(), nil, errors.New("multicast is unavailable"))
+	if err != nil || len(peers) != 0 {
+		t.Fatalf("peers = %v, error = %v", peers, err)
+	}
+}
+
+func TestPeerDiscoveryCancellationIsPreserved(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := normalizePeerDiscovery(ctx, nil, errors.New("browse stopped")); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
 	}
 }

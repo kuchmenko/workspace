@@ -3,12 +3,15 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strings"
+	"unicode"
 )
 
 type ValidationKind string
 
 const (
 	ValidationDuplicateBranch ValidationKind = "duplicate-branch"
+	ValidationRemoteControl   ValidationKind = "remote-control"
 )
 
 type ValidationIssue struct {
@@ -22,14 +25,29 @@ func (w *Workspace) Validate() []ValidationIssue {
 	var issues []ValidationIssue
 	for projName, proj := range w.Projects {
 		issues = append(issues, duplicateBranchIssues(projName, proj.Branches)...)
+		if containsControl(proj.Remote) {
+			issues = append(issues, ValidationIssue{Kind: ValidationRemoteControl, Project: projName, Detail: "project remote contains control characters"})
+		}
+		for _, remote := range proj.Mirrors {
+			if containsControl(remote) {
+				issues = append(issues, ValidationIssue{Kind: ValidationRemoteControl, Project: projName, Detail: "mirror remote contains control characters"})
+			}
+		}
 	}
 	sort.Slice(issues, func(i, j int) bool {
 		if issues[i].Project != issues[j].Project {
 			return issues[i].Project < issues[j].Project
 		}
-		return issues[i].Branch < issues[j].Branch
+		if issues[i].Branch != issues[j].Branch {
+			return issues[i].Branch < issues[j].Branch
+		}
+		return issues[i].Detail < issues[j].Detail
 	})
 	return issues
+}
+
+func containsControl(value string) bool {
+	return strings.IndexFunc(value, unicode.IsControl) >= 0
 }
 
 func duplicateBranchIssues(projName string, branches []BranchMeta) []ValidationIssue {

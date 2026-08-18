@@ -94,11 +94,11 @@ func discoverPeers(ctx context.Context) (map[string][]string, error) {
 	defer cancel()
 	resolver, err := zeroconf.NewResolver()
 	if err != nil {
-		return nil, err
+		return normalizePeerDiscovery(ctx, nil, err)
 	}
 	entries := make(chan *zeroconf.ServiceEntry)
 	if err = resolver.Browse(browseContext, peerService, "local.", entries); err != nil {
-		return nil, err
+		return normalizePeerDiscovery(ctx, nil, err)
 	}
 	peers := map[string][]string{}
 	for entry := range entries {
@@ -116,6 +116,16 @@ func discoverPeers(ctx context.Context) (map[string][]string, error) {
 		return nil, err
 	}
 	return peers, nil
+}
+
+func normalizePeerDiscovery(ctx context.Context, peers map[string][]string, err error) (map[string][]string, error) {
+	if err == nil {
+		return peers, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	return map[string][]string{}, nil
 }
 
 func discoveryEndpoint(entry *zeroconf.ServiceEntry) string {
