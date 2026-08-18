@@ -469,6 +469,9 @@ func abortPeerRevisionImportUnlessComplete(endpoint string, target registry.Devi
 }
 
 func completedSyncStatus(before, after, remoteStatus string, localConflicts, remoteConflicts []registry.Conflict) string {
+	if remoteStatus == "rejected" {
+		return "rejected"
+	}
 	if remoteStatus == "conflicted" || len(localConflicts) > 0 || len(remoteConflicts) > 0 {
 		return "conflicted"
 	}

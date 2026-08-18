@@ -290,7 +290,7 @@ func TestUnauthorizedWorkspaceIsNotListedOrFetched(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSyncPullsCurrentHistoryAfterRejectingStaleAuthorizedWriter(t *testing.T) {
+func TestWorkspaceSyncRejectsStaleAuthorizedWriterAfterPullingCurrentHistory(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -334,7 +334,7 @@ func TestWorkspaceSyncPullsCurrentHistoryAfterRejectingStaleAuthorizedWriter(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "pulled" {
+	if result.Status != "rejected" {
 		t.Fatalf("stale writer sync status = %q", result.Status)
 	}
 	converged, err := asahiStore.LoadByName(ctx, "shared")
