@@ -81,6 +81,13 @@ func validateRevisionTransferLimits(revision Revision) error {
 	if len(revision.Snapshot) > maxRevisionBytes || len(revision.Conflicts) > maxRevisionItems || len(revision.Proofs) > maxRevisionItems {
 		return errors.New("workspace revision size limit exceeded")
 	}
+	wireBytes, err := revisionWireBytes(revision)
+	if err != nil {
+		return err
+	}
+	if wireBytes >= maxRevisionBatchWireBytes {
+		return errors.New("workspace revision size limit exceeded")
+	}
 	return nil
 }
 

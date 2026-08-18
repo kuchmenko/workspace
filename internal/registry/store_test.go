@@ -87,6 +87,42 @@ func TestStoreRejectsLocalRevisionBeyondTransferLimit(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsRevisionWhoseSerializedConflictsExceedTransferLimit(t *testing.T) {
+	store := openTestStore(t)
+	snapshot, err := encodeSnapshot(testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scalar := []byte(`"` + strings.Repeat("x", maxRevisionBytes-1024) + `"`)
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{store.identity.ID(): WorkspaceAdmin}}
+	revision, err := makeRevision("workspace", 1, "genesis", nil, snapshot, []Conflict{{Path: "/value", Base: scalar, Left: scalar, Right: scalar}}, policy, store.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireBytes, err := revisionWireBytes(revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wireBytes < maxRevisionBatchWireBytes {
+		t.Fatalf("serialized revision size = %d, want at least %d", wireBytes, maxRevisionBatchWireBytes)
+	}
+	tx, err := store.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = insertRevision(tx, revision); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversized serialized revision error = %v", err)
+	}
+	var count int
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM revisions WHERE id=?`, revision.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("oversized serialized revision was persisted")
+	}
+}
+
 func TestStoreRejectsUpdateWhenNetworkStateCannotLoad(t *testing.T) {
 	ctx := context.Background()
 	store, peer := pairedRegistryStores(t)
