@@ -334,6 +334,19 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	}
 }
 
+func TestWorkspaceSyncRejectedAndConflictedResultsAreFailures(t *testing.T) {
+	for _, status := range []string{"rejected", "conflicted"} {
+		result := peernetwork.SyncResult{Workspace: "shared", Device: "asahi", Status: status}
+		failure := workspaceSyncResultFailure(result)
+		if !strings.Contains(failure, "shared/asahi") || !strings.Contains(failure, status) {
+			t.Fatalf("%s result failure = %q", status, failure)
+		}
+	}
+	if failure := workspaceSyncResultFailure(peernetwork.SyncResult{Workspace: "shared", Device: "asahi", Status: "pulled"}); failure != "" {
+		t.Fatalf("successful result failure = %q", failure)
+	}
+}
+
 func TestWorkspaceConflictCommandsListAndResolve(t *testing.T) {
 	directory := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(directory, "state"))

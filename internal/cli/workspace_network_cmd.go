@@ -485,7 +485,14 @@ func synchronizeWorkspacePeerContext(ctx context.Context, store *registry.Store,
 		}
 		return peernetwork.SyncResult{Workspace: workspace, Device: target.Name, Status: "rejected"}, fmt.Sprintf("%s/%s: %v", workspace, target.Name, err)
 	}
-	return result, ""
+	return result, workspaceSyncResultFailure(result)
+}
+
+func workspaceSyncResultFailure(result peernetwork.SyncResult) string {
+	if result.Status == "rejected" || result.Status == "conflicted" {
+		return fmt.Sprintf("%s/%s: %s", result.Workspace, result.Device, result.Status)
+	}
+	return ""
 }
 
 func writeWorkspaceSyncResults(command *cobra.Command, results []peernetwork.SyncResult, jsonOutput bool) error {
