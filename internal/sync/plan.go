@@ -36,16 +36,18 @@ type ProjectSnapshot struct {
 }
 
 type ProjectPlan struct {
-	Name       string
-	State      ProjectState
-	MainPath   string
-	BarePath   string
-	Diagnostic string
-	Snapshot   ProjectSnapshot
-	OriginID   string
-	OriginURL  string
-	MirrorIDs  []string
-	MirrorURLs map[string]string
+	Name           string
+	State          ProjectState
+	MainPath       string
+	BarePath       string
+	Diagnostic     string
+	Snapshot       ProjectSnapshot
+	BaselineRemote string
+	LocalOrigin    string
+	OriginID       string
+	OriginURL      string
+	MirrorIDs      []string
+	MirrorURLs     map[string]string
 }
 
 type Target struct {
@@ -102,6 +104,55 @@ func BuildPlan(root string, ws *config.Workspace) Plan {
 	return plan
 }
 
+func RefreshPlan(root string, ws *config.Workspace, before Plan) Plan {
+	plan := BuildPlan(root, ws)
+	previous := make(map[string]ProjectPlan, len(before.Projects))
+	for _, project := range before.Projects {
+		previous[project.Name] = project
+	}
+	refreshEndpoints := false
+	for index := range plan.Projects {
+		project := &plan.Projects[index]
+		prior, ok := previous[project.Name]
+		if !ok {
+			continue
+		}
+		project.BaselineRemote = prior.BaselineRemote
+		if project.Snapshot.Remote == project.BaselineRemote {
+			continue
+		}
+		project.OriginURL = project.Snapshot.Remote
+		for targetIndex := range plan.Targets {
+			if plan.Targets[targetIndex].ID != project.OriginID {
+				continue
+			}
+			base := projectNetworkBase(root, *project)
+			plan.Targets[targetIndex] = newTarget(project.OriginID, TargetProjectOrigin, project.Name, "", project.Snapshot.Remote, project.BarePath, base)
+			refreshEndpoints = true
+			break
+		}
+	}
+	if refreshEndpoints {
+		plan.Endpoints = nil
+		plan.SourceGroups = nil
+		plan.buildEndpoints()
+	}
+	return plan
+}
+
+func RequiresFreshPreflight(before, after Plan) bool {
+	if len(before.Projects) != len(after.Projects) {
+		return true
+	}
+	for index := range before.Projects {
+		left, right := before.Projects[index], after.Projects[index]
+		if left.Name != right.Name || left.Snapshot.Remote != right.Snapshot.Remote {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Plan) addProject(name string, project config.Project) {
 	mainPath, err := layout.ProjectPath(p.Root, project.Path)
 	if err != nil {
@@ -114,16 +165,26 @@ func (p *Plan) addProject(name string, project config.Project) {
 		return
 	}
 	projectPlan := ProjectPlan{
-		Name:       name,
-		MainPath:   mainPath,
-		BarePath:   layout.BarePath(mainPath),
-		Snapshot:   snapshotProject(project),
-		OriginID:   "project:" + name + ":origin",
-		MirrorURLs: make(map[string]string),
+		Name:           name,
+		MainPath:       mainPath,
+		BarePath:       layout.BarePath(mainPath),
+		Snapshot:       snapshotProject(project),
+		BaselineRemote: project.Remote,
+		OriginID:       "project:" + name + ":origin",
+		MirrorURLs:     make(map[string]string),
 	}
 	projectPlan.State, projectPlan.Diagnostic = classifyProject(projectPlan.MainPath, projectPlan.BarePath)
 	base := projectNetworkBase(p.Root, projectPlan)
-	origin := newTarget(projectPlan.OriginID, TargetProjectOrigin, name, "", project.Remote, projectPlan.BarePath, base)
+	originURL := project.Remote
+	if repository := conversionRepository(projectPlan); repository != "" {
+		if local, err := git.ConfiguredRemoteURL(repository, "origin"); err == nil {
+			projectPlan.LocalOrigin = local
+			if local != project.Remote {
+				originURL = local
+			}
+		}
+	}
+	origin := newTarget(projectPlan.OriginID, TargetProjectOrigin, name, "", originURL, projectPlan.BarePath, base)
 	projectPlan.OriginURL = origin.URL
 	p.Targets = append(p.Targets, origin)
 	for _, mirror := range slices.Sorted(maps.Keys(project.Mirrors)) {

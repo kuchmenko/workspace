@@ -23,6 +23,7 @@ const (
 	KindBranchDuplicate  Kind = "branch-duplicate"
 	KindBranchOrphan     Kind = "branch-orphan"
 	KindMirrorPushFailed Kind = "mirror-push-failed"
+	KindOriginDivergence Kind = "origin-divergence"
 )
 
 type Conflict struct {

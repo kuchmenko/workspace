@@ -115,13 +115,21 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 	if remote, changed := converted[planned.OriginID]; changed {
 		expected.Remote = remote
 		planned.OriginURL = remote
+		planned.LocalOrigin = remote
 	}
 	if !ok || !snapshotMatches(expected, project) {
 		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace registry changed after preflight", onEvent)
 		return false, false
 	}
-	touched := false
 	planned.Snapshot = expected
+	touched, reconcileResult := r.reconcileProjectOrigin(planned, &project, report, onEvent)
+	if reconcileResult != nil {
+		report.Projects = append(report.Projects, *reconcileResult)
+		report.add(Event{Kind: EventProject, Status: reconcileResult.Status, Project: planned.Name, Operation: reconcileResult.Operation, Reason: reconcileResult.Reason, Diagnostic: reconcileResult.Diagnostic}, onEvent)
+		return false, false
+	}
+	planned.Snapshot.Remote = project.Remote
+	planned.OriginURL = project.Remote
 	result := r.syncPlannedProject(ctx, planned, &project, machine, &touched, selectedProjectMirrors(selection, planned), report, onEvent)
 	report.Projects = append(report.Projects, result)
 	report.add(Event{Kind: EventProject, Status: result.Status, Project: planned.Name, Operation: result.Operation, Reason: result.Reason, Diagnostic: result.Diagnostic}, onEvent)
