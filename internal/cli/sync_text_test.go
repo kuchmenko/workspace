@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
 	"github.com/kuchmenko/workspace/internal/git"
@@ -53,6 +54,49 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no project changes made") {
 		t.Fatalf("missing no-mutation summary: %s", stdout.String())
+	}
+}
+
+func TestRunSyncHeadlessFailedPreflightDoesNotExchangeWorkspace(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	root := t.TempDir()
+	registerSyncTestWorkspace(t, root, &config.Workspace{
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{"app": "personal/app"},
+		Projects: map[string]config.Project{
+			"app": {
+				Remote:        filepath.Join(t.TempDir(), "missing.git"),
+				Path:          "personal/app",
+				Status:        config.StatusActive,
+				Category:      config.CategoryPersonal,
+				DefaultBranch: "main",
+			},
+		},
+	})
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.EnsureNetwork(context.Background(), "local"); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath, err := alias.StateFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err = runSync(context.Background(), root, strings.NewReader(""), &stdout, &stderr)
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != syncExitFailed {
+		t.Fatalf("error = %v, want exit %d", err, syncExitFailed)
+	}
+	if _, err = os.Stat(aliasPath); !os.IsNotExist(err) {
+		t.Fatalf("workspace exchange generated alias state before preflight succeeded: %v", err)
 	}
 }
 

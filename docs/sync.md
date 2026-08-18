@@ -4,7 +4,7 @@
 watches the SQLite registry, runs on a timer, or changes repositories in the
 background.
 
-The command separates discovery from mutation:
+The interactive command separates discovery from mutation:
 
 1. Exchange the selected workspace registry with reachable trusted peers.
 2. Build a deterministic project plan from the converged registry.
@@ -13,6 +13,11 @@ The command separates discovery from mutation:
 5. Freeze that selection and execute it sequentially.
 6. Exchange the registry again to publish resulting project metadata.
 7. Show live progress and a final result summary.
+
+Headless mode builds and probes its plan before the initial registry exchange.
+Only after every endpoint passes does it exchange workspace state and execute
+the frozen plan. Projects changed or introduced by that exchange are skipped
+rather than run without preflight.
 
 An unavailable workspace peer is reported and the command continues with local
 state, preserving offline work. Rejected history or a registry conflict stops
@@ -31,8 +36,8 @@ noninteractive and has a 15-second timeout, so git cannot stop for a
 credential prompt. Results distinguish success, authentication/access
 failure, timeout, unreachable endpoint, unsupported URL, and cancellation.
 No project repository, remote URL, project metadata, or project conflict record
-is mutated by Git preflight. The preceding workspace exchange may already have
-updated the SQLite registry.
+is mutated by Git preflight. Interactive mode may already have updated the
+SQLite registry; headless mode defers that exchange until preflight succeeds.
 
 For a failed HTTPS origin on a known provider, preflight also derives the
 provider's SSH form and probes that exact repository. Conversion is
@@ -94,8 +99,8 @@ If either stdin or stdout is not a terminal, `ws sync` uses deterministic,
 ANSI-free text output. Headless mode has no selection prompt and is strict:
 every planned endpoint must pass preflight. If one endpoint is
 inaccessible, unsupported, or times out, the command reports all probe
-results, exits `1`, and makes no project changes. A workspace registry exchange
-may already have completed before Git preflight. The command does not
+results, exits `1`, and makes no project changes. No workspace registry exchange
+runs before a successful headless preflight. The command does not
 automatically choose an SSH conversion.
 
 Only after the complete preflight succeeds does headless mode execute all

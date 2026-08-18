@@ -29,7 +29,8 @@ const (
 func runSync(parent context.Context, root string, stdin io.Reader, stdout, stderr io.Writer) error {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	interactive := syncTerminal(stdin) && syncTerminal(stdout)
+	current, selection, err := prepareSync(ctx, root, interactive, stdout, stderr)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ExitError{Code: syncExitCanceled}
@@ -38,10 +39,10 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	}
 	plan := workspacesync.BuildPlan(root, current.State)
 	var runErr error
-	if syncTerminal(stdin) && syncTerminal(stdout) {
+	if interactive {
 		runErr = runSyncTUI(ctx, root, plan, stdout)
 	} else {
-		runErr = runSyncHeadless(ctx, root, plan, stdout, stderr)
+		runErr = runSyncHeadlessSelection(ctx, root, selection, stdout)
 	}
 	var exitErr ExitError
 	if errors.As(runErr, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
@@ -58,6 +59,35 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 		return ExitError{Code: syncExitCanceled}
 	}
 	return publishErr
+}
+
+func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, error) {
+	var selection workspacesync.Selection
+	if !interactive {
+		current, err := loadSyncWorkspace(ctx, root)
+		if err != nil {
+			return registry.Workspace{}, selection, err
+		}
+		selection, err = preflightSyncHeadless(ctx, workspacesync.BuildPlan(root, current.State), stdout, stderr)
+		if err != nil {
+			return registry.Workspace{}, selection, err
+		}
+	}
+	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	return current, selection, err
+}
+
+func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, error) {
+	store, err := registry.OpenDefault()
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	return requireResolvedWorkspace(ctx, store, workspace)
 }
 
 func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (registry.Workspace, error) {
@@ -151,6 +181,14 @@ func syncTerminal(stream any) bool {
 }
 
 func runSyncHeadless(ctx context.Context, root string, plan workspacesync.Plan, stdout, stderr io.Writer) error {
+	selection, err := preflightSyncHeadless(ctx, plan, stdout, stderr)
+	if err != nil {
+		return err
+	}
+	return runSyncHeadlessSelection(ctx, root, selection, stdout)
+}
+
+func preflightSyncHeadless(ctx context.Context, plan workspacesync.Plan, stdout, stderr io.Writer) (workspacesync.Selection, error) {
 	fmt.Fprintf(stdout, "preflight: %d endpoint(s)\n", len(plan.Endpoints))
 	probes := workspacesync.Probe(ctx, plan, nil)
 	failed := 0
@@ -166,14 +204,16 @@ func runSyncHeadless(ctx context.Context, root string, plan workspacesync.Plan, 
 	}
 	if ctx.Err() != nil {
 		fmt.Fprintln(stdout, "summary: canceled during preflight")
-		return ExitError{Code: syncExitCanceled}
+		return workspacesync.Selection{}, ExitError{Code: syncExitCanceled}
 	}
 	if failed > 0 {
 		fmt.Fprintf(stdout, "summary: preflight failed=%d; no project changes made\n", failed)
-		return ExitError{Code: syncExitFailed}
+		return workspacesync.Selection{}, ExitError{Code: syncExitFailed}
 	}
+	return workspacesync.NewSelection(plan, probes), nil
+}
 
-	selection := workspacesync.NewSelection(plan, probes)
+func runSyncHeadlessSelection(ctx context.Context, root string, selection workspacesync.Selection, stdout io.Writer) error {
 	runner := workspacesync.NewRunner(root, log.New(io.Discard, "", 0))
 	notifier := newSyncConflictNotifier(root)
 	report := runner.RunContext(ctx, selection, func(event workspacesync.Event) {
