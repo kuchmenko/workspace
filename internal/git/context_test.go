@@ -137,6 +137,37 @@ func TestContextOperationsReturnCancellation(t *testing.T) {
 	}
 }
 
+func TestFetchURLIgnoresMovedUpstreamTag(t *testing.T) {
+	remote := testutil.InitFakeRemote(t, "project", "main")
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.RunGit(t, filepath.Dir(seed), "clone", remote, seed)
+	testutil.RunGit(t, seed, "tag", "release")
+	testutil.RunGit(t, seed, "push", "origin", "refs/tags/release")
+
+	repository := filepath.Join(t.TempDir(), "project.bare")
+	testutil.CloneBare(t, remote, repository)
+	oldTag := git.RevParse(repository, "refs/tags/release")
+	if oldTag == "" {
+		t.Fatal("release tag was not cloned")
+	}
+
+	testutil.RunGit(t, seed, "commit", "--allow-empty", "-m", "next")
+	newHead := git.RevParse(seed, "HEAD")
+	testutil.RunGit(t, seed, "tag", "--force", "release")
+	testutil.RunGit(t, seed, "push", "origin", "main")
+	testutil.RunGit(t, seed, "push", "--force", "origin", "refs/tags/release")
+
+	if err := git.FetchURLContext(context.Background(), repository, remote); err != nil {
+		t.Fatalf("FetchURLContext: %v", err)
+	}
+	if got := git.RevParse(repository, "refs/remotes/origin/main"); got != newHead {
+		t.Fatalf("origin/main = %s, want %s", got, newHead)
+	}
+	if got := git.RevParse(repository, "refs/tags/release"); got != oldTag {
+		t.Fatalf("release tag = %s, want unchanged %s", got, oldTag)
+	}
+}
+
 func TestURLNetworkOperationsIgnoreChangedOriginConfig(t *testing.T) {
 	frozen := testutil.InitFakeRemote(t, "frozen", "main")
 	redirected := testutil.InitFakeRemote(t, "redirected", "main")

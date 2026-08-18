@@ -200,7 +200,7 @@ func FetchContext(ctx context.Context, repoPath string) error {
 }
 
 func FetchRemoteContext(ctx context.Context, repoPath, remote string) error {
-	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", "--tags", remote).CombinedOutput()
+	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", remote).CombinedOutput()
 	if err != nil {
 		return commandError(ctx, "git fetch "+RedactRemote(remote)+" in "+repoPath, RedactDiagnostic(string(out), remote), err)
 	}
@@ -209,7 +209,7 @@ func FetchRemoteContext(ctx context.Context, repoPath, remote string) error {
 
 func FetchURLContext(ctx context.Context, repoPath, remoteURL string) error {
 	refspec := "+refs/heads/*:refs/remotes/origin/*"
-	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", "--tags", remoteURL, refspec).CombinedOutput()
+	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", remoteURL, refspec).CombinedOutput()
 	if err != nil {
 		return commandError(ctx, "git fetch "+RedactRemote(remoteURL)+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), err)
 	}
