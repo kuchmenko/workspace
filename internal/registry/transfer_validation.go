@@ -201,11 +201,15 @@ func validateImportedRevisionShapes(manifest RevisionManifest, revisions []Revis
 func authorizeImportedHistory(ctx context.Context, reader sqlReader, item revisionImport, revisions map[string]Revision, staged map[string]bool, devices map[string]DeviceRecord, network NetworkBundle) error {
 	indegree, children, ready := importedRevisionGraph(revisions)
 	validated := make(map[string]Revision, len(revisions))
+	currentEpoch := int64(0)
+	for _, revision := range revisions {
+		currentEpoch = max(currentEpoch, revision.Epoch)
+	}
 	for len(ready) > 0 {
 		current := ready
 		ready = nil
 		for _, id := range current {
-			if err := authorizeImportedRevision(ctx, reader, item, revisions[id], staged[id], validated, devices, network); err != nil {
+			if err := authorizeImportedRevision(ctx, reader, item, revisions[id], staged[id], validated, devices, network, currentEpoch); err != nil {
 				return err
 			}
 			ready = append(ready, releaseImportedChildren(indegree, children[id])...)
@@ -235,13 +239,13 @@ func importedRevisionGraph(revisions map[string]Revision) (map[string]int, map[s
 	return indegree, children, ready
 }
 
-func authorizeImportedRevision(ctx context.Context, reader sqlReader, item revisionImport, revision Revision, staged bool, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle) error {
+func authorizeImportedRevision(ctx context.Context, reader sqlReader, item revisionImport, revision Revision, staged bool, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64) error {
 	proofs, err := loadImportedProofs(ctx, reader, item, revision.ID, staged)
 	if err != nil {
 		return err
 	}
 	revision.Proofs = proofs
-	if err = authorizeRevision(revision, validated, devices, network); err != nil {
+	if err = authorizeRevision(revision, validated, devices, network, currentEpoch, !staged); err != nil {
 		return fmt.Errorf("authorize revision %s: %w", revision.ID, err)
 	}
 	revision.Proofs = nil

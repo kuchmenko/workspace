@@ -208,9 +208,15 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 	if err != nil {
 		return err
 	}
+	accepted, err := store.acceptedRevisionIDs(ctx, revisions)
+	if err != nil {
+		return err
+	}
 	remaining := make(map[string]Revision, len(revisions))
+	currentEpoch := int64(0)
 	for id, revision := range revisions {
 		remaining[id] = revision
+		currentEpoch = max(currentEpoch, revision.Epoch)
 	}
 	validated := map[string]Revision{}
 	for len(remaining) > 0 {
@@ -219,7 +225,7 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 			return errors.New("workspace revision graph contains a cycle")
 		}
 		for _, id := range ready {
-			if err = authorizeRevision(remaining[id], validated, devices, networkBundle); err != nil {
+			if err = authorizeRevision(remaining[id], validated, devices, networkBundle, currentEpoch, accepted[id]); err != nil {
 				return fmt.Errorf("authorize revision %s: %w", id, err)
 			}
 			validated[id] = remaining[id]
@@ -227,6 +233,31 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 		}
 	}
 	return nil
+}
+
+func (store *Store) acceptedRevisionIDs(ctx context.Context, revisions map[string]Revision) (map[string]bool, error) {
+	accepted := map[string]bool{}
+	if len(revisions) == 0 {
+		return accepted, nil
+	}
+	var workspaceID string
+	for _, revision := range revisions {
+		workspaceID = revision.WorkspaceID
+		break
+	}
+	rows, err := store.db.QueryContext(ctx, `SELECT id FROM revisions WHERE workspace_id=?`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		accepted[id] = true
+	}
+	return accepted, rows.Err()
 }
 
 func readyRevisions(remaining, validated map[string]Revision) []string {
@@ -247,7 +278,7 @@ func readyRevisions(remaining, validated map[string]Revision) []string {
 	return ready
 }
 
-func authorizeRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle) error {
+func authorizeRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64, previouslyAccepted bool) error {
 	if revision.Access == nil {
 		return authorizeLegacyRevision(revision, validated, deviceKeys(devices))
 	}
@@ -259,7 +290,7 @@ func authorizeRevision(revision Revision, validated map[string]Revision, devices
 	if err != nil {
 		return err
 	}
-	return authorizeProofs(revision, authorPolicy, devices, network)
+	return authorizeProofs(revision, authorPolicy, devices, network, currentEpoch, previouslyAccepted)
 }
 
 func authorizeLegacyRevision(revision Revision, validated map[string]Revision, keys map[string]string) error {
@@ -424,27 +455,27 @@ func validateAccessTransition(parent, revision Revision, policy AccessPolicy) er
 	return nil
 }
 
-func authorizeProofs(revision Revision, policy AccessPolicy, devices map[string]DeviceRecord, network NetworkBundle) error {
+func authorizeProofs(revision Revision, policy AccessPolicy, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64, previouslyAccepted bool) error {
 	for _, proof := range revision.Proofs {
 		record, known := devices[proof.DeviceID]
 		if !known || string(record.PublicKey) != string(proof.PublicKey) {
 			return errors.New("revision author is not a known network device")
 		}
-		if err := authorizeProof(revision, proof.DeviceID, policy, network); err != nil {
+		if err := authorizeProof(revision, proof.DeviceID, policy, network, record.Active || previouslyAccepted || revision.Epoch < currentEpoch); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func authorizeProof(revision Revision, deviceID string, policy AccessPolicy, network NetworkBundle) error {
+func authorizeProof(revision Revision, deviceID string, policy AccessPolicy, network NetworkBundle, authorActive bool) error {
 	if revision.Kind == "access-recovery" {
 		if recoveryAuthorizedByNetwork(network, revision.ID, revision.NetworkHead, deviceID, policy) {
 			return nil
 		}
 		return errors.New("workspace admin recovery is not signed by a known network admin")
 	}
-	role := policy.Role(deviceID, true)
+	role := policy.Role(deviceID, authorActive)
 	if revision.Kind == "access" || revision.Kind == "access-resolution" {
 		if role != WorkspaceAdmin {
 			return errors.New("access revision is not signed by a workspace admin")

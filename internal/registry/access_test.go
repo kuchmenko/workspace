@@ -234,8 +234,122 @@ func TestRemovedWriterRevisionIsRejectedThroughActiveRelay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = admin.IntegrateFrom(ctx, "shared", relayed, relay.identity.ID()); err == nil || !strings.Contains(err.Error(), "workspace epoch is stale") {
+	if _, _, err = admin.IntegrateFrom(ctx, "shared", relayed, relay.identity.ID()); err == nil || !strings.Contains(err.Error(), "not signed by a workspace writer") {
 		t.Fatalf("relayed removed-writer revision error = %v", err)
+	}
+}
+
+func TestRemovedAdminCurrentEpochRevisionIsRejectedThroughActiveRelay(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	removed := openTestStore(t)
+	receiver := openTestStore(t)
+	relay := openTestStore(t)
+	connectRegistryStores(t, admin, removed, receiver, relay)
+	adminRoot := t.TempDir()
+	if _, err := admin.Create(ctx, "shared", adminRoot, testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		removed.identity.ID():  WorkspaceAdmin,
+		receiver.identity.ID(): WorkspaceReplica,
+		relay.identity.ID():    WorkspaceReplica,
+	}}
+	if _, err := admin.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.AttachFrom(ctx, "shared", t.TempDir(), initial, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = relay.AttachFrom(ctx, "shared", t.TempDir(), initial, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = admin.RemoveNetworkDevice(ctx, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	network, err := admin.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.MergeNetwork(ctx, network); err != nil {
+		t.Fatal(err)
+	}
+	parent := revisionFromBundle(t, initial, initial.Heads[0])
+	forgedPolicy := cloneAccessPolicy(*parent.Access)
+	delete(forgedPolicy.Roles, receiver.identity.ID())
+	forged, err := makeRevision(parent.WorkspaceID, parent.Epoch+1, "access", []string{parent.ID}, parent.Snapshot, parent.Conflicts, forgedPolicy, removed.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayed := initial
+	relayed.Epoch = forged.Epoch
+	relayed.Heads = []string{forged.ID}
+	relayed.Revisions = append(relayed.Revisions, forged)
+	if _, _, err = receiver.IntegrateFrom(ctx, "shared", relayed, relay.identity.ID()); err == nil || !strings.Contains(err.Error(), "not signed by a workspace admin") {
+		t.Fatalf("relayed removed-admin revision error = %v", err)
+	}
+}
+
+func TestRemovedWriterPreviouslyAcceptedCurrentEpochRevisionRemainsVerifiable(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	removed := openTestStore(t)
+	receiver := openTestStore(t)
+	relay := openTestStore(t)
+	connectRegistryStores(t, admin, removed, receiver, relay)
+	if _, err := admin.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		removed.identity.ID():  WorkspaceWriter,
+		receiver.identity.ID(): WorkspaceReplica,
+		relay.identity.ID():    WorkspaceReplica,
+	}}
+	if _, err := admin.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	removedRoot := t.TempDir()
+	if _, err = removed.AttachFrom(ctx, "shared", removedRoot, initial, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = removed.Mutate(ctx, removedRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["before-removal"] = "accepted"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	historical, err := removed.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.AttachFrom(ctx, "shared", t.TempDir(), historical, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = relay.AttachFrom(ctx, "shared", t.TempDir(), historical, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = admin.RemoveNetworkDevice(ctx, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	network, err := admin.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.MergeNetwork(ctx, network); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = receiver.IntegrateFrom(ctx, "shared", historical, relay.identity.ID()); err != nil {
+		t.Fatalf("previously accepted removed-writer revision was rejected: %v", err)
 	}
 }
 
