@@ -182,10 +182,9 @@ func validateBundleHeads(bundle Bundle, revisions map[string]Revision) ([]string
 	if !highest {
 		return nil, errors.New("bundle epoch has no matching head")
 	}
-	if len(heads) > 1 {
-		policy := revisionPolicyMap(revisions, heads[0])
-		for _, head := range heads[1:] {
-			if revisions[head].Epoch != revisions[heads[0]].Epoch && equalPolicy(policy, revisionPolicyMap(revisions, head)) {
+	for left := 0; left < len(heads); left++ {
+		for right := left + 1; right < len(heads); right++ {
+			if revisions[heads[left]].Epoch != revisions[heads[right]].Epoch && equalPolicy(revisionPolicyMap(revisions, heads[left]), revisionPolicyMap(revisions, heads[right])) {
 				return nil, errors.New("mixed-epoch heads require divergent access policies")
 			}
 		}

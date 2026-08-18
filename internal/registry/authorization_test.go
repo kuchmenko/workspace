@@ -139,6 +139,19 @@ func TestValidateBundleHeadsAllowsMatchingPoliciesAtSameOlderEpoch(t *testing.T)
 	}
 }
 
+func TestValidateBundleHeadsRejectsMatchingPoliciesAcrossAnyDifferentEpochs(t *testing.T) {
+	oldPolicy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter}
+	newPolicy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{"admin": WorkspaceAdmin}}
+	revisions := map[string]Revision{
+		"a": {ID: "a", Epoch: 2, Access: &newPolicy},
+		"b": {ID: "b", Epoch: 1, Access: &oldPolicy},
+		"c": {ID: "c", Epoch: 2, Access: &oldPolicy},
+	}
+	if _, err := validateBundleHeads(Bundle{Epoch: 2, Heads: []string{"a", "b", "c"}}, revisions); err == nil || !strings.Contains(err.Error(), "mixed-epoch heads require divergent access policies") {
+		t.Fatalf("matching mixed-epoch head policies error = %v", err)
+	}
+}
+
 func TestWorkspaceBundlesAreReorderedAndRepeatedIdempotently(t *testing.T) {
 	ctx := context.Background()
 	left, right, bundle := sharedWriterBundle(t)
