@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"hash"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,9 +22,9 @@ type revisionManifestImport struct {
 }
 
 func (store *Store) BeginAttachImportPage(ctx context.Context, name, root, peerID string, page RevisionManifest) (string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", errors.New("workspace name is required")
+	name, err := validateWorkspaceName(name)
+	if err != nil {
+		return "", err
 	}
 	canonical, err := canonicalRoot(root)
 	if err != nil {

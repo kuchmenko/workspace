@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,9 +28,9 @@ type revisionImport struct {
 }
 
 func (store *Store) BeginAttachImport(ctx context.Context, name, root, peerID string, manifest RevisionManifest) (RevisionImportPlan, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return RevisionImportPlan{}, errors.New("workspace name is required")
+	name, err := validateWorkspaceName(name)
+	if err != nil {
+		return RevisionImportPlan{}, err
 	}
 	canonical, err := canonicalRoot(root)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
@@ -19,6 +20,17 @@ var (
 	ErrWorkspaceEpochStale = errors.New("workspace epoch is stale")
 	ErrStaleRevision       = errors.New("workspace revision changed")
 )
+
+func validateWorkspaceName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("workspace name is required")
+	}
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", errors.New("workspace name contains control characters")
+	}
+	return name, nil
+}
 
 type Workspace struct {
 	Name        string

@@ -108,6 +108,42 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 }
 
+func TestAttachRejectsPeerWorkspaceNameWithTerminalControls(t *testing.T) {
+	sourceStore, sourceIdentity, targetStore, targetIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	maliciousName := "shared\x1b[2J"
+	created, err := sourceStore.Create(ctx, maliciousName, t.TempDir(), &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{sourceIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err = sourceStore.SetAccess(ctx, maliciousName, policy); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := make(chan string, 1)
+	go func() {
+		_ = Serve(ctx, ServeOptions{
+			Store: sourceStore, Identity: sourceIdentity, Name: "source",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	address := <-endpoint
+	sourceDevice := mustNetworkDevice(t, ctx, targetStore, sourceIdentity.ID())
+	source := AvailableWorkspace{WorkspaceSummary: registry.WorkspaceSummary{Name: maliciousName, WorkspaceID: created.WorkspaceID}, DeviceID: sourceDevice.ID, DeviceName: sourceDevice.Name, Endpoint: address}
+	if _, err = Attach(ctx, source, targetStore, targetIdentity, "target", source.Name, t.TempDir()); err == nil {
+		t.Fatal("attach accepted peer workspace name containing terminal controls")
+	}
+	listed, err := targetStore.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("malicious peer workspace name was persisted: %#v", listed)
+	}
+}
+
 func TestAttachAbortsImportWhenManifestPagingIsInterrupted(t *testing.T) {
 	previousPageSize := workspaceManifestPageSize.Swap(1)
 	t.Cleanup(func() { workspaceManifestPageSize.Store(previousPageSize) })

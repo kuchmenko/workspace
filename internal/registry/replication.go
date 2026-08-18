@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
 )
@@ -61,9 +60,9 @@ type attachment struct {
 }
 
 func (store *Store) prepareAttachment(ctx context.Context, name, root string, bundle Bundle, sourceID string, authorize bool) (attachment, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return attachment{}, errors.New("workspace name is required")
+	name, err := validateWorkspaceName(name)
+	if err != nil {
+		return attachment{}, err
 	}
 	canonical, err := canonicalRoot(root)
 	if err != nil {
