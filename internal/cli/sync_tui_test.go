@@ -159,6 +159,32 @@ func TestRenderRecentEventEscapesProjectAndMirrorControls(t *testing.T) {
 	}
 }
 
+func TestSyncReviewRowsAndCurrentOperationEscapeProjectControls(t *testing.T) {
+	project := "app\n\x1b]8;;https://example.com\x07"
+	mirror := "backup\u009dunsafe"
+	plan := workspacesync.Plan{
+		Projects: []workspacesync.ProjectPlan{{Name: project}},
+		SourceGroups: []workspacesync.SourceGroup{{
+			Key:       "source",
+			TargetIDs: []string{"project", "mirror"},
+		}},
+		Targets: []workspacesync.Target{
+			{ID: "project", Role: workspacesync.TargetProjectOrigin, Project: project},
+			{ID: "mirror", Role: workspacesync.TargetMirror, Project: project, Mirror: mirror},
+		},
+	}
+	for _, row := range buildSyncRows(plan) {
+		if strings.ContainsAny(row.label, "\n\x1b\u009d") {
+			t.Fatalf("sync review row contains project controls: %q", row.label)
+		}
+	}
+	model := syncModel{}
+	model.updateRunEvent(workspacesync.Event{Kind: workspacesync.EventStarted, Project: project, Mirror: mirror})
+	if strings.ContainsAny(model.currentProject, "\n\x1b\u009d") {
+		t.Fatalf("current sync operation contains project controls: %q", model.currentProject)
+	}
+}
+
 func TestSyncDashboardProgressCountsSelectedProjectsOnce(t *testing.T) {
 	plan, probes := syncModelFixture()
 	model := reviewSyncModel(t, plan, probes)

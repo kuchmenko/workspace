@@ -285,7 +285,7 @@ func syncTargetRow(plan workspacesync.Plan, target workspacesync.Target, source 
 	row := syncReviewRow{id: target.ID, sourceKey: source}
 	switch target.Role {
 	case workspacesync.TargetProjectOrigin:
-		row.kind, row.label = syncProjectRow, target.Project
+		row.kind, row.label = syncProjectRow, terminalText(target.Project)
 		for _, project := range plan.Projects {
 			if project.Name == target.Project {
 				row.state = project.State
@@ -293,7 +293,7 @@ func syncTargetRow(plan workspacesync.Plan, target workspacesync.Target, source 
 			}
 		}
 	case workspacesync.TargetMirror:
-		row.kind, row.label = syncMirrorRow, target.Project+" / "+target.Mirror
+		row.kind, row.label = syncMirrorRow, terminalText(target.Project)+" / "+terminalText(target.Mirror)
 	}
 	return row
 }
@@ -389,10 +389,10 @@ func syncTick() tui.Cmd {
 
 func (m *syncModel) updateRunEvent(event workspacesync.Event) {
 	if event.Kind == workspacesync.EventStarted {
-		m.currentProject = event.Project
+		m.currentProject = terminalText(event.Project)
 		m.currentOp = event.Operation
 		if event.Mirror != "" {
-			m.currentProject += "/" + event.Mirror
+			m.currentProject += "/" + terminalText(event.Mirror)
 		}
 		return
 	}
