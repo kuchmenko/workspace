@@ -184,6 +184,108 @@ func TestNetworkAdminRecoversWorkspaceAfterSoleAdminRemoval(t *testing.T) {
 	}
 }
 
+func TestNetworkConflictResolutionPreservesConcurrentWorkspaceRecoveries(t *testing.T) {
+	ctx := context.Background()
+	left := openTestStore(t)
+	right := openTestStore(t)
+	removed := openTestStore(t)
+	if _, err := left.EnsureNetwork(ctx, "left"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := left.AddNetworkDevice(ctx, "right", right.identity.PublicKey(), NetworkAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := left.AddNetworkDevice(ctx, "removed", removed.identity.PublicKey(), NetworkAdmin); err != nil {
+		t.Fatal(err)
+	}
+	network, err := left.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.ImportNetwork(ctx, network, left.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		left.identity.ID():    WorkspaceWriter,
+		right.identity.ID():   WorkspaceWriter,
+		removed.identity.ID(): WorkspaceAdmin,
+	}}
+	if _, err = left.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := left.ExportFor(ctx, "shared", right.identity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.AttachFrom(ctx, "shared", t.TempDir(), bundle, left.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.RemoveNetworkDevice(ctx, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.RemoveNetworkDevice(ctx, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	leftRecovered, err := left.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightRecovered, err := right.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBranch, err := right.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.MergeNetwork(ctx, rightBranch); !errors.Is(err, ErrNetworkConflict) {
+		t.Fatalf("merge error = %v", err)
+	}
+	conflict, err := left.NetworkConflict(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := ""
+	for _, head := range conflict.Heads {
+		if head.SignerID == left.identity.ID() {
+			selected = head.ID
+		}
+	}
+	if selected == "" {
+		t.Fatalf("left recovery head not found in %#v", conflict.Heads)
+	}
+	if _, err = left.ResolveNetworkConflict(ctx, conflict.ID, selected); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := left.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedHead, err := currentCausalNetworkHead(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolution NetworkEvent
+	for _, event := range resolved.Events {
+		if event.ID == resolvedHead {
+			resolution = event
+		}
+	}
+	if resolution.Action != "resolve" || !containsString(resolution.RecoveryIDs, leftRecovered.Head) || !containsString(resolution.RecoveryIDs, rightRecovered.Head) {
+		t.Fatalf("resolution did not preserve both workspace recoveries: %#v", resolution)
+	}
+	rightWorkspace, err := right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.validateBundle(ctx, rightWorkspace, true); err != nil {
+		t.Fatalf("unselected branch workspace recovery was stranded: %v", err)
+	}
+}
+
 func TestRemovedWriterRevisionIsRejectedThroughActiveRelay(t *testing.T) {
 	ctx := context.Background()
 	admin := openTestStore(t)

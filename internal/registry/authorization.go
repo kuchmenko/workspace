@@ -495,7 +495,7 @@ func authorizeProof(revision Revision, deviceID string, policy AccessPolicy, net
 
 func recoveryAuthorizedByNetwork(bundle NetworkBundle, revisionID, authorityHead, deviceID string, policy AccessPolicy) bool {
 	current, err := currentCausalNetworkHead(bundle)
-	if err != nil || !networkHeadSelectedBy(bundle, current, authorityHead) {
+	if err != nil {
 		return false
 	}
 	if !networkRecoveryRatified(bundle, current, revisionID, authorityHead, deviceID) {
@@ -509,8 +509,20 @@ func recoveryAuthorizedByNetwork(bundle NetworkBundle, revisionID, authorityHead
 }
 
 func networkRecoveryRatified(bundle NetworkBundle, current, revisionID, authorityHead, deviceID string) bool {
+	original := false
 	for _, event := range bundle.Events {
-		if event.Action == "recover" && len(event.Parents) == 1 && event.Parents[0] == authorityHead && event.SignerID == deviceID && containsString(event.RecoveryIDs, revisionID) && networkHeadSelectedBy(bundle, current, event.ID) {
+		if event.Action == "recover" && len(event.Parents) == 1 && event.Parents[0] == authorityHead && event.SignerID == deviceID && containsString(event.RecoveryIDs, revisionID) {
+			original = true
+			if networkHeadSelectedBy(bundle, current, event.ID) {
+				return true
+			}
+		}
+	}
+	if !original {
+		return false
+	}
+	for _, event := range bundle.Events {
+		if event.Action == "resolve" && containsString(event.RecoveryIDs, revisionID) && networkHeadSelectedBy(bundle, current, event.ID) {
 			return true
 		}
 	}

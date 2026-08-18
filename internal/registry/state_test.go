@@ -15,6 +15,8 @@ func TestDecodeSnapshotRejectsProjectRemoteControls(t *testing.T) {
 	}{
 		{name: "remote", project: snapshotProject{Remote: "repo\x1b]8;;https://example.com\a", Mirrors: map[string]string{}}},
 		{name: "mirror", project: snapshotProject{Remote: "https://example.com/repo.git", Mirrors: map[string]string{"backup": "repo\nunsafe"}}},
+		{name: "last pushed machine", project: snapshotProject{Remote: "https://example.com/repo.git", Mirrors: map[string]string{}, Branches: map[string]snapshotBranch{"feat": {LastPushed: snapshotObservation{Machine: "asahi\x1b]8;;https://example.com\a", At: "2026-08-18T09:00:00Z"}}}}},
+		{name: "last pushed time", project: snapshotProject{Remote: "https://example.com/repo.git", Mirrors: map[string]string{}, Branches: map[string]snapshotBranch{"feat": {LastPushed: snapshotObservation{Machine: "asahi", At: "2026-08-18\n09:00:00Z"}}}}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

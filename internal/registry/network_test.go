@@ -233,7 +233,7 @@ func TestConcurrentAdminRemovalsPersistAndResolveConflict(t *testing.T) {
 		t.Fatalf("stale branch frontier = %v", staleHeads)
 	}
 	staleRecord := DeviceRecord{ID: added.ID(), Name: "stale-added", PublicKey: added.PublicKey(), Role: NetworkAdmin, Active: true}
-	staleEvent, err := makeCausalNetworkEvent(asahiBranch.ID, asahiBranch.Epoch+1, "add", staleRecord, staleHeads, "", asahi.identity)
+	staleEvent, err := makeCausalNetworkEvent(asahiBranch.ID, asahiBranch.Epoch+1, "add", staleRecord, staleHeads, "", nil, asahi.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestConcurrentAdminRemovalsPersistAndResolveConflict(t *testing.T) {
 		t.Fatalf("resolved frontier = %v", resolvedHeads)
 	}
 	graftParents := []string{resolvedHeads[0], staleEvent.ID}
-	graft, err := makeCausalNetworkEvent(staleBranch.ID, max(resolvedBundle.Epoch, staleBranch.Epoch)+1, "resolve", DeviceRecord{}, graftParents, staleEvent.ID, asahi.identity)
+	graft, err := makeCausalNetworkEvent(staleBranch.ID, max(resolvedBundle.Epoch, staleBranch.Epoch)+1, "resolve", DeviceRecord{}, graftParents, staleEvent.ID, nil, asahi.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,11 +258,11 @@ func TestConcurrentAdminRemovalsPersistAndResolveConflict(t *testing.T) {
 	if _, err = arch.MergeNetworkFrom(ctx, grafted, asahi.identity.ID()); err == nil || !strings.Contains(err.Error(), "cannot graft") {
 		t.Fatalf("inactive admin grafted rejected history through a resolution: %v", err)
 	}
-	launder, err := makeCausalNetworkEvent(staleBranch.ID, staleEvent.Epoch+1, "resolve", DeviceRecord{}, []string{staleHeads[0], staleEvent.ID}, staleEvent.ID, asahi.identity)
+	launder, err := makeCausalNetworkEvent(staleBranch.ID, staleEvent.Epoch+1, "resolve", DeviceRecord{}, []string{staleHeads[0], staleEvent.ID}, staleEvent.ID, nil, asahi.identity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	nested, err := makeCausalNetworkEvent(staleBranch.ID, max(resolvedBundle.Epoch, launder.Epoch)+1, "resolve", DeviceRecord{}, []string{resolvedHeads[0], launder.ID}, launder.ID, asahi.identity)
+	nested, err := makeCausalNetworkEvent(staleBranch.ID, max(resolvedBundle.Epoch, launder.Epoch)+1, "resolve", DeviceRecord{}, []string{resolvedHeads[0], launder.ID}, launder.ID, nil, asahi.identity)
 	if err != nil {
 		t.Fatal(err)
 	}

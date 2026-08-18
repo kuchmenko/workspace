@@ -255,6 +255,9 @@ func applyNetworkResolutionEvent(event NetworkEvent, legacyBase NetworkState, st
 	if !equalNetworkResolutionSets(event.Parents, baseID, events) {
 		return NetworkState{}, false, errors.New("network resolution cannot graft a stale membership branch")
 	}
+	if !equalStrings(event.RecoveryIDs, networkRecoveryIDsBetween(event.Parents, baseID, events)) {
+		return NetworkState{}, false, errors.New("network resolution does not preserve workspace recoveries")
+	}
 	if err := requireNetworkEventAdmin(authorizationState, event); err != nil {
 		return NetworkState{}, false, err
 	}
@@ -267,7 +270,7 @@ func applyNetworkResolutionEvent(event NetworkEvent, legacyBase NetworkState, st
 }
 
 func validNetworkResolutionShape(event NetworkEvent) bool {
-	return len(event.Parents) >= 2 && event.SelectedParent != "" && len(event.RecoveryIDs) == 0 && containsString(event.Parents, event.SelectedParent) && event.DeviceID == "" && event.DeviceName == "" && len(event.DevicePublicKey) == 0 && event.Role == ""
+	return len(event.Parents) >= 2 && event.SelectedParent != "" && len(event.RecoveryIDs) <= maxRevisionItems && sort.StringsAreSorted(event.RecoveryIDs) && !containsDuplicate(event.RecoveryIDs) && containsString(event.Parents, event.SelectedParent) && event.DeviceID == "" && event.DeviceName == "" && len(event.DevicePublicKey) == 0 && event.Role == ""
 }
 
 func networkParentEpoch(parents []string, states map[string]NetworkState) (int64, bool) {
@@ -360,6 +363,31 @@ func equalNetworkResolutionSets(heads []string, base string, events map[string]N
 		}
 	}
 	return true
+}
+
+func networkRecoveryIDsBetween(heads []string, base string, events map[string]NetworkEvent) []string {
+	seen := map[string]bool{}
+	recoveries := map[string]bool{}
+	queue := append([]string(nil), heads...)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if id == base || seen[id] {
+			continue
+		}
+		seen[id] = true
+		event := events[id]
+		for _, recoveryID := range event.RecoveryIDs {
+			recoveries[recoveryID] = true
+		}
+		queue = append(queue, event.Parents...)
+	}
+	result := make([]string, 0, len(recoveries))
+	for recoveryID := range recoveries {
+		result = append(result, recoveryID)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func currentCausalNetworkHead(bundle NetworkBundle) (string, error) {
@@ -480,7 +508,12 @@ func (store *Store) ResolveNetworkConflict(ctx context.Context, conflictID, sele
 		return NetworkState{}, err
 	}
 	epoch := bundle.Epoch + 1
-	event, err := makeCausalNetworkEvent(bundle.ID, epoch, "resolve", DeviceRecord{}, heads, selectedHead, store.identity)
+	events := make(map[string]NetworkEvent, len(bundle.Events))
+	for _, existing := range bundle.Events {
+		events[existing.ID] = existing
+	}
+	recoveryIDs := networkRecoveryIDsBetween(heads, analysis.conflict.Base, events)
+	event, err := makeCausalNetworkEvent(bundle.ID, epoch, "resolve", DeviceRecord{}, heads, selectedHead, recoveryIDs, store.identity)
 	if err != nil {
 		return NetworkState{}, err
 	}
@@ -514,19 +547,21 @@ func networkConflictID(networkID, base string, heads []string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func makeCausalNetworkEvent(networkID string, epoch int64, action string, record DeviceRecord, parents []string, selected string, signer device.Identity) (NetworkEvent, error) {
+func makeCausalNetworkEvent(networkID string, epoch int64, action string, record DeviceRecord, parents []string, selected string, recoveryIDs []string, signer device.Identity) (NetworkEvent, error) {
 	parents = append([]string(nil), parents...)
 	sort.Strings(parents)
+	recoveryIDs = append([]string(nil), recoveryIDs...)
+	sort.Strings(recoveryIDs)
 	if record.PublicKey == nil {
 		record.PublicKey = []byte{}
 	}
-	core := causalNetworkEventCore{Version: 1, NetworkID: networkID, Epoch: epoch, Parents: parents, SelectedParent: selected, Action: action, DeviceID: record.ID, DeviceName: record.Name, DevicePublicKey: append([]byte(nil), record.PublicKey...), Role: record.Role, SignerID: signer.ID(), SignerPublicKey: signer.PublicKey()}
+	core := causalNetworkEventCore{Version: 1, NetworkID: networkID, Epoch: epoch, Parents: parents, SelectedParent: selected, RecoveryIDs: recoveryIDs, Action: action, DeviceID: record.ID, DeviceName: record.Name, DevicePublicKey: append([]byte(nil), record.PublicKey...), Role: record.Role, SignerID: signer.ID(), SignerPublicKey: signer.PublicKey()}
 	body, err := json.Marshal(core)
 	if err != nil {
 		return NetworkEvent{}, err
 	}
 	digest := sha256.Sum256(body)
-	return NetworkEvent{ID: hex.EncodeToString(digest[:]), NetworkID: networkID, Epoch: epoch, Version: 1, Parents: parents, SelectedParent: selected, Action: action, DeviceID: record.ID, DeviceName: record.Name, DevicePublicKey: record.PublicKey, Role: record.Role, SignerID: signer.ID(), SignerPublicKey: signer.PublicKey(), Signature: signer.Sign(digest[:])}, nil
+	return NetworkEvent{ID: hex.EncodeToString(digest[:]), NetworkID: networkID, Epoch: epoch, Version: 1, Parents: parents, SelectedParent: selected, RecoveryIDs: recoveryIDs, Action: action, DeviceID: record.ID, DeviceName: record.Name, DevicePublicKey: record.PublicKey, Role: record.Role, SignerID: signer.ID(), SignerPublicKey: signer.PublicKey(), Signature: signer.Sign(digest[:])}, nil
 }
 
 func makeNetworkRecoveryEvent(networkID string, epoch int64, parent string, recoveryIDs []string, signer device.Identity) (NetworkEvent, error) {

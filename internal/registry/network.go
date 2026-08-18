@@ -346,7 +346,7 @@ func (store *Store) AddNetworkDevice(ctx context.Context, name string, publicKey
 	if err != nil {
 		return NetworkState{}, err
 	}
-	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "add", record, networkFrontier(bundle.Events), "", store.identity)
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "add", record, networkFrontier(bundle.Events), "", nil, store.identity)
 	if err != nil {
 		return NetworkState{}, err
 	}
@@ -382,7 +382,7 @@ func (store *Store) SetNetworkRole(ctx context.Context, deviceID, role string) (
 	if err != nil {
 		return NetworkState{}, err
 	}
-	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "role", target, networkFrontier(bundle.Events), "", store.identity)
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "role", target, networkFrontier(bundle.Events), "", nil, store.identity)
 	if err != nil {
 		return NetworkState{}, err
 	}
@@ -412,7 +412,7 @@ func (store *Store) RemoveNetworkDevice(ctx context.Context, deviceID string) (N
 	if err != nil {
 		return NetworkState{}, err
 	}
-	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "remove", target, networkFrontier(bundle.Events), "", store.identity)
+	event, err := makeCausalNetworkEvent(state.ID, state.Epoch+1, "remove", target, networkFrontier(bundle.Events), "", nil, store.identity)
 	if err != nil {
 		return NetworkState{}, err
 	}
