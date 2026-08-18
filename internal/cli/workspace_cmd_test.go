@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
 	peernetwork "github.com/kuchmenko/workspace/internal/network"
@@ -45,6 +46,23 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	if got := out.String(); !strings.Contains(got, "personal\t"+workspace+"\n") {
 		t.Fatalf("workspace list output = %q", got)
 	}
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Mutate(context.Background(), workspace, func(state *config.Workspace) error {
+		state.Aliases = map[string]string{"dev": alias.RootTarget}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = alias.WriteStateFile(updated.State, workspace); err != nil {
+		t.Fatal(err)
+	}
 
 	newRoot := t.TempDir()
 	out.Reset()
@@ -56,6 +74,17 @@ func TestWorkspaceCommandsCreateAndList(t *testing.T) {
 	}
 	if got := out.String(); got != "workspace=personal root="+newRoot+"\n" {
 		t.Fatalf("workspace set-root output = %q", got)
+	}
+	aliasStatePath, err := alias.StateFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasState, err := os.ReadFile(aliasStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(aliasState), workspace) || !strings.Contains(string(aliasState), newRoot) {
+		t.Fatalf("alias state after set-root = %q", aliasState)
 	}
 	out.Reset()
 	cmd = newWorkspaceCmd()

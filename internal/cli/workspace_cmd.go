@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/spf13/cobra"
 )
@@ -110,6 +112,11 @@ func newWorkspaceSetRootCmd() *cobra.Command {
 			workspace, err := local.SetRoot(cmd.Context(), args[0], args[1])
 			if err != nil {
 				return err
+			}
+			if err = alias.WriteStateFile(workspace.State, workspace.Root); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not update alias state file: %v\n", err)
+			} else {
+				metrics.RecordAliasStateGenerated()
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "workspace=%s root=%s\n", workspace.Name, workspace.Root)
 			return nil
