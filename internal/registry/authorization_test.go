@@ -2,10 +2,15 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
 )
 
@@ -148,6 +153,165 @@ func TestWorkspaceBundlesAreReorderedAndRepeatedIdempotently(t *testing.T) {
 	}
 	if after := revisionCount(t, right); after != before {
 		t.Fatalf("repeated bundle revisions = %d, want %d", after, before)
+	}
+}
+
+func TestRemovedWriterCannotAuthorNewOldEpochRevision(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	removed := openTestStore(t)
+	receiver := openTestStore(t)
+	relay := openTestStore(t)
+	connectRegistryStores(t, admin, removed, receiver, relay)
+	if _, err := admin.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		removed.identity.ID():  WorkspaceWriter,
+		receiver.identity.ID(): WorkspaceReplica,
+		relay.identity.ID():    WorkspaceReplica,
+	}}
+	if _, err := admin.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.AttachFrom(ctx, "shared", t.TempDir(), initial, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = admin.RemoveNetworkDevice(ctx, removed.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	network, err := admin.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.MergeNetwork(ctx, network); err != nil {
+		t.Fatal(err)
+	}
+	current, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := revisionFromBundle(t, initial, initial.Heads[0])
+	forged, err := makeRevision(parent.WorkspaceID, parent.Epoch, "ordinary", []string{parent.ID}, parent.Snapshot, parent.Conflicts, *parent.Access, removed.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Revisions = append(current.Revisions, forged)
+	current.Heads = append(current.Heads, forged.ID)
+	if _, _, err = receiver.IntegrateFrom(ctx, "shared", current, relay.identity.ID()); err == nil || !strings.Contains(err.Error(), "not signed by a workspace writer") {
+		t.Fatalf("new old-epoch revision from removed writer error = %v", err)
+	}
+}
+
+func TestFreshPeerAcceptsInactiveWriterHistoryEndorsedByCurrentHead(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	writer := openTestStore(t)
+	receiver := openTestStore(t)
+	connectRegistryStores(t, admin, writer, receiver)
+	adminRoot := t.TempDir()
+	if _, err := admin.Create(ctx, "shared", adminRoot, testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		writer.identity.ID():   WorkspaceWriter,
+		receiver.identity.ID(): WorkspaceReplica,
+	}}
+	if _, err := admin.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writerRoot := t.TempDir()
+	if _, err = writer.AttachFrom(ctx, "shared", writerRoot, initial, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = writer.Mutate(ctx, writerRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["historical"] = "writer"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	historical, err := writer.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = admin.IntegrateFrom(ctx, "shared", historical, writer.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = admin.RemoveNetworkDevice(ctx, writer.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	network, err := admin.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = receiver.MergeNetwork(ctx, network); err != nil {
+		t.Fatal(err)
+	}
+	current, err := admin.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached, err := receiver.AttachFrom(ctx, "shared", t.TempDir(), current, admin.identity.ID())
+	if err != nil {
+		t.Fatalf("endorsed historical revision was rejected: %v", err)
+	}
+	if attached.State.Aliases["historical"] != "writer" {
+		t.Fatalf("attached aliases = %#v", attached.State.Aliases)
+	}
+}
+
+func TestLegacyAccessAnchorCannotSelfAuthorize(t *testing.T) {
+	ctx := context.Background()
+	admin := openTestStore(t)
+	attacker := openTestStore(t)
+	receiver := openTestStore(t)
+	connectRegistryStores(t, admin, attacker, receiver)
+	snapshot, err := encodeSnapshot(testWorkspace())
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := revisionCore{Protocol: protocolVersion, WorkspaceID: "legacy-workspace", Epoch: 1, Kind: "genesis", Snapshot: snapshot}
+	body, err := json.Marshal(core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(body)
+	genesis := Revision{
+		ID: hex.EncodeToString(digest[:]), WorkspaceID: core.WorkspaceID, Epoch: 1, Kind: "genesis", Snapshot: snapshot,
+		Proofs: []Proof{{DeviceID: admin.identity.ID(), PublicKey: admin.identity.PublicKey(), Signature: admin.identity.Sign(digest[:])}},
+	}
+	legacy := Bundle{WorkspaceID: core.WorkspaceID, Epoch: 1, Heads: []string{genesis.ID}, Revisions: []Revision{genesis}}
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{
+		admin.identity.ID():    WorkspaceAdmin,
+		attacker.identity.ID(): WorkspaceWriter,
+		receiver.identity.ID(): WorkspaceReplica,
+	}}
+	legitimateAnchor, err := makeRevision(core.WorkspaceID, 1, "access", []string{genesis.ID}, snapshot, nil, policy, admin.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legitimate := appendBundleHead(legacy, legitimateAnchor)
+	if _, err = receiver.AttachFrom(ctx, "shared", t.TempDir(), legitimate, admin.identity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	maliciousPolicy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{attacker.identity.ID(): WorkspaceAdmin}}
+	malicious, err := makeRevision(core.WorkspaceID, 1, "access", []string{genesis.ID}, snapshot, nil, maliciousPolicy, attacker.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := appendBundleHead(legacy, malicious)
+	if _, _, err = receiver.IntegrateFrom(ctx, "shared", forged, attacker.identity.ID()); err == nil || !strings.Contains(err.Error(), "not signed by a workspace admin") {
+		t.Fatalf("self-authorized legacy policy anchor error = %v", err)
 	}
 }
 

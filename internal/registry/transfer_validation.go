@@ -201,15 +201,15 @@ func validateImportedRevisionShapes(manifest RevisionManifest, revisions []Revis
 func authorizeImportedHistory(ctx context.Context, reader sqlReader, item revisionImport, revisions map[string]Revision, staged map[string]bool, devices map[string]DeviceRecord, network NetworkBundle) error {
 	indegree, children, ready := importedRevisionGraph(revisions)
 	validated := make(map[string]Revision, len(revisions))
-	currentEpoch := int64(0)
-	for _, revision := range revisions {
-		currentEpoch = max(currentEpoch, revision.Epoch)
+	endorsed, err := importedActiveAuthorAncestorIDs(ctx, reader, item, revisions, staged, devices)
+	if err != nil {
+		return err
 	}
 	for len(ready) > 0 {
 		current := ready
 		ready = nil
 		for _, id := range current {
-			if err := authorizeImportedRevision(ctx, reader, item, revisions[id], staged[id], validated, devices, network, currentEpoch); err != nil {
+			if err := authorizeImportedRevision(ctx, reader, item, revisions[id], staged[id], endorsed[id], validated, devices, network); err != nil {
 				return err
 			}
 			ready = append(ready, releaseImportedChildren(indegree, children[id])...)
@@ -220,6 +220,31 @@ func authorizeImportedHistory(ctx context.Context, reader sqlReader, item revisi
 		return errors.New("workspace revision graph contains a cycle")
 	}
 	return nil
+}
+
+func importedActiveAuthorAncestorIDs(ctx context.Context, reader sqlReader, item revisionImport, revisions map[string]Revision, staged map[string]bool, devices map[string]DeviceRecord) (map[string]bool, error) {
+	result := map[string]bool{}
+	for id, revision := range revisions {
+		proofs, err := loadImportedProofs(ctx, reader, item, id, staged[id])
+		if err != nil {
+			return nil, err
+		}
+		revision.Proofs = proofs
+		if !hasActiveAuthor(revision, devices) {
+			continue
+		}
+		queue := append([]string(nil), revision.Parents...)
+		for len(queue) > 0 {
+			ancestor := queue[0]
+			queue = queue[1:]
+			if result[ancestor] {
+				continue
+			}
+			result[ancestor] = true
+			queue = append(queue, revisions[ancestor].Parents...)
+		}
+	}
+	return result, nil
 }
 
 func importedRevisionGraph(revisions map[string]Revision) (map[string]int, map[string][]string, []string) {
@@ -239,16 +264,18 @@ func importedRevisionGraph(revisions map[string]Revision) (map[string]int, map[s
 	return indegree, children, ready
 }
 
-func authorizeImportedRevision(ctx context.Context, reader sqlReader, item revisionImport, revision Revision, staged bool, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64) error {
+func authorizeImportedRevision(ctx context.Context, reader sqlReader, item revisionImport, revision Revision, staged, endorsed bool, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle) error {
 	proofs, err := loadImportedProofs(ctx, reader, item, revision.ID, staged)
 	if err != nil {
 		return err
 	}
 	revision.Proofs = proofs
-	if err = authorizeRevision(revision, validated, devices, network, currentEpoch, !staged); err != nil {
+	if err = authorizeRevision(revision, validated, devices, network, !staged || endorsed); err != nil {
 		return fmt.Errorf("authorize revision %s: %w", revision.ID, err)
 	}
-	revision.Proofs = nil
+	if revision.Kind != "genesis" || revision.Access != nil {
+		revision.Proofs = nil
+	}
 	validated[revision.ID] = revision
 	return nil
 }

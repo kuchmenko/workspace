@@ -217,11 +217,10 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 	if err != nil {
 		return err
 	}
+	endorsed := activeAuthorAncestorIDs(revisions, devices)
 	remaining := make(map[string]Revision, len(revisions))
-	currentEpoch := int64(0)
 	for id, revision := range revisions {
 		remaining[id] = revision
-		currentEpoch = max(currentEpoch, revision.Epoch)
 	}
 	validated := map[string]Revision{}
 	for len(remaining) > 0 {
@@ -230,7 +229,7 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 			return errors.New("workspace revision graph contains a cycle")
 		}
 		for _, id := range ready {
-			if err = authorizeRevision(remaining[id], validated, devices, networkBundle, currentEpoch, accepted[id]); err != nil {
+			if err = authorizeRevision(remaining[id], validated, devices, networkBundle, accepted[id] || endorsed[id]); err != nil {
 				return fmt.Errorf("authorize revision %s: %w", id, err)
 			}
 			validated[id] = remaining[id]
@@ -238,6 +237,36 @@ func (store *Store) validateAuthorization(ctx context.Context, revisions map[str
 		}
 	}
 	return nil
+}
+
+func activeAuthorAncestorIDs(revisions map[string]Revision, devices map[string]DeviceRecord) map[string]bool {
+	result := map[string]bool{}
+	for _, revision := range revisions {
+		if !hasActiveAuthor(revision, devices) {
+			continue
+		}
+		queue := append([]string(nil), revision.Parents...)
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			if result[id] {
+				continue
+			}
+			result[id] = true
+			queue = append(queue, revisions[id].Parents...)
+		}
+	}
+	return result
+}
+
+func hasActiveAuthor(revision Revision, devices map[string]DeviceRecord) bool {
+	for _, proof := range revision.Proofs {
+		record, found := devices[proof.DeviceID]
+		if found && record.Active && string(record.PublicKey) == string(proof.PublicKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func (store *Store) acceptedRevisionIDs(ctx context.Context, revisions map[string]Revision) (map[string]bool, error) {
@@ -283,7 +312,7 @@ func readyRevisions(remaining, validated map[string]Revision) []string {
 	return ready
 }
 
-func authorizeRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64, previouslyAccepted bool) error {
+func authorizeRevision(revision Revision, validated map[string]Revision, devices map[string]DeviceRecord, network NetworkBundle, previouslyAccepted bool) error {
 	if revision.Access == nil {
 		return authorizeLegacyRevision(revision, validated, deviceKeys(devices))
 	}
@@ -295,7 +324,27 @@ func authorizeRevision(revision Revision, validated map[string]Revision, devices
 	if err != nil {
 		return err
 	}
-	return authorizeProofs(revision, authorPolicy, devices, network, currentEpoch, previouslyAccepted)
+	if legacyPolicyAnchor(revision, validated) && !previouslyAccepted {
+		authorPolicy = legacyAuthorityPolicy(validated)
+	}
+	return authorizeProofs(revision, authorPolicy, devices, network, previouslyAccepted)
+}
+
+func legacyPolicyAnchor(revision Revision, validated map[string]Revision) bool {
+	return revision.Kind == "access" && len(revision.Parents) == 1 && validated[revision.Parents[0]].Access == nil
+}
+
+func legacyAuthorityPolicy(validated map[string]Revision) AccessPolicy {
+	policy := AccessPolicy{Mode: AccessSelected, Roles: map[string]string{}}
+	for _, revision := range validated {
+		if revision.Kind != "genesis" || revision.Access != nil {
+			continue
+		}
+		for _, proof := range revision.Proofs {
+			policy.Roles[proof.DeviceID] = WorkspaceAdmin
+		}
+	}
+	return policy
 }
 
 func authorizeLegacyRevision(revision Revision, validated map[string]Revision, keys map[string]string) error {
@@ -448,6 +497,11 @@ func equalValidatedRevisionKindSets(heads []string, base, kind string, revisions
 
 func validateAccessTransition(parent, revision Revision, policy AccessPolicy) error {
 	if parent.Access == nil {
+		parentConflicts, _ := json.Marshal(parent.Conflicts)
+		revisionConflicts, _ := json.Marshal(revision.Conflicts)
+		if revision.Epoch != parent.Epoch || string(revision.Snapshot) != string(parent.Snapshot) || string(revisionConflicts) != string(parentConflicts) {
+			return errors.New("access revision has an invalid epoch or changes workspace state")
+		}
 		return nil
 	}
 	expectedEpoch := parent.Epoch
@@ -460,13 +514,13 @@ func validateAccessTransition(parent, revision Revision, policy AccessPolicy) er
 	return nil
 }
 
-func authorizeProofs(revision Revision, policy AccessPolicy, devices map[string]DeviceRecord, network NetworkBundle, currentEpoch int64, previouslyAccepted bool) error {
+func authorizeProofs(revision Revision, policy AccessPolicy, devices map[string]DeviceRecord, network NetworkBundle, previouslyAccepted bool) error {
 	for _, proof := range revision.Proofs {
 		record, known := devices[proof.DeviceID]
 		if !known || string(record.PublicKey) != string(proof.PublicKey) {
 			return errors.New("revision author is not a known network device")
 		}
-		if err := authorizeProof(revision, proof.DeviceID, policy, network, record.Active || previouslyAccepted || revision.Epoch < currentEpoch); err != nil {
+		if err := authorizeProof(revision, proof.DeviceID, policy, network, record.Active || previouslyAccepted); err != nil {
 			return err
 		}
 	}
