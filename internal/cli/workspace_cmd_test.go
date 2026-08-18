@@ -310,19 +310,6 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	if _, err = left.SetAccess(ctx, "shared", policy); err != nil {
 		t.Fatal(err)
 	}
-	initial, err := left.ExportFor(ctx, "shared", rightIdentity.ID())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = right.AttachFrom(ctx, "shared", rightRoot, initial, leftIdentity.ID()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error {
-		workspace.Aliases["remote"] = alias.RootTarget
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 	serveCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	ready := make(chan string, 1)
@@ -341,6 +328,23 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 		}
 	}
 	results, failures, err := synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
+	if err != nil || len(results) != 1 || results[0].Status != "unavailable" || len(failures) != 1 {
+		t.Fatalf("unattached results=%#v failures=%v error=%v", results, failures, err)
+	}
+	initial, err := left.ExportFor(ctx, "shared", rightIdentity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.AttachFrom(ctx, "shared", rightRoot, initial, leftIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["remote"] = alias.RootTarget
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	results, failures, err = synchronizeWorkspacePeersContext(ctx, left, leftIdentity, "arch", []registry.Workspace{created}, []peernetwork.PeerEndpoint{{Device: rightDevice, Endpoint: endpoint}})
 	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Status != "pulled" {
 		t.Fatalf("results=%#v failures=%v error=%v", results, failures, err)
 	}

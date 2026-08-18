@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"crypto/ed25519"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -87,6 +88,10 @@ func inventoryWorkspace(ctx context.Context, store *registry.Store, peerID strin
 		return errors.New("workspace inventory mode is invalid")
 	}
 	name, err := store.WorkspaceNameByID(ctx, request.WorkspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		response.WorkspaceMissing = true
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -234,6 +239,9 @@ func Attach(ctx context.Context, source AvailableWorkspace, store *registry.Stor
 	if err != nil {
 		return registry.Workspace{}, err
 	}
+	if response.WorkspaceMissing {
+		return registry.Workspace{}, UnavailableError{err: errors.New("peer has not attached the workspace")}
+	}
 	if response.Manifest == nil {
 		return registry.Workspace{}, errors.New("peer returned no workspace manifest")
 	}
@@ -273,6 +281,9 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync})
 	if err != nil {
 		return SyncResult{}, err
+	}
+	if response.WorkspaceMissing {
+		return SyncResult{}, UnavailableError{err: errors.New("peer has not attached the workspace")}
 	}
 	if response.Manifest == nil {
 		return SyncResult{}, errors.New("peer returned incomplete workspace inventory")

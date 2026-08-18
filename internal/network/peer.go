@@ -99,15 +99,16 @@ type peerRequest struct {
 }
 
 type peerResponse struct {
-	Info       PeerInfo                     `json:"info"`
-	Network    registry.NetworkBundle       `json:"network"`
-	Workspaces []registry.WorkspaceSummary  `json:"workspaces,omitempty"`
-	Manifest   *registry.RevisionManifest   `json:"manifest,omitempty"`
-	Import     *registry.RevisionImportPlan `json:"import,omitempty"`
-	Revisions  []registry.Revision          `json:"revisions,omitempty"`
-	Conflicts  []registry.Conflict          `json:"conflicts,omitempty"`
-	SyncStatus string                       `json:"sync_status,omitempty"`
-	Error      string                       `json:"error,omitempty"`
+	Info             PeerInfo                     `json:"info"`
+	Network          registry.NetworkBundle       `json:"network"`
+	Workspaces       []registry.WorkspaceSummary  `json:"workspaces,omitempty"`
+	Manifest         *registry.RevisionManifest   `json:"manifest,omitempty"`
+	Import           *registry.RevisionImportPlan `json:"import,omitempty"`
+	Revisions        []registry.Revision          `json:"revisions,omitempty"`
+	Conflicts        []registry.Conflict          `json:"conflicts,omitempty"`
+	SyncStatus       string                       `json:"sync_status,omitempty"`
+	WorkspaceMissing bool                         `json:"workspace_missing,omitempty"`
+	Error            string                       `json:"error,omitempty"`
 }
 
 func Serve(ctx context.Context, options ServeOptions) error {
