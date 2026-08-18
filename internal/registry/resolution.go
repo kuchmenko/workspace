@@ -42,7 +42,9 @@ func (store *Store) HasUnresolvedConflicts(ctx context.Context, name string) (bo
 		SELECT 1 FROM workspace_conflicts WHERE workspace_id=?
 		UNION ALL
 		SELECT 1 FROM workspace_access_conflicts WHERE workspace_id=?
-	)`, workspace.WorkspaceID, workspace.WorkspaceID).Scan(&found)
+		UNION ALL
+		SELECT 1 FROM workspace_heads WHERE workspace_id=? GROUP BY workspace_id HAVING COUNT(*) > 1
+	)`, workspace.WorkspaceID, workspace.WorkspaceID, workspace.WorkspaceID).Scan(&found)
 	return found, err
 }
 

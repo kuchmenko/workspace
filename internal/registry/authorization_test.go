@@ -86,6 +86,13 @@ func TestReplicaForwardsDivergentHeadsWithoutAuthoringMerge(t *testing.T) {
 	if len(forwarded.Heads) != 2 {
 		t.Fatalf("replica heads = %v", forwarded.Heads)
 	}
+	unresolved, err := replica.HasUnresolvedConflicts(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !unresolved {
+		t.Fatal("replica with divergent heads was reported as resolved")
+	}
 	for _, revision := range forwarded.Revisions {
 		for _, proof := range revision.Proofs {
 			if proof.DeviceID == replica.identity.ID() {
