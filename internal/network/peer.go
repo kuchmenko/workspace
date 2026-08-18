@@ -330,6 +330,13 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		writePeerResponse(connection, response)
 		return
 	}
+	if _, active := activeDevice(state.Devices, self.ID); !active {
+		if request.Action != "status" {
+			response.Error = "local device is not active in the network"
+		}
+		writePeerResponse(connection, response)
+		return
+	}
 	peer, known := deviceByID(state.Devices, peerID)
 	if !known || !peer.Active {
 		if request.Action != "status" {

@@ -257,6 +257,55 @@ func TestPeerProbeRejectsRemovedDevice(t *testing.T) {
 	}
 }
 
+func TestPeerServerRejectsWorkspaceRequestAfterLocalDeviceRemoved(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{}, Aliases: map[string]string{}}
+	if _, err := archStore.Create(ctx, "personal", root, state); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	address := <-endpoint
+	path, found := networkTestStorePaths.Load(archStore)
+	if !found {
+		t.Fatal("arch registry path not found")
+	}
+	otherStore, err := registry.Open(path.(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = otherStore.Close() })
+	if _, err = otherStore.RemoveNetworkDevice(ctx, archIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	networkState, err := asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch, found := activeDevice(networkState.Devices, archIdentity.ID())
+	if !found {
+		t.Fatal("paired arch device not found")
+	}
+	_, err = requestPeer(ctx, address, arch, asahiStore, asahiIdentity, "asahi", peerRequest{Version: 1, Action: "workspace.list"})
+	if err == nil || !IsRejected(err) || !strings.Contains(err.Error(), "local device is not active") {
+		t.Fatalf("workspace request error = %v, want rejected inactive local device", err)
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPeerProbeRejectsMismatchedPinnedIdentity(t *testing.T) {
 	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
 	_, otherIdentity := networkTestStore(t)
