@@ -37,12 +37,9 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 		}
 		return err
 	}
-	plan := workspacesync.RefreshPlan(root, current.State, before)
-	if !interactive {
-		selection, err = refreshHeadlessSelection(ctx, plan, before, selection, stdout, stderr)
-		if err != nil {
-			return err
-		}
+	plan, selection, err := refreshSyncPlan(ctx, root, current, before, selection, interactive, stdout, stderr)
+	if err != nil {
+		return err
 	}
 	var runErr error
 	if interactive {
@@ -50,8 +47,7 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	} else {
 		runErr = runSyncHeadlessSelection(ctx, root, selection, stdout)
 	}
-	var exitErr ExitError
-	if errors.As(runErr, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+	if syncRunCanceled(runErr) {
 		return ExitError{Code: syncExitCanceled}
 	}
 	_, publishErr := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
@@ -65,6 +61,11 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 		return ExitError{Code: syncExitCanceled}
 	}
 	return publishErr
+}
+
+func syncRunCanceled(err error) bool {
+	var exitErr ExitError
+	return errors.As(err, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, workspacesync.Plan, error) {
@@ -82,6 +83,15 @@ func prepareSync(ctx context.Context, root string, interactive bool, stdout, std
 	}
 	current, err = synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
 	return current, selection, plan, err
+}
+
+func refreshSyncPlan(ctx context.Context, root string, current registry.Workspace, before workspacesync.Plan, selection workspacesync.Selection, interactive bool, stdout, stderr io.Writer) (workspacesync.Plan, workspacesync.Selection, error) {
+	plan := workspacesync.RefreshPlan(root, current.State, before)
+	if interactive {
+		return plan, selection, nil
+	}
+	selection, err := refreshHeadlessSelection(ctx, plan, before, selection, stdout, stderr)
+	return plan, selection, err
 }
 
 func refreshHeadlessSelection(ctx context.Context, plan, before workspacesync.Plan, selection workspacesync.Selection, stdout, stderr io.Writer) (workspacesync.Selection, error) {
