@@ -362,6 +362,33 @@ func registerSyncTestWorkspace(t *testing.T, root string, workspace *config.Work
 	t.Cleanup(func() { _ = store.Close() })
 }
 
+func TestReloadSynchronizedWorkspaceWarnsWhenAliasStateCannotBeWritten(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	root := t.TempDir()
+	registerSyncTestWorkspace(t, root, &config.Workspace{
+		Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{"dev": "workspace"},
+	})
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	blockedStateHome := filepath.Join(t.TempDir(), "blocked")
+	if err = os.WriteFile(blockedStateHome, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_STATE_HOME", blockedStateHome)
+	var stderr bytes.Buffer
+	workspace, err := reloadSynchronizedWorkspace(context.Background(), store, root, &stderr)
+	if err != nil {
+		t.Fatalf("reloadSynchronizedWorkspace: %v", err)
+	}
+	if workspace.Root != root || !strings.Contains(stderr.String(), "warning: could not update alias state file:") {
+		t.Fatalf("workspace=%#v stderr=%q", workspace, stderr.String())
+	}
+}
+
 func TestClassifySyncReport(t *testing.T) {
 	tests := []struct {
 		name   string

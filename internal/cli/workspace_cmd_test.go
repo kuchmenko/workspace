@@ -303,6 +303,9 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = alias.WriteStateFile(created.State, created.Root); err != nil {
+		t.Fatal(err)
+	}
 	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{leftIdentity.ID(): registry.WorkspaceAdmin}}
 	if _, err = left.SetAccess(ctx, "shared", policy); err != nil {
 		t.Fatal(err)
@@ -315,7 +318,7 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = right.Mutate(ctx, rightRoot, func(workspace *config.Workspace) error {
-		workspace.Aliases["remote"] = "project"
+		workspace.Aliases["remote"] = alias.RootTarget
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -341,12 +344,27 @@ func TestSynchronizeWorkspacePeersContextPullsRemoteRevision(t *testing.T) {
 	if err != nil || len(failures) != 0 || len(results) != 1 || results[0].Status != "pulled" {
 		t.Fatalf("results=%#v failures=%v error=%v", results, failures, err)
 	}
-	pulled, err := left.LoadByRoot(ctx, leftRoot)
+	var stderr bytes.Buffer
+	pulled, err := reloadSynchronizedWorkspace(ctx, left, leftRoot, &stderr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pulled.State.Aliases["remote"] != "project" {
+	if pulled.State.Aliases["remote"] != alias.RootTarget {
 		t.Fatalf("aliases = %#v", pulled.State.Aliases)
+	}
+	aliasPath, err := alias.StateFilePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasState, err := os.ReadFile(aliasPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(aliasState), "alias remote=") || !strings.Contains(string(aliasState), leftRoot) {
+		t.Fatalf("alias state after pull = %q", aliasState)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("unexpected alias state warning: %s", stderr.String())
 	}
 	stop()
 	select {

@@ -12,7 +12,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/alias"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/metrics"
 	peernetwork "github.com/kuchmenko/workspace/internal/network"
 	"github.com/kuchmenko/workspace/internal/registry"
 	workspacesync "github.com/kuchmenko/workspace/internal/sync"
@@ -88,11 +90,24 @@ func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stder
 	if err = writeTopLevelWorkspaceSync(stdout, stderr, results, failures); err != nil {
 		return registry.Workspace{}, err
 	}
-	workspace, err = store.LoadByRoot(ctx, root)
+	workspace, err = reloadSynchronizedWorkspace(ctx, store, root, stderr)
 	if err != nil {
 		return registry.Workspace{}, err
 	}
 	return requireResolvedWorkspace(ctx, store, workspace)
+}
+
+func reloadSynchronizedWorkspace(ctx context.Context, store *registry.Store, root string, stderr io.Writer) (registry.Workspace, error) {
+	workspace, err := store.LoadByRoot(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, err
+	}
+	if err = alias.WriteStateFile(workspace.State, workspace.Root); err != nil {
+		fmt.Fprintf(stderr, "warning: could not update alias state file: %v\n", err)
+	} else {
+		metrics.RecordAliasStateGenerated()
+	}
+	return workspace, nil
 }
 
 func requireResolvedWorkspace(ctx context.Context, store *registry.Store, workspace registry.Workspace) (registry.Workspace, error) {
