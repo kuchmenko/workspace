@@ -146,11 +146,19 @@ func RequiresFreshPreflight(before, after Plan) bool {
 	}
 	for index := range before.Projects {
 		left, right := before.Projects[index], after.Projects[index]
-		if left.Name != right.Name || left.Snapshot.Remote != right.Snapshot.Remote {
+		if left.Name != right.Name || !projectSnapshotsEqual(left.Snapshot, right.Snapshot) {
 			return true
 		}
 	}
 	return false
+}
+
+func projectSnapshotsEqual(left, right ProjectSnapshot) bool {
+	return left.Remote == right.Remote &&
+		left.Path == right.Path &&
+		left.Status == right.Status &&
+		left.DefaultBranch == right.DefaultBranch &&
+		maps.Equal(left.Mirrors, right.Mirrors)
 }
 
 func (p *Plan) addProject(name string, project config.Project) {

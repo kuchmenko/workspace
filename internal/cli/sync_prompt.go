@@ -88,6 +88,17 @@ func resolveProjectConflict(c conflict.Conflict) (bool, error) {
 	}, "k", "")
 }
 
+func resolveOriginDivergence(c conflict.Conflict) (bool, error) {
+	wtPath, err := findWorktreePath(c.Workspace, c.Project, "")
+	if err != nil {
+		fmt.Printf("warning: could not locate worktree: %v\n", err)
+	}
+	return runPromptLoop([]promptAction{
+		{"o", "open shell in worktree — choose the origin and re-run sync",
+			func() (bool, error) { return openShellAtWorktree(wtPath) }},
+	}, "k", "")
+}
+
 func openShellAtWorktree(wtPath string) (bool, error) {
 	if wtPath == "" {
 		fmt.Println("no worktree path; cannot open shell")

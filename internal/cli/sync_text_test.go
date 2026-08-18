@@ -138,6 +138,35 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	}
 }
 
+func TestRefreshHeadlessSelectionIncludesProjectReceivedDuringWorkspaceSync(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := t.TempDir()
+	beforeState := &config.Workspace{Groups: map[string]config.Group{}, Aliases: map[string]string{}, Projects: map[string]config.Project{}}
+	before := workspacesync.BuildPlan(root, beforeState)
+	remote := testutil.InitFakeRemote(t, "received", "main")
+	afterState := &config.Workspace{
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{},
+		Projects: map[string]config.Project{"received": {
+			Remote: remote, Path: "personal/received", Status: config.StatusActive,
+			Category: config.CategoryPersonal, DefaultBranch: "main",
+		}},
+	}
+	registerSyncTestWorkspace(t, root, afterState)
+	plan := workspacesync.RefreshPlan(root, afterState, before)
+	var stdout, stderr bytes.Buffer
+	selection, err := refreshHeadlessSelection(context.Background(), plan, before, workspacesync.Selection{}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("refreshHeadlessSelection: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if err = runSyncHeadlessSelection(context.Background(), root, selection, &stdout); err != nil {
+		t.Fatalf("runSyncHeadlessSelection: %v", err)
+	}
+	if !git.IsRepo(filepath.Join(root, "personal", "received")) {
+		t.Fatal("project received during workspace sync was not materialized")
+	}
+}
+
 func TestWriteSyncEventEscapesProjectAndMirrorControls(t *testing.T) {
 	var output bytes.Buffer
 	writeSyncEvent(&output, workspacesync.Event{

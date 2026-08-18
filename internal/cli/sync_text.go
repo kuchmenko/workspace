@@ -30,14 +30,20 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	interactive := syncTerminal(stdin) && syncTerminal(stdout)
-	current, selection, err := prepareSync(ctx, root, interactive, stdout, stderr)
+	current, selection, before, err := prepareSync(ctx, root, interactive, stdout, stderr)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ExitError{Code: syncExitCanceled}
 		}
 		return err
 	}
-	plan := workspacesync.BuildPlan(root, current.State)
+	plan := workspacesync.RefreshPlan(root, current.State, before)
+	if !interactive {
+		selection, err = refreshHeadlessSelection(ctx, plan, before, selection, stdout, stderr)
+		if err != nil {
+			return err
+		}
+	}
 	var runErr error
 	if interactive {
 		runErr = runSyncTUI(ctx, root, plan, stdout)
@@ -61,20 +67,28 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	return publishErr
 }
 
-func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, error) {
+func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, workspacesync.Plan, error) {
 	var selection workspacesync.Selection
+	current, err := loadSyncWorkspace(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, selection, workspacesync.Plan{}, err
+	}
+	plan := workspacesync.BuildPlan(root, current.State)
 	if !interactive {
-		current, err := loadSyncWorkspace(ctx, root)
+		selection, err = preflightSyncHeadless(ctx, plan, stdout, stderr)
 		if err != nil {
-			return registry.Workspace{}, selection, err
-		}
-		selection, err = preflightSyncHeadless(ctx, workspacesync.BuildPlan(root, current.State), stdout, stderr)
-		if err != nil {
-			return registry.Workspace{}, selection, err
+			return registry.Workspace{}, selection, plan, err
 		}
 	}
-	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
-	return current, selection, err
+	current, err = synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	return current, selection, plan, err
+}
+
+func refreshHeadlessSelection(ctx context.Context, plan, before workspacesync.Plan, selection workspacesync.Selection, stdout, stderr io.Writer) (workspacesync.Selection, error) {
+	if !workspacesync.RequiresFreshPreflight(before, plan) {
+		return selection, nil
+	}
+	return preflightSyncHeadless(ctx, plan, stdout, stderr)
 }
 
 func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, error) {
