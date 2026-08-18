@@ -55,3 +55,21 @@ func TestDiscoveryEndpointPreservesIPv6LinkLocalScope(t *testing.T) {
 		t.Fatalf("endpoint = %q, want %q", got, want)
 	}
 }
+
+func TestDiscoveryEndpointsRetainsEveryAddress(t *testing.T) {
+	entry := &zeroconf.ServiceEntry{
+		Port:     17337,
+		AddrIPv4: []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("192.0.2.2")},
+		AddrIPv6: []net.IP{net.ParseIP("2001:db8::1")},
+	}
+	want := []string{"192.0.2.1:17337", "192.0.2.2:17337", "[2001:db8::1]:17337"}
+	got := discoveryEndpoints(entry)
+	if len(got) != len(want) {
+		t.Fatalf("endpoints = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("endpoints = %v, want %v", got, want)
+		}
+	}
+}

@@ -403,7 +403,7 @@ func runWorkspaceSync(command *cobra.Command, args []string, jsonOutput bool) er
 	if err != nil {
 		return err
 	}
-	peers, err := peernetwork.DiscoverPeers(command.Context(), store, identity.ID(), 1500*time.Millisecond)
+	peers, err := peernetwork.DiscoverPeers(command.Context(), store, identity, name, 1500*time.Millisecond)
 	if err != nil {
 		return err
 	}

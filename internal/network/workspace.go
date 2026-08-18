@@ -3,7 +3,6 @@ package network
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -208,13 +207,13 @@ func Available(ctx context.Context, store *registry.Store, identity device.Ident
 	var available []AvailableWorkspace
 	for _, peer := range peers {
 		requestCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-		response, requestErr := requestPeer(requestCtx, peer.Endpoint, peer.Device, store, identity, name, peerRequest{Version: 1, Action: "workspace.list"})
+		response, endpoint, requestErr := requestPeerCandidates(requestCtx, peer.Endpoints, peer.Device, store, identity, name, peerRequest{Version: 1, Action: "workspace.list"})
 		cancel()
 		if requestErr != nil {
 			continue
 		}
 		for _, workspace := range response.Workspaces {
-			available = append(available, AvailableWorkspace{WorkspaceSummary: workspace, DeviceID: peer.Device.ID, DeviceName: peer.Device.Name, Endpoint: peer.Endpoint})
+			available = append(available, AvailableWorkspace{WorkspaceSummary: workspace, DeviceID: peer.Device.ID, DeviceName: peer.Device.Name, Endpoint: endpoint})
 		}
 	}
 	sort.Slice(available, func(left, right int) bool {
@@ -488,18 +487,23 @@ func completedSyncStatus(before, after, remoteStatus string, localConflicts, rem
 }
 
 type discoveredPeer struct {
-	Device   registry.DeviceRecord
-	Endpoint string
+	Device    registry.DeviceRecord
+	Endpoints []string
 }
 
-func DiscoverPeers(ctx context.Context, store *registry.Store, localID string, discoveryWindow time.Duration) ([]PeerEndpoint, error) {
-	peers, err := discoverActivePeers(ctx, store, localID, discoveryWindow)
+func DiscoverPeers(ctx context.Context, store *registry.Store, identity device.Identity, name string, discoveryWindow time.Duration) ([]PeerEndpoint, error) {
+	peers, err := discoverActivePeers(ctx, store, identity.ID(), discoveryWindow)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]PeerEndpoint, len(peers))
-	for index, peer := range peers {
-		result[index].Device, result[index].Endpoint = peer.Device, peer.Endpoint
+	result := make([]PeerEndpoint, 0, len(peers))
+	for _, peer := range peers {
+		probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_, endpoint, probeErr := probeCandidates(probeContext, peer.Endpoints, peer.Device, store, identity, name)
+		cancel()
+		if probeErr == nil {
+			result = append(result, PeerEndpoint{Device: peer.Device, Endpoint: endpoint})
+		}
 	}
 	return result, nil
 }
@@ -517,8 +521,8 @@ func discoverActivePeers(ctx context.Context, store *registry.Store, localID str
 	}
 	var peers []discoveredPeer
 	for _, record := range state.Devices {
-		if record.ID != localID && record.Active && endpoints[record.ID] != "" {
-			peers = append(peers, discoveredPeer{Device: record, Endpoint: endpoints[record.ID]})
+		if record.ID != localID && record.Active && len(endpoints[record.ID]) > 0 {
+			peers = append(peers, discoveredPeer{Device: record, Endpoints: endpoints[record.ID]})
 		}
 	}
 	sort.Slice(peers, func(left, right int) bool { return peers[left].Device.Name < peers[right].Device.Name })
@@ -539,25 +543,30 @@ func networkDevice(ctx context.Context, store *registry.Store, id string) (regis
 }
 
 func requestPeer(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, request peerRequest) (peerResponse, error) {
+	response, _, err := requestPeerCandidates(ctx, []string{endpoint}, target, store, identity, name, request)
+	return response, err
+}
+
+func requestPeerCandidates(ctx context.Context, endpoints []string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string, request peerRequest) (peerResponse, string, error) {
 	cert, err := peerCertificate(identity, name)
 	if err != nil {
-		return peerResponse{}, err
+		return peerResponse{}, "", err
 	}
 	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey))
 	if err != nil {
-		return peerResponse{}, err
+		return peerResponse{}, "", err
 	}
-	dialer := tls.Dialer{Config: config}
 	dialContext, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
-	connection, err := dialer.DialContext(dialContext, "tcp", endpoint)
+	connection, endpoint, err := dialPeerCandidates(dialContext, endpoints, config)
 	cancel()
 	if err != nil {
-		return peerResponse{}, UnavailableError{err: err}
+		return peerResponse{}, "", UnavailableError{err: err}
 	}
 	defer func() { _ = connection.Close() }()
 	stop := watchConnection(ctx, connection)
 	defer stop()
-	return exchangePeer(ctx, connection, target, store, request)
+	response, err := exchangePeer(ctx, connection, target, store, request)
+	return response, endpoint, err
 }
 
 func exchangePeer(ctx context.Context, connection net.Conn, target registry.DeviceRecord, store *registry.Store, request peerRequest) (peerResponse, error) {
@@ -580,7 +589,7 @@ func exchangePeer(ctx context.Context, connection net.Conn, target registry.Devi
 		return peerResponse{}, RejectedError{err: err}
 	}
 	if response.Error != "" {
-		return peerResponse{}, RejectedError{err: errors.New(response.Error)}
+		return peerResponse{}, RejectedError{err: errors.New(safePeerText(response.Error))}
 	}
 	if errors.Is(err, registry.ErrNetworkConflict) {
 		return peerResponse{}, RejectedError{err: err}

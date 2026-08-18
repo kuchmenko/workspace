@@ -77,7 +77,7 @@ func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stder
 	if err != nil {
 		return registry.Workspace{}, err
 	}
-	peers, err := peernetwork.DiscoverPeers(ctx, store, identity.ID(), 1500*time.Millisecond)
+	peers, err := peernetwork.DiscoverPeers(ctx, store, identity, name, 1500*time.Millisecond)
 	if err != nil {
 		return registry.Workspace{}, err
 	}

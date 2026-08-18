@@ -207,48 +207,73 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 }
 
 func Probe(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) (PeerInfo, error) {
+	info, _, err := probeCandidates(ctx, []string{endpoint}, target, store, identity, name)
+	return info, err
+}
+
+func probeCandidates(ctx context.Context, endpoints []string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) (PeerInfo, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, peerExchangeTimeout)
 	defer cancel()
 	cert, err := peerCertificate(identity, name)
 	if err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	config, err := peerClientTLS(cert, ed25519.PublicKey(target.PublicKey))
 	if err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
-	dialer := tls.Dialer{Config: config}
-	connection, err := dialer.DialContext(ctx, "tcp", endpoint)
+	connection, endpoint, err := dialPeerCandidates(ctx, endpoints, config)
 	if err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	defer func() { _ = connection.Close() }()
 	stop := watchConnection(ctx, connection)
 	defer stop()
 	bundle, err := store.ExportNetwork(ctx)
 	if err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	if err = encodePeerFrame(connection, peerRequest{Version: 1, Action: "status", Network: bundle}); err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	var response peerResponse
 	if err = decodePeerFrame(connection, &response); err != nil {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	if response.Info.DeviceID != target.ID {
-		return PeerInfo{}, errors.New("peer response identity does not match certificate")
+		return PeerInfo{}, "", errors.New("peer response identity does not match certificate")
 	}
 	if _, err = store.MergeNetworkFrom(ctx, response.Network, target.ID); err != nil && !errors.Is(err, registry.ErrNetworkConflict) {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
 	if response.Error != "" {
-		return PeerInfo{}, errors.New(response.Error)
+		return PeerInfo{}, "", errors.New(safePeerText(response.Error))
 	}
 	if errors.Is(err, registry.ErrNetworkConflict) {
-		return PeerInfo{}, err
+		return PeerInfo{}, "", err
 	}
-	return response.Info, nil
+	return response.Info, endpoint, nil
+}
+
+func dialPeerCandidates(ctx context.Context, endpoints []string, config *tls.Config) (net.Conn, string, error) {
+	var lastErr error
+	for _, endpoint := range endpoints {
+		dialer := tls.Dialer{Config: config}
+		dialContext, cancel := context.WithTimeout(ctx, time.Second)
+		connection, err := dialer.DialContext(dialContext, "tcp", endpoint)
+		cancel()
+		if err == nil {
+			return connection, endpoint, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("peer has no discovered endpoints")
+	}
+	return nil, "", lastErr
 }
 
 func NetworkStatus(ctx context.Context, store *registry.Store, identity device.Identity, name string, discoveryWindow time.Duration) ([]Status, error) {
@@ -268,9 +293,9 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 		if record.ID == identity.ID() {
 			status.Online = true
 			status.Endpoint = "local"
-		} else if endpoint := endpoints[record.ID]; endpoint != "" && record.Active {
+		} else if candidates := endpoints[record.ID]; len(candidates) > 0 && record.Active {
 			probeContext, stop := context.WithTimeout(ctx, 3*time.Second)
-			_, probeErr := Probe(probeContext, endpoint, record, store, identity, name)
+			_, endpoint, probeErr := probeCandidates(probeContext, candidates, record, store, identity, name)
 			stop()
 			status.Endpoint = endpoint
 			status.Online = probeErr == nil

@@ -89,7 +89,7 @@ func invitationID(code string) string {
 	return invitation
 }
 
-func discoverPeers(ctx context.Context) (map[string]string, error) {
+func discoverPeers(ctx context.Context) (map[string][]string, error) {
 	browseContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	resolver, err := zeroconf.NewResolver()
@@ -100,14 +100,16 @@ func discoverPeers(ctx context.Context) (map[string]string, error) {
 	if err = resolver.Browse(browseContext, peerService, "local.", entries); err != nil {
 		return nil, err
 	}
-	peers := map[string]string{}
+	peers := map[string][]string{}
 	for entry := range entries {
 		id := entryValue(entry, "id")
 		if entryValue(entry, "v") != "1" || id == "" {
 			continue
 		}
-		if endpoint := discoveryEndpoint(entry); endpoint != "" {
-			peers[id] = endpoint
+		for _, endpoint := range discoveryEndpoints(entry) {
+			if !containsEndpoint(peers[id], endpoint) {
+				peers[id] = append(peers[id], endpoint)
+			}
 		}
 	}
 	if err = ctx.Err(); err != nil && !errors.Is(err, context.DeadlineExceeded) {
@@ -117,21 +119,40 @@ func discoverPeers(ctx context.Context) (map[string]string, error) {
 }
 
 func discoveryEndpoint(entry *zeroconf.ServiceEntry) string {
-	if len(entry.AddrIPv4) > 0 {
-		return net.JoinHostPort(entry.AddrIPv4[0].String(), strconv.Itoa(entry.Port))
-	}
-	if len(entry.AddrIPv6) == 0 {
+	endpoints := discoveryEndpoints(entry)
+	if len(endpoints) == 0 {
 		return ""
 	}
-	host := entry.AddrIPv6[0].String()
-	if entry.AddrIPv6[0].IsLinkLocalUnicast() {
-		networkInterface, err := net.InterfaceByIndex(entry.ReceivedIfIndex)
-		if err != nil {
-			return ""
-		}
-		host += "%" + networkInterface.Name
+	return endpoints[0]
+}
+
+func discoveryEndpoints(entry *zeroconf.ServiceEntry) []string {
+	port := strconv.Itoa(entry.Port)
+	endpoints := make([]string, 0, len(entry.AddrIPv4)+len(entry.AddrIPv6))
+	for _, address := range entry.AddrIPv4 {
+		endpoints = append(endpoints, net.JoinHostPort(address.String(), port))
 	}
-	return net.JoinHostPort(host, strconv.Itoa(entry.Port))
+	for _, address := range entry.AddrIPv6 {
+		host := address.String()
+		if address.IsLinkLocalUnicast() {
+			networkInterface, err := net.InterfaceByIndex(entry.ReceivedIfIndex)
+			if err != nil {
+				continue
+			}
+			host += "%" + networkInterface.Name
+		}
+		endpoints = append(endpoints, net.JoinHostPort(host, port))
+	}
+	return endpoints
+}
+
+func containsEndpoint(endpoints []string, wanted string) bool {
+	for _, endpoint := range endpoints {
+		if endpoint == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func entryValue(entry *zeroconf.ServiceEntry, wanted string) string {

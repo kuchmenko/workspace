@@ -43,6 +43,42 @@ func TestWatchConnectionUnblocksPartialReadOnCancellation(t *testing.T) {
 	}
 }
 
+func TestWorkspaceProtocolEscapesPeerErrorControlCharacters(t *testing.T) {
+	sourceStore, sourceIdentity, targetStore, _ := pairedTestStores(t)
+	ctx := context.Background()
+	target := mustNetworkDevice(t, ctx, targetStore, sourceIdentity.ID())
+	network, err := sourceStore.ExportNetwork(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+	serverOutcome := make(chan error, 1)
+	go func() {
+		defer func() { _ = server.Close() }()
+		var request peerRequest
+		if decodeErr := decodePeerFrame(server, &request); decodeErr != nil {
+			serverOutcome <- decodeErr
+			return
+		}
+		serverOutcome <- encodePeerFrame(server, peerResponse{
+			Info:    PeerInfo{DeviceID: sourceIdentity.ID()},
+			Network: network,
+			Error:   "rejected\nforged\x1b]0;owned\a",
+		})
+	}()
+	_, err = exchangePeer(ctx, client, target, targetStore, peerRequest{Version: 1, Action: "workspace.list"})
+	if err == nil || !IsRejected(err) {
+		t.Fatalf("workspace protocol error = %v, want rejection", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Fatalf("workspace protocol error contains peer control characters: %q", err)
+	}
+	if serverErr := <-serverOutcome; serverErr != nil {
+		t.Fatal(serverErr)
+	}
+}
+
 func TestPeerTransportAcceptsRegistryGeneratedHistoryIncrementally(t *testing.T) {
 	store, _ := networkTestStore(t)
 	ctx := context.Background()
@@ -192,6 +228,41 @@ func TestPeerProbeAuthenticatesPairedDevices(t *testing.T) {
 	}
 	if info.DeviceID != archIdentity.ID() || info.Name != "arch" || info.NetworkID != state.ID {
 		t.Fatalf("peer info = %#v", info)
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPeerProbeTriesAlternateDiscoveredEndpoint(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	state, err := asahiStore.Network(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arch, found := activeDevice(state.Devices, archIdentity.ID())
+	if !found {
+		t.Fatal("paired arch device not found")
+	}
+	reachable := <-endpoint
+	info, selected, err := probeCandidates(ctx, []string{"127.0.0.1:1", reachable}, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != reachable || info.DeviceID != archIdentity.ID() {
+		t.Fatalf("selected endpoint = %q, peer info = %#v", selected, info)
 	}
 	cancel()
 	if err = <-serverOutcome; err != nil {
