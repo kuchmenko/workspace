@@ -142,6 +142,23 @@ func TestRenderSyncTUIResultLeavesPlainPreExecutionCancellation(t *testing.T) {
 	}
 }
 
+func TestRenderRecentEventEscapesProjectAndMirrorControls(t *testing.T) {
+	got := renderRecentEvent(workspacesync.Event{
+		Kind:      workspacesync.EventMirror,
+		Status:    workspacesync.ResultSuccess,
+		Operation: "mirror-push",
+		Project:   "app\n\x1b]8;;https://example.com\x07",
+		Mirror:    "backup\u009dunsafe",
+	})
+
+	if strings.ContainsAny(got, "\n\u009d") {
+		t.Fatalf("recent event contains project or mirror controls: %q", got)
+	}
+	if !strings.Contains(got, `app\x0A\x1B]8;;https://example.com\x07/backup\x9Dunsafe`) {
+		t.Fatalf("recent event did not escape project and mirror controls: %q", got)
+	}
+}
+
 func TestSyncDashboardProgressCountsSelectedProjectsOnce(t *testing.T) {
 	plan, probes := syncModelFixture()
 	model := reviewSyncModel(t, plan, probes)

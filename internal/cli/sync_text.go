@@ -176,10 +176,10 @@ func runSyncHeadless(ctx context.Context, root string, plan workspacesync.Plan, 
 func writeSyncEvent(output io.Writer, event workspacesync.Event) {
 	label := event.Operation
 	if event.Project != "" {
-		label += " " + event.Project
+		label += " " + terminalText(event.Project)
 	}
 	if event.Mirror != "" {
-		label += "/" + event.Mirror
+		label += "/" + terminalText(event.Mirror)
 	}
 	if event.Kind == workspacesync.EventStarted {
 		fmt.Fprintf(output, "start: %s\n", label)

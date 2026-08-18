@@ -94,6 +94,25 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	}
 }
 
+func TestWriteSyncEventEscapesProjectAndMirrorControls(t *testing.T) {
+	var output bytes.Buffer
+	writeSyncEvent(&output, workspacesync.Event{
+		Kind:      workspacesync.EventMirror,
+		Status:    workspacesync.ResultSuccess,
+		Operation: "mirror-push",
+		Project:   "app\n\x1b]8;;https://example.com\x07",
+		Mirror:    "backup\u009dunsafe",
+	})
+
+	got := output.String()
+	if strings.ContainsAny(got, "\x1b\u009d") || strings.Count(got, "\n") != 1 {
+		t.Fatalf("sync event contains project or mirror controls: %q", got)
+	}
+	if !strings.Contains(got, `app\x0A\x1B]8;;https://example.com\x07/backup\x9Dunsafe`) {
+		t.Fatalf("sync event did not escape project and mirror controls: %q", got)
+	}
+}
+
 func TestRunSyncWithoutDeviceNetworkSynchronizesProjects(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	projectRemote := testutil.InitFakeRemote(t, "app", "main")
