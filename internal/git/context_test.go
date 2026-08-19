@@ -166,6 +166,7 @@ func testFetchIgnoresMovedUpstreamTag(t *testing.T, fetch func(context.Context, 
 	if err := git.SetFetchRefspec(repository); err != nil {
 		t.Fatal(err)
 	}
+	testutil.RunGit(t, repository, "config", "remote.origin.tagOpt", "--tags")
 	oldTag := git.RevParse(repository, "refs/tags/release")
 	if oldTag == "" {
 		t.Fatal("release tag was not cloned")
