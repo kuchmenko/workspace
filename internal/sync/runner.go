@@ -147,7 +147,6 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 		return false, false
 	}
 	planned.Snapshot.Remote = project.Remote
-	planned.OriginURL = project.Remote
 	result := r.syncPlannedProject(ctx, planned, &project, machine, &touched, selectedProjectMirrors(selection, planned), report, onEvent)
 	if result.Status == ResultSuccess && project.Remote != "" {
 		r.origins[planned.Name] = project.Remote

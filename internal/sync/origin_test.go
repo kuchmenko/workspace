@@ -166,6 +166,26 @@ func TestRefreshPlanIncludesProjectReceivedDuringWorkspaceSync(t *testing.T) {
 	}
 }
 
+func TestRunContextClonesRelativeRemoteFromWorkspaceRoot(t *testing.T) {
+	root := newTestWorkspace(t)
+	remote := testutil.InitFakeRemote(t, "relative", "main")
+	relative, err := filepath.Rel(root, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := &config.Workspace{Projects: map[string]config.Project{"project": activeProject(relative, "personal/project")}}
+	saveTestWorkspace(t, root, workspace)
+	plan := BuildPlan(root, workspace)
+
+	report := newTestRunner(t, root).RunContext(context.Background(), NewSelection(plan, Probe(context.Background(), plan, nil)), nil)
+	if len(report.Projects) != 1 || report.Projects[0].Status != ResultSuccess {
+		t.Fatalf("projects = %+v", report.Projects)
+	}
+	if !git.IsRepo(filepath.Join(root, "personal", "project")) {
+		t.Fatal("relative remote project was not materialized")
+	}
+}
+
 func cloneTestProject(t *testing.T, root string, project config.Project) string {
 	t.Helper()
 	barePath := layout.BarePath(filepath.Join(root, project.Path))

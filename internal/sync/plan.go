@@ -122,11 +122,23 @@ func RequiresFreshPreflight(before, after Plan) bool {
 	}
 	for index := range before.Projects {
 		left, right := before.Projects[index], after.Projects[index]
-		if left.Name != right.Name || !projectSnapshotsEqual(left.Snapshot, right.Snapshot) {
+		if !projectPlansEqual(left, right) {
 			return true
 		}
 	}
 	return false
+}
+
+func projectPlansEqual(left, right ProjectPlan) bool {
+	return left.Name == right.Name &&
+		left.State == right.State &&
+		left.MainPath == right.MainPath &&
+		left.BarePath == right.BarePath &&
+		left.Diagnostic == right.Diagnostic &&
+		left.LocalOrigin == right.LocalOrigin &&
+		left.OriginURL == right.OriginURL &&
+		projectSnapshotsEqual(left.Snapshot, right.Snapshot) &&
+		maps.Equal(left.MirrorURLs, right.MirrorURLs)
 }
 
 func projectSnapshotsEqual(left, right ProjectSnapshot) bool {

@@ -204,7 +204,7 @@ func FetchRemoteContext(ctx context.Context, repoPath, remote string) error {
 	if err != nil {
 		return commandError(ctx, "git fetch "+RedactRemote(remote)+" in "+repoPath, RedactDiagnostic(string(out), remote), err)
 	}
-	return nil
+	return fetchNewTags(ctx, repoPath, remote)
 }
 
 func FetchURLContext(ctx context.Context, repoPath, remoteURL string) error {
@@ -212,6 +212,40 @@ func FetchURLContext(ctx context.Context, repoPath, remoteURL string) error {
 	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", remoteURL, refspec).CombinedOutput()
 	if err != nil {
 		return commandError(ctx, "git fetch "+RedactRemote(remoteURL)+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), err)
+	}
+	return fetchNewTags(ctx, repoPath, remoteURL)
+}
+
+func fetchNewTags(ctx context.Context, repoPath, remote string) error {
+	localOutput, err := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--format=%(refname)", "refs/tags").Output()
+	if err != nil {
+		return commandError(ctx, "list local tags in "+repoPath, "", err)
+	}
+	local := make(map[string]bool)
+	for _, ref := range strings.Fields(string(localOutput)) {
+		local[ref] = true
+	}
+	remoteOutput, err := remoteCommand(ctx, "-C", repoPath, "ls-remote", "--tags", "--refs", remote).CombinedOutput()
+	if err != nil {
+		return commandError(ctx, "list tags from "+RedactRemote(remote), RedactDiagnostic(string(remoteOutput), remote), err)
+	}
+	var missing []string
+	for _, line := range strings.Split(strings.TrimSpace(string(remoteOutput)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.HasPrefix(fields[1], "refs/tags/") && !local[fields[1]] {
+			missing = append(missing, fields[1])
+		}
+	}
+	for start := 0; start < len(missing); start += 128 {
+		end := min(start+128, len(missing))
+		arguments := []string{"-C", repoPath, "fetch", "--no-tags", remote}
+		for _, ref := range missing[start:end] {
+			arguments = append(arguments, ref+":"+ref)
+		}
+		out, fetchErr := remoteCommand(ctx, arguments...).CombinedOutput()
+		if fetchErr != nil {
+			return commandError(ctx, "fetch tags from "+RedactRemote(remote)+" in "+repoPath, RedactDiagnostic(string(out), remote), fetchErr)
+		}
 	}
 	return nil
 }

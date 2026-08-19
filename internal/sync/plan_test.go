@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -84,6 +85,29 @@ func TestBuildPlanResolvesMissingProjectRemoteFromWorkspaceRoot(t *testing.T) {
 	want := filepath.Join(root, "remotes", "project.git")
 	if got := plan.Projects[0].OriginURL; got != want {
 		t.Fatalf("missing project origin URL = %q, want %q", got, want)
+	}
+}
+
+func TestRequiresFreshPreflightWhenLocalOriginChanges(t *testing.T) {
+	root := t.TempDir()
+	remote := testutil.InitFakeRemote(t, "remote", "main")
+	changed := testutil.InitFakeRemote(t, "changed", "main")
+	workspace := &config.Workspace{Projects: map[string]config.Project{
+		"project": activeProject(remote, "personal/project"),
+	}}
+	barePath := filepath.Join(root, "personal", "project.bare")
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CloneBare(t, remote, barePath)
+	before := BuildPlanWithBaselines(root, workspace, map[string]string{"project": remote})
+	if err := git.SetRemoteURL(barePath, changed); err != nil {
+		t.Fatal(err)
+	}
+	after := RefreshPlan(root, workspace, before)
+
+	if !RequiresFreshPreflight(before, after) {
+		t.Fatal("local origin change did not require a fresh preflight")
 	}
 }
 
