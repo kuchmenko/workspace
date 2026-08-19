@@ -30,22 +30,24 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	interactive := syncTerminal(stdin) && syncTerminal(stdout)
-	current, selection, err := prepareSync(ctx, root, interactive, stdout, stderr)
+	current, selection, before, err := prepareSync(ctx, root, interactive, stdout, stderr)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ExitError{Code: syncExitCanceled}
 		}
 		return err
 	}
-	plan := workspacesync.BuildPlan(root, current.State)
+	plan, selection, err := refreshSyncPlan(ctx, root, current, before, selection, interactive, stdout, stderr)
+	if err != nil {
+		return err
+	}
 	var runErr error
 	if interactive {
 		runErr = runSyncTUI(ctx, root, plan, stdout)
 	} else {
 		runErr = runSyncHeadlessSelection(ctx, root, selection, stdout)
 	}
-	var exitErr ExitError
-	if errors.As(runErr, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+	if syncRunCanceled(runErr) {
 		return ExitError{Code: syncExitCanceled}
 	}
 	_, publishErr := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
@@ -61,33 +63,60 @@ func runSync(parent context.Context, root string, stdin io.Reader, stdout, stder
 	return publishErr
 }
 
-func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, error) {
-	var selection workspacesync.Selection
-	if !interactive {
-		current, err := loadSyncWorkspace(ctx, root)
-		if err != nil {
-			return registry.Workspace{}, selection, err
-		}
-		selection, err = preflightSyncHeadless(ctx, workspacesync.BuildPlan(root, current.State), stdout, stderr)
-		if err != nil {
-			return registry.Workspace{}, selection, err
-		}
-	}
-	current, err := synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
-	return current, selection, err
+func syncRunCanceled(err error) bool {
+	var exitErr ExitError
+	return errors.As(err, &exitErr) && exitErr.Code == syncExitCanceled || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, error) {
+func prepareSync(ctx context.Context, root string, interactive bool, stdout, stderr io.Writer) (registry.Workspace, workspacesync.Selection, workspacesync.Plan, error) {
+	var selection workspacesync.Selection
+	current, baselines, err := loadSyncWorkspace(ctx, root)
+	if err != nil {
+		return registry.Workspace{}, selection, workspacesync.Plan{}, err
+	}
+	plan := workspacesync.BuildPlanWithBaselines(root, current.State, baselines)
+	if !interactive {
+		selection, err = preflightSyncHeadless(ctx, plan, stdout, stderr)
+		if err != nil {
+			return registry.Workspace{}, selection, plan, err
+		}
+	}
+	current, err = synchronizeCurrentWorkspace(ctx, root, stdout, stderr)
+	return current, selection, plan, err
+}
+
+func refreshSyncPlan(ctx context.Context, root string, current registry.Workspace, before workspacesync.Plan, selection workspacesync.Selection, interactive bool, stdout, stderr io.Writer) (workspacesync.Plan, workspacesync.Selection, error) {
+	plan := workspacesync.RefreshPlan(root, current.State, before)
+	if interactive {
+		return plan, selection, nil
+	}
+	selection, err := refreshHeadlessSelection(ctx, plan, before, selection, stdout, stderr)
+	return plan, selection, err
+}
+
+func refreshHeadlessSelection(ctx context.Context, plan, before workspacesync.Plan, selection workspacesync.Selection, stdout, stderr io.Writer) (workspacesync.Selection, error) {
+	if !workspacesync.RequiresFreshPreflight(before, plan) {
+		return selection, nil
+	}
+	return preflightSyncHeadless(ctx, plan, stdout, stderr)
+}
+
+func loadSyncWorkspace(ctx context.Context, root string) (registry.Workspace, map[string]string, error) {
 	store, err := registry.OpenDefault()
 	if err != nil {
-		return registry.Workspace{}, err
+		return registry.Workspace{}, nil, err
 	}
 	defer func() { _ = store.Close() }()
 	workspace, err := store.LoadByRoot(ctx, root)
 	if err != nil {
-		return registry.Workspace{}, err
+		return registry.Workspace{}, nil, err
 	}
-	return requireResolvedWorkspace(ctx, store, workspace)
+	workspace, err = requireResolvedWorkspace(ctx, store, workspace)
+	if err != nil {
+		return registry.Workspace{}, nil, err
+	}
+	baselines, err := store.OriginBaselines(ctx, workspace.WorkspaceID)
+	return workspace, baselines, err
 }
 
 func synchronizeCurrentWorkspace(ctx context.Context, root string, stdout, stderr io.Writer) (registry.Workspace, error) {

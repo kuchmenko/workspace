@@ -19,6 +19,7 @@ type Runner struct {
 	store     *conflict.Store
 	registry  *registry.Store
 	workspace registry.Workspace
+	origins   map[string]string
 }
 
 func NewRunner(root string, logger *log.Logger) *Runner {
@@ -54,6 +55,11 @@ func (r *Runner) RunContext(ctx context.Context, selection Selection, onEvent fu
 		return report
 	}
 	r.registry = local
+	r.origins, err = local.OriginBaselines(context.Background(), r.workspace.WorkspaceID)
+	if err != nil {
+		r.addWorkspaceFailure(&report, "load-origin-baselines", err, onEvent)
+		return report
+	}
 	ws := r.workspace.State
 	converted := r.applyProjectConversions(ctx, &selection, ws, &report, onEvent)
 	if ctx.Err() != nil {
@@ -93,9 +99,21 @@ func (r *Runner) runSelectedProjects(ctx context.Context, selection Selection, c
 			r.addProjectSkip(report, name, SkipPlanChanged, "project was introduced after preflight", onEvent)
 		}
 	}
+	registrySaved := true
 	if dirty {
 		if err := r.saveRegistry(ws); err != nil {
 			r.addWorkspaceFailure(report, "save-metadata", err, onEvent)
+			registrySaved = false
+		}
+	}
+	if registrySaved {
+		for name := range r.origins {
+			if _, exists := ws.Projects[name]; !exists {
+				delete(r.origins, name)
+			}
+		}
+		if err := r.registry.SaveOriginBaselines(context.Background(), r.workspace.WorkspaceID, r.origins); err != nil {
+			r.addWorkspaceFailure(report, "save-origin-baselines", err, onEvent)
 		}
 	}
 }
@@ -115,14 +133,24 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 	if remote, changed := converted[planned.OriginID]; changed {
 		expected.Remote = remote
 		planned.OriginURL = remote
+		planned.LocalOrigin = remote
 	}
 	if !ok || !snapshotMatches(expected, project) {
 		r.addProjectSkip(report, planned.Name, SkipPlanChanged, "workspace registry changed after preflight", onEvent)
 		return false, false
 	}
-	touched := false
 	planned.Snapshot = expected
+	touched, reconcileResult := r.reconcileProjectOrigin(planned, &project, report, onEvent)
+	if reconcileResult != nil {
+		report.Projects = append(report.Projects, *reconcileResult)
+		report.add(Event{Kind: EventProject, Status: reconcileResult.Status, Project: planned.Name, Operation: reconcileResult.Operation, Reason: reconcileResult.Reason, Diagnostic: reconcileResult.Diagnostic}, onEvent)
+		return false, false
+	}
+	planned.Snapshot.Remote = project.Remote
 	result := r.syncPlannedProject(ctx, planned, &project, machine, &touched, selectedProjectMirrors(selection, planned), report, onEvent)
+	if result.Status == ResultSuccess && project.Remote != "" {
+		r.origins[planned.Name] = project.Remote
+	}
 	report.Projects = append(report.Projects, result)
 	report.add(Event{Kind: EventProject, Status: result.Status, Project: planned.Name, Operation: result.Operation, Reason: result.Reason, Diagnostic: result.Diagnostic}, onEvent)
 	if result.Status == ResultCanceled || ctx.Err() != nil {

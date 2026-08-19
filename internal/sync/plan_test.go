@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -84,6 +85,57 @@ func TestBuildPlanResolvesMissingProjectRemoteFromWorkspaceRoot(t *testing.T) {
 	want := filepath.Join(root, "remotes", "project.git")
 	if got := plan.Projects[0].OriginURL; got != want {
 		t.Fatalf("missing project origin URL = %q, want %q", got, want)
+	}
+}
+
+func TestRequiresFreshPreflightWhenLocalOriginChanges(t *testing.T) {
+	root := t.TempDir()
+	remote := testutil.InitFakeRemote(t, "remote", "main")
+	changed := testutil.InitFakeRemote(t, "changed", "main")
+	workspace := &config.Workspace{Projects: map[string]config.Project{
+		"project": activeProject(remote, "personal/project"),
+	}}
+	barePath := filepath.Join(root, "personal", "project.bare")
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CloneBare(t, remote, barePath)
+	before := BuildPlanWithBaselines(root, workspace, map[string]string{"project": remote})
+	if err := git.SetRemoteURL(barePath, changed); err != nil {
+		t.Fatal(err)
+	}
+	after := RefreshPlan(root, workspace, before)
+
+	if !RequiresFreshPreflight(before, after) {
+		t.Fatal("local origin change did not require a fresh preflight")
+	}
+}
+
+func TestRefreshPlanRetainsBaselineForActivatedProject(t *testing.T) {
+	root := t.TempDir()
+	remote := testutil.InitFakeRemote(t, "remote", "main")
+	changed := testutil.InitFakeRemote(t, "changed", "main")
+	project := activeProject(remote, "personal/project")
+	project.Status = config.StatusDormant
+	workspace := &config.Workspace{Projects: map[string]config.Project{"project": project}}
+	barePath := filepath.Join(root, "personal", "project.bare")
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CloneBare(t, remote, barePath)
+	if err := git.SetRemoteURL(barePath, changed); err != nil {
+		t.Fatal(err)
+	}
+	before := BuildPlanWithBaselines(root, workspace, map[string]string{"project": remote})
+	project.Status = config.StatusActive
+	workspace.Projects["project"] = project
+
+	after := RefreshPlan(root, workspace, before)
+	if got := after.Projects[0].BaselineRemote; got != remote {
+		t.Fatalf("baseline = %q, want %q", got, remote)
+	}
+	if got := after.Projects[0].OriginURL; got != changed {
+		t.Fatalf("planned origin = %q, want local change %q", got, changed)
 	}
 }
 

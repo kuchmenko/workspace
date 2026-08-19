@@ -161,6 +161,8 @@ func handleConflict(c conflict.Conflict) (bool, error) {
 	switch c.Kind {
 	case conflict.KindMainDivergence:
 		return resolveProjectConflict(c)
+	case conflict.KindOriginDivergence:
+		return resolveOriginDivergence(c)
 	case conflict.KindBranchDuplicate:
 		return resolveBranchDuplicate(c)
 	case conflict.KindBranchOrphan:

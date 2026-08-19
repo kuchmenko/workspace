@@ -163,8 +163,9 @@ must not become persisted sync preferences.
 
 Both stdin and stdout must be terminals for the TUI. Otherwise headless mode
 prints deterministic ANSI-free output, requires every endpoint to pass, and
-does no mutation if any preflight probe fails. Headless mode does not choose
-SSH conversion automatically.
+does not mutate project repositories if any preflight probe fails. Workspace
+registry exchange completed before a refreshed preflight remains applied.
+Headless mode does not choose SSH conversion automatically.
 
 Exit codes are `0` success, `1` preflight/execution/conflict failure, and
 `130` cancellation.
@@ -184,7 +185,7 @@ For each selected project:
 - Plain checkout state records `needs-migration`.
 - Incompatible paths record `path-blocked`.
 - Present bare repositories repair the origin fetch refspec when needed and
-  run `git fetch --all --prune --tags`.
+  fetch branches plus new tags without overwriting existing tags moved upstream.
 - Selected mirrors are pushed after origin fetch.
 - Clean main worktrees that are behind and not ahead fast-forward with
   `git pull --ff-only`.
@@ -264,12 +265,14 @@ records and clears observed conditions. Records deduplicate on
 
 `ws sync resolve` is an interactive prompt. It can open a relevant shell or
 editor, retry a mirror push, or apply branch-metadata actions selected by the
-user. It never automatically merges or rebases project work.
+user. Origin divergence resolution explicitly chooses the local checkout or
+shared registry origin and updates the machine-local baseline. It never
+automatically merges or rebases project work.
 
 Conflict kinds currently include `main-divergence`, `needs-migration`,
 `needs-bootstrap`, `path-blocked`,
 `clone-failed`, `branch-duplicate`, `branch-orphan`, and
-`mirror-push-failed`.
+`mirror-push-failed`, and `origin-divergence`.
 
 ## Project Statuses
 

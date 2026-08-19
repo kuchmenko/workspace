@@ -2,13 +2,17 @@ package cli
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/conflict"
+	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
 type promptAction struct {
@@ -86,6 +90,80 @@ func resolveProjectConflict(c conflict.Conflict) (bool, error) {
 		{"o", "open shell in worktree — fix manually",
 			func() (bool, error) { return openShellAtWorktree(wtPath) }},
 	}, "k", "")
+}
+
+func resolveOriginDivergence(c conflict.Conflict) (bool, error) {
+	return runPromptLoop([]promptAction{
+		{"l", "use local checkout origin",
+			func() (bool, error) { return true, resolveOriginDivergenceTo(c, true) }},
+		{"s", "use shared registry origin",
+			func() (bool, error) { return true, resolveOriginDivergenceTo(c, false) }},
+	}, "k", "")
+}
+
+func resolveOriginDivergenceTo(c conflict.Conflict, useLocal bool) error {
+	ctx := context.Background()
+	store, err := registry.OpenDefault()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(ctx, c.Workspace)
+	if err != nil {
+		return err
+	}
+	project, exists := workspace.State.Projects[c.Project]
+	if !exists {
+		return fmt.Errorf("project %s not in workspace registry", c.Project)
+	}
+	mainPath, err := layout.ProjectPath(c.Workspace, project.Path)
+	if err != nil {
+		return err
+	}
+	repository := layout.BarePath(mainPath)
+	if !git.IsRepo(repository) {
+		repository = mainPath
+	}
+	local, err := git.ConfiguredRemoteURL(repository, "origin")
+	if err != nil {
+		return fmt.Errorf("read origin in %s: %w", repository, err)
+	}
+	chosen := project.Remote
+	if useLocal {
+		chosen = local
+	}
+	if registry.RemoteContainsCredentials(chosen) {
+		return errors.New("chosen origin contains credentials and cannot be shared")
+	}
+	baselines, err := store.OriginBaselines(ctx, workspace.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	var rollback func() error
+	if useLocal {
+		original := project
+		project.Remote = chosen
+		workspace.State.Projects[c.Project] = project
+		updated, updateErr := store.Update(ctx, workspace.Name, workspace.Revision, workspace.State)
+		if updateErr != nil {
+			return updateErr
+		}
+		rollback = func() error {
+			workspace.State.Projects[c.Project] = original
+			_, rollbackErr := store.Update(ctx, workspace.Name, updated.Revision, workspace.State)
+			return rollbackErr
+		}
+	} else {
+		if err = git.SetRemoteURL(repository, chosen); err != nil {
+			return err
+		}
+		rollback = func() error { return git.SetRemoteURL(repository, local) }
+	}
+	baselines[c.Project] = chosen
+	if err = store.SaveOriginBaselines(ctx, workspace.WorkspaceID, baselines); err == nil {
+		return nil
+	}
+	return errors.Join(err, rollback())
 }
 
 func openShellAtWorktree(wtPath string) (bool, error) {

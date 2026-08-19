@@ -101,6 +101,44 @@ func TestRunContextDoesNotConvertPlanChangedProject(t *testing.T) {
 	}
 }
 
+func TestRunContextConvertsIncomingOriginFromLocalBaseline(t *testing.T) {
+	root := newTestWorkspace(t)
+	baseline := testutil.InitFakeRemote(t, "baseline", "main")
+	candidateRemote := testutil.InitFakeRemote(t, "incoming", "main")
+	configureTestSSH(t, candidateRemote)
+	workspace := &config.Workspace{Projects: map[string]config.Project{"project": activeProject(baseline, "personal/project")}}
+	saveTestWorkspace(t, root, workspace)
+	barePath := layout.BarePath(filepath.Join(root, "personal/project"))
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CloneBare(t, baseline, barePath)
+	baselines := map[string]string{"project": baseline}
+	saveTestOriginBaselines(t, root, baselines)
+	before := BuildPlanWithBaselines(root, workspace, baselines)
+	project := workspace.Projects["project"]
+	project.Remote = testHTTPSRemote
+	workspace.Projects["project"] = project
+	saveTestWorkspace(t, root, workspace)
+	plan := RefreshPlan(root, workspace, before)
+	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
+	if err := selection.SelectConversion(plan.Projects[0].OriginID); err != nil {
+		t.Fatalf("SelectConversion: %v", err)
+	}
+
+	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
+	if len(report.Conversions) != 1 || report.Conversions[0].Status != ResultSuccess {
+		t.Fatalf("conversions = %+v", report.Conversions)
+	}
+	want := "git@github.com:acme/workspace-sync-test.git"
+	if got, err := git.ConfiguredRemoteURL(barePath, "origin"); err != nil || got != want {
+		t.Fatalf("origin = %q, %v; want %q", got, err, want)
+	}
+	if got := loadTestWorkspace(t, root).Projects["project"].Remote; got != want {
+		t.Fatalf("registry remote = %q, want %q", got, want)
+	}
+}
+
 func TestRunContextFailedProjectConversionSkipsTarget(t *testing.T) {
 	root, workspace, barePath, _ := setupConvertibleProject(t, false)
 	plan := BuildPlan(root, workspace)

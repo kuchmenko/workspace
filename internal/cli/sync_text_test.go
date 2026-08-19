@@ -38,9 +38,25 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 		},
 	}
 	registerSyncTestWorkspace(t, root, workspace)
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err = store.SaveOriginBaselines(context.Background(), registered.WorkspaceID, map[string]string{"app": "baseline"}); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	plan := workspacesync.BuildPlan(root, workspace)
 	var stdout, stderr bytes.Buffer
-	err := runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
+	err = runSyncHeadless(context.Background(), root, plan, &stdout, &stderr)
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != syncExitFailed {
 		t.Fatalf("error = %v, want exit %d", err, syncExitFailed)
@@ -54,6 +70,18 @@ func TestRunSyncHeadlessFailedPreflightDoesNotMutate(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no project changes made") {
 		t.Fatalf("missing no-mutation summary: %s", stdout.String())
+	}
+	store, err = registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	baselines, err := store.OriginBaselines(context.Background(), registered.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baselines) != 1 || baselines["app"] != "baseline" {
+		t.Fatalf("origin baselines changed after failed preflight: %#v", baselines)
 	}
 }
 
@@ -135,6 +163,35 @@ func TestRunSyncHeadlessExecutesAllAfterSuccessfulPreflight(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "start: workspace-sync") || !strings.Contains(stdout.String(), "start: project-sync app") {
 		t.Fatalf("missing execution progress:\n%s", stdout.String())
+	}
+}
+
+func TestRefreshHeadlessSelectionIncludesProjectReceivedDuringWorkspaceSync(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	root := t.TempDir()
+	beforeState := &config.Workspace{Groups: map[string]config.Group{}, Aliases: map[string]string{}, Projects: map[string]config.Project{}}
+	before := workspacesync.BuildPlan(root, beforeState)
+	remote := testutil.InitFakeRemote(t, "received", "main")
+	afterState := &config.Workspace{
+		Groups:  map[string]config.Group{},
+		Aliases: map[string]string{},
+		Projects: map[string]config.Project{"received": {
+			Remote: remote, Path: "personal/received", Status: config.StatusActive,
+			Category: config.CategoryPersonal, DefaultBranch: "main",
+		}},
+	}
+	registerSyncTestWorkspace(t, root, afterState)
+	plan := workspacesync.RefreshPlan(root, afterState, before)
+	var stdout, stderr bytes.Buffer
+	selection, err := refreshHeadlessSelection(context.Background(), plan, before, workspacesync.Selection{}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("refreshHeadlessSelection: %v\nstdout:\n%s\nstderr:\n%s", err, stdout.String(), stderr.String())
+	}
+	if err = runSyncHeadlessSelection(context.Background(), root, selection, &stdout); err != nil {
+		t.Fatalf("runSyncHeadlessSelection: %v", err)
+	}
+	if !git.IsRepo(filepath.Join(root, "personal", "received")) {
+		t.Fatal("project received during workspace sync was not materialized")
 	}
 }
 

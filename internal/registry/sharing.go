@@ -43,11 +43,11 @@ func validateShareableSnapshot(body []byte) error {
 		return err
 	}
 	for name, project := range state.Projects {
-		if remoteContainsCredentials(project.Remote) {
+		if RemoteContainsCredentials(project.Remote) {
 			return fmt.Errorf("project %q remote contains credentials", name)
 		}
 		for mirror, remote := range project.Mirrors {
-			if remoteContainsCredentials(remote) {
+			if RemoteContainsCredentials(remote) {
 				return fmt.Errorf("project %q mirror %q contains credentials", name, mirror)
 			}
 		}
@@ -55,7 +55,7 @@ func validateShareableSnapshot(body []byte) error {
 	return nil
 }
 
-func remoteContainsCredentials(raw string) bool {
+func RemoteContainsCredentials(raw string) bool {
 	if separator := strings.IndexByte(raw, ':'); separator > 0 && strings.Contains(raw[:separator], "@") && !strings.Contains(raw[:separator], "://") {
 		user, _, _ := strings.Cut(raw[:separator], "@")
 		return user != "git"

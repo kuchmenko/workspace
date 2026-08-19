@@ -85,7 +85,11 @@ func (r *Runner) applyProjectConversion(ctx context.Context, selection *Selectio
 	}
 	repository := conversionRepository(planned)
 	if repository != "" {
-		old, err := applyRepositoryOrigin(repository, target.ConfigURL, candidate)
+		expected := target.ConfigURL
+		if planned.LocalOrigin != "" {
+			expected = planned.LocalOrigin
+		}
+		old, err := applyRepositoryOrigin(repository, expected, candidate)
 		if err != nil {
 			r.addConversion(report, *selection, target.ID, candidate, ResultFailed, err.Error(), onEvent)
 			selection.ExcludeProject(target.Project)

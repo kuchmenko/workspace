@@ -16,8 +16,8 @@ func TestRemoteContainsCredentials(t *testing.T) {
 		"example.com:owner/repo.git":                       false,
 	}
 	for remote, expected := range tests {
-		if actual := remoteContainsCredentials(remote); actual != expected {
-			t.Errorf("remoteContainsCredentials(%q) = %t, want %t", remote, actual, expected)
+		if actual := RemoteContainsCredentials(remote); actual != expected {
+			t.Errorf("RemoteContainsCredentials(%q) = %t, want %t", remote, actual, expected)
 		}
 	}
 }
