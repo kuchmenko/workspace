@@ -84,11 +84,12 @@ type SourceGroup struct {
 }
 
 type Plan struct {
-	Root         string
-	Projects     []ProjectPlan
-	Targets      []Target
-	Endpoints    []Endpoint
-	SourceGroups []SourceGroup
+	Root            string
+	OriginBaselines map[string]string
+	Projects        []ProjectPlan
+	Targets         []Target
+	Endpoints       []Endpoint
+	SourceGroups    []SourceGroup
 }
 
 func BuildPlan(root string, ws *config.Workspace) Plan {
@@ -96,7 +97,7 @@ func BuildPlan(root string, ws *config.Workspace) Plan {
 }
 
 func BuildPlanWithBaselines(root string, ws *config.Workspace, baselines map[string]string) Plan {
-	plan := Plan{Root: root}
+	plan := Plan{Root: root, OriginBaselines: maps.Clone(baselines)}
 	for _, name := range slices.Sorted(maps.Keys(ws.Projects)) {
 		project := ws.Projects[name]
 		if project.Status != config.StatusActive {
@@ -109,11 +110,7 @@ func BuildPlanWithBaselines(root string, ws *config.Workspace, baselines map[str
 }
 
 func RefreshPlan(root string, ws *config.Workspace, before Plan) Plan {
-	baselines := make(map[string]string, len(before.Projects))
-	for _, project := range before.Projects {
-		baselines[project.Name] = project.BaselineRemote
-	}
-	return BuildPlanWithBaselines(root, ws, baselines)
+	return BuildPlanWithBaselines(root, ws, before.OriginBaselines)
 }
 
 func RequiresFreshPreflight(before, after Plan) bool {

@@ -111,6 +111,34 @@ func TestRequiresFreshPreflightWhenLocalOriginChanges(t *testing.T) {
 	}
 }
 
+func TestRefreshPlanRetainsBaselineForActivatedProject(t *testing.T) {
+	root := t.TempDir()
+	remote := testutil.InitFakeRemote(t, "remote", "main")
+	changed := testutil.InitFakeRemote(t, "changed", "main")
+	project := activeProject(remote, "personal/project")
+	project.Status = config.StatusDormant
+	workspace := &config.Workspace{Projects: map[string]config.Project{"project": project}}
+	barePath := filepath.Join(root, "personal", "project.bare")
+	if err := os.MkdirAll(filepath.Dir(barePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.CloneBare(t, remote, barePath)
+	if err := git.SetRemoteURL(barePath, changed); err != nil {
+		t.Fatal(err)
+	}
+	before := BuildPlanWithBaselines(root, workspace, map[string]string{"project": remote})
+	project.Status = config.StatusActive
+	workspace.Projects["project"] = project
+
+	after := RefreshPlan(root, workspace, before)
+	if got := after.Projects[0].BaselineRemote; got != remote {
+		t.Fatalf("baseline = %q, want %q", got, remote)
+	}
+	if got := after.Projects[0].OriginURL; got != changed {
+		t.Fatalf("planned origin = %q, want local change %q", got, changed)
+	}
+}
+
 func activeProject(remote, path string) config.Project {
 	return config.Project{Remote: remote, Path: path, Status: config.StatusActive, Category: config.CategoryPersonal, DefaultBranch: "main"}
 }
