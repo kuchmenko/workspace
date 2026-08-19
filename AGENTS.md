@@ -265,12 +265,14 @@ records and clears observed conditions. Records deduplicate on
 
 `ws sync resolve` is an interactive prompt. It can open a relevant shell or
 editor, retry a mirror push, or apply branch-metadata actions selected by the
-user. It never automatically merges or rebases project work.
+user. Origin divergence resolution explicitly chooses the local checkout or
+shared registry origin and updates the machine-local baseline. It never
+automatically merges or rebases project work.
 
 Conflict kinds currently include `main-divergence`, `needs-migration`,
 `needs-bootstrap`, `path-blocked`,
 `clone-failed`, `branch-duplicate`, `branch-orphan`, and
-`mirror-push-failed`.
+`mirror-push-failed`, and `origin-divergence`.
 
 ## Project Statuses
 
