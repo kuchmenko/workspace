@@ -43,6 +43,33 @@ func TestRunContextPublishesChangedLocalOrigin(t *testing.T) {
 	}
 }
 
+func TestReconcileProjectOriginRejectsCredentials(t *testing.T) {
+	root := newTestWorkspace(t)
+	declared := testutil.InitFakeRemote(t, "declared", "main")
+	workspace := &config.Workspace{Projects: map[string]config.Project{"project": activeProject(declared, "personal/project")}}
+	saveTestWorkspace(t, root, workspace)
+	barePath := cloneTestProject(t, root, workspace.Projects["project"])
+	credentialed := "https://user:secret@example.com/project.git"
+	if err := git.SetRemoteURL(barePath, credentialed); err != nil {
+		t.Fatal(err)
+	}
+	plan := BuildPlanWithBaselines(root, workspace, map[string]string{"project": declared})
+	runner := &Runner{root: root, origins: map[string]string{"project": declared}}
+	var report Report
+	project := workspace.Projects["project"]
+
+	touched, result := runner.reconcileProjectOrigin(plan.Projects[0], &project, &report, nil)
+	if touched || result == nil || result.Status != ResultSkipped {
+		t.Fatalf("touched=%t result=%+v", touched, result)
+	}
+	if project.Remote != declared {
+		t.Fatalf("registry remote = %q, want unchanged %q", project.Remote, declared)
+	}
+	if runner.origins["project"] != declared {
+		t.Fatalf("baseline = %q, want unchanged %q", runner.origins["project"], declared)
+	}
+}
+
 func TestRunContextAppliesIncomingOriginToExistingCheckout(t *testing.T) {
 	root := newTestWorkspace(t)
 	declared := testutil.InitFakeRemote(t, "declared", "main")

@@ -132,31 +132,38 @@ func resolveOriginDivergenceTo(c conflict.Conflict, useLocal bool) error {
 	if useLocal {
 		chosen = local
 	}
+	if registry.RemoteContainsCredentials(chosen) {
+		return errors.New("chosen origin contains credentials and cannot be shared")
+	}
 	baselines, err := store.OriginBaselines(ctx, workspace.WorkspaceID)
 	if err != nil {
 		return err
 	}
-	previous, hadPrevious := baselines[c.Project]
-	baselines[c.Project] = chosen
-	if err = store.SaveOriginBaselines(ctx, workspace.WorkspaceID, baselines); err != nil {
-		return err
-	}
+	var rollback func() error
 	if useLocal {
+		original := project
 		project.Remote = chosen
 		workspace.State.Projects[c.Project] = project
-		_, err = store.Update(ctx, workspace.Name, workspace.Revision, workspace.State)
+		updated, updateErr := store.Update(ctx, workspace.Name, workspace.Revision, workspace.State)
+		if updateErr != nil {
+			return updateErr
+		}
+		rollback = func() error {
+			workspace.State.Projects[c.Project] = original
+			_, rollbackErr := store.Update(ctx, workspace.Name, updated.Revision, workspace.State)
+			return rollbackErr
+		}
 	} else {
-		err = git.SetRemoteURL(repository, chosen)
+		if err = git.SetRemoteURL(repository, chosen); err != nil {
+			return err
+		}
+		rollback = func() error { return git.SetRemoteURL(repository, local) }
 	}
-	if err == nil {
+	baselines[c.Project] = chosen
+	if err = store.SaveOriginBaselines(ctx, workspace.WorkspaceID, baselines); err == nil {
 		return nil
 	}
-	if hadPrevious {
-		baselines[c.Project] = previous
-	} else {
-		delete(baselines, c.Project)
-	}
-	return errors.Join(err, store.SaveOriginBaselines(ctx, workspace.WorkspaceID, baselines))
+	return errors.Join(err, rollback())
 }
 
 func openShellAtWorktree(wtPath string) (bool, error) {

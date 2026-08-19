@@ -6,6 +6,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/registry"
 )
 
 func (r *Runner) reconcileProjectOrigin(planned ProjectPlan, project *config.Project, report *Report, onEvent func(Event)) (bool, *OperationResult) {
@@ -36,6 +37,13 @@ func (r *Runner) reconcileProjectOrigin(planned ProjectPlan, project *config.Pro
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)
 		return false, nil
 	case shared == baseline:
+		if registry.RemoteContainsCredentials(local) {
+			diagnostic := "local origin contains credentials and cannot be shared"
+			r.recordProjectConflict(planned.Name, "", conflict.KindOriginDivergence, diagnostic)
+			r.addConflictResult(report, planned.Name, "", conflict.KindOriginDivergence, diagnostic, onEvent)
+			result := OperationResult{Status: ResultSkipped, Operation: "project-sync", Project: planned.Name, Reason: SkipPlanChanged, Diagnostic: diagnostic}
+			return false, &result
+		}
 		project.Remote = local
 		r.origins[planned.Name] = local
 		_ = r.clearProjectConflict(planned.Name, "", conflict.KindOriginDivergence)

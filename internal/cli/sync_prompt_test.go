@@ -57,6 +57,36 @@ func TestResolveOriginDivergenceChoosesLocalOrShared(t *testing.T) {
 	}
 }
 
+func TestResolveOriginDivergenceRejectsCredentialedLocalOrigin(t *testing.T) {
+	root, barePath, _, shared := setupOriginDivergence(t)
+	credentialed := "https://user:secret@example.com/project.git"
+	if err := git.SetRemoteURL(barePath, credentialed); err != nil {
+		t.Fatal(err)
+	}
+	if err := resolveOriginDivergenceTo(conflict.Conflict{Workspace: root, Project: "project"}, true); err == nil {
+		t.Fatal("credentialed local origin was accepted")
+	}
+	store, err := registry.OpenDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	workspace, err := store.LoadByRoot(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := workspace.State.Projects["project"].Remote; got != shared {
+		t.Fatalf("registry origin = %q, want unchanged %q", got, shared)
+	}
+	baselines, err := store.OriginBaselines(context.Background(), workspace.WorkspaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := baselines["project"]; got == credentialed {
+		t.Fatal("credentialed origin was persisted as baseline")
+	}
+}
+
 func setupOriginDivergence(t *testing.T) (string, string, string, string) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
