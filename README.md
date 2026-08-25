@@ -83,7 +83,8 @@ worktree.
 - [Aliases](docs/aliases.md) — short shell aliases for projects and
   groups.
 - [Explorer TUI](docs/explorer.md) — bare `ws` opens a Bubble Tea
-  shell launcher; keys, search, and worktree creation.
+  workspace navigator with shell launch, worktree creation, and terminal-free
+  Amp runner lifecycle management.
 - [Architecture](docs/architecture.md) — internals: data model,
   on-disk layout, foreground sync contract, conflict invariants.
 - [Command reference](docs/reference.md) — commands and flags.

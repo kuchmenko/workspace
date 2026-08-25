@@ -13,7 +13,9 @@ type paletteCommand struct {
 	group, name, aliases, key, action string
 	project                           ProjectIdentity
 	groupRoot, groupName              string
+	aliasTarget                       explorerAliasTarget
 	worktrees                         []Worktree
+	runnerTarget                      config.RunnerConfig
 	jobID                             string
 }
 
@@ -54,6 +56,12 @@ func groupCommand(group, name, aliases, key, action, root, groupName string) pal
 	return c
 }
 
+func aliasCommand(group, key string, target explorerAliasTarget) paletteCommand {
+	c := command(group, "Edit alias", "shell shortcut cd", key, "edit-alias")
+	c.aliasTarget = target
+	return c
+}
+
 func (m *Model) projectCommands(section string, project *Project, includePicker bool) []paletteCommand {
 	if project == nil {
 		return nil
@@ -66,9 +74,11 @@ func (m *Model) projectCommands(section string, project *Project, includePicker 
 		projectCommand(section, "Open main shell", "shell", "s", "project-shell", project),
 		projectCommand(section, "Add worktree", "new branch", "w", "add-worktree", project),
 		projectCommand(section, "Edit organization", "group category", "e", "edit-project", project),
+		aliasCommand(section, "a", explorerAliasTarget{workspaceRoot: project.WorkspaceRoot, target: project.ID, label: project.Name}),
 		projectCommand(section, m.paletteFavoriteLabel(project), "star", "f", "favorite-project", project),
 		projectCommand(section, "Project maintenance", "archive cleanup", "M", "maintain-project", project),
 	)
+	commands = append(commands, m.runnerCommands(section, m.projectRunnerTarget(project), project.Path)...)
 	return commands
 }
 
@@ -79,18 +89,20 @@ func (m *Model) groupCommands(section, root, name string, includeOpen bool) []pa
 		commands = append(commands, groupCommand(section, "Open group", "projects picker", "enter", "open-group", root, name))
 		shellKey, favoriteKey, maintenanceKey = "s", "f", "M"
 	}
-	return append(commands,
+	commands = append(commands,
 		groupCommand(section, "Open group shell", "shell", shellKey, "group-shell", root, name),
+		aliasCommand(section, "a", explorerAliasTarget{workspaceRoot: root, target: name, label: "@" + name}),
 		groupCommand(section, "Toggle group favorite", "star", favoriteKey, "favorite-group", root, name),
 		groupCommand(section, "Group maintenance", "archive cleanup", maintenanceKey, "maintain-group", root, name),
 	)
+	return append(commands, m.runnerCommands(section, m.groupRunnerTarget(root, name), groupRootPath(root, name))...)
 }
 
 func (m *Model) homeViewCommands() []paletteCommand {
 	commands := []paletteCommand{
 		command("HOME", "Search current view", "find local", "/", "search-local"),
 		command("HOME", "Search all", "global find", "S", "search-global"),
-		command("HOME", "Switch projection", "recent projects language", "v", "switch-projection"),
+		command("HOME", "Switch projection", "recent projects", "v", "switch-projection"),
 	}
 	if m.homeView == config.ExplorerViewRecent {
 		commands = append(commands, command("HOME", "Reverse Recent order", "ascending descending", "o", "reverse-recent"))
@@ -99,18 +111,14 @@ func (m *Model) homeViewCommands() []paletteCommand {
 }
 
 func (m *Model) homeSessionCommands() []paletteCommand {
-	return []paletteCommand{
+	commands := []paletteCommand{
 		command("SESSION", "Open Activity", "actions history", "A", "activity"),
+		command("SESSION", "Open Amp runners", "runner manager", "R", "open-runners"),
 		command("SESSION", "Global maintenance", "archive cleanup", "", "maintain-global"),
 	}
-}
-
-func (m *Model) quickCommands() []paletteCommand {
-	commands := make([]paletteCommand, 0, len(m.headerChips))
-	for i, slot := range m.headerChips {
-		c := command("QUICK ACCESS", fmt.Sprintf("%d → %s", i+1, presentLabel(slot.Name)), "favorite recent", fmt.Sprint(i+1), "quick-project")
-		c.project = ProjectIdentity{WorkspaceRoot: slot.WorkspaceRoot, ProjectID: slot.Project.ID}
-		commands = append(commands, c)
+	if len(m.workspaces) == 1 {
+		workspace := m.workspaces[0]
+		commands = append(commands, aliasCommand("SESSION", "", explorerAliasTarget{workspaceRoot: workspace.Root, target: workspaceAliasRootTarget, label: workspace.Name}))
 	}
 	return commands
 }
@@ -126,11 +134,26 @@ func (m *Model) paletteCommands() []paletteCommand {
 	if m.mode == viewEditProject {
 		return []paletteCommand{command("EDIT PROJECT", "Save changes", "submit", "enter", "save-project"), command("EDIT PROJECT", "Cancel", "return", "", "cancel-form")}
 	}
+	if m.mode == viewAlias {
+		return []paletteCommand{command("EDIT ALIAS", "Save alias", "submit", "enter", "save-alias"), command("EDIT ALIAS", "Cancel", "return", "", "cancel-alias")}
+	}
 	if m.mode == viewLifecycle {
 		return m.lifecyclePaletteCommands()
 	}
 	if m.mode == viewJobs {
 		return m.activityPaletteCommands()
+	}
+	if m.mode == viewRunners {
+		return m.runnerPaletteCommands()
+	}
+	if m.mode == viewRunnerForm {
+		return []paletteCommand{command("AMP RUNNER", "Create and start", "save submit", "enter", "runner-form-submit"), command("AMP RUNNER", "Cancel", "return", "", "runner-form-cancel")}
+	}
+	if m.mode == viewRunnerPrefix {
+		return []paletteCommand{command("AMP RUNNER SETTINGS", "Save prefix", "submit", "enter", "runner-prefix-submit"), command("AMP RUNNER SETTINGS", "Cancel", "return", "", "runner-prefix-cancel")}
+	}
+	if m.mode == viewRunnerConfirm {
+		return nil
 	}
 	if m.mode == viewFlash {
 		return m.searchPaletteCommands()
@@ -149,11 +172,13 @@ func (m *Model) homePaletteCommands() []paletteCommand {
 			commands = append(commands, m.projectCommands("SELECTED PROJECT", item.project, true)...)
 		case item.kind == KindGroup && !item.projectionGroup:
 			commands = append(commands, m.groupCommands("SELECTED GROUP", item.workspaceRoot, item.group, true)...)
+		case item.kind == KindWorkspace:
+			target, _ := m.aliasTargetForItem(item)
+			commands = append(commands, aliasCommand("SELECTED WORKSPACE", "a", target))
 		}
 	}
 	commands = append(commands, m.homeViewCommands()...)
 	commands = append(commands, m.homeSessionCommands()...)
-	commands = append(commands, m.quickCommands()...)
 	return commands
 }
 
@@ -165,6 +190,7 @@ func (m *Model) sheetPaletteCommands() []paletteCommand {
 			commands = append(commands, m.worktreeCommand("SELECTED RANGE", "Archive selected checkouts", "preserve branches", "a", "archive-worktrees", s.target, selected), m.worktreeCommand("SELECTED RANGE", "Delete selected checkouts and branches", "remove branches", "d", "delete-worktrees", s.target, selected))
 		} else if row := s.focused(); row != nil && row.wt != nil {
 			commands = append(commands, m.worktreeCommand("SELECTED WORKTREE", "Open shell", "launch", "enter", "worktree-shell", s.target, []*Worktree{row.wt}))
+			commands = append(commands, m.runnerCommands("SELECTED WORKTREE", m.worktreeRunnerTarget(s.target, row.wt), row.wt.Path)...)
 			if !row.wt.IsMain {
 				commands = append(commands, m.worktreeCommand("SELECTED WORKTREE", "Archive checkout", "preserve branch", "a", "archive-worktrees", s.target, []*Worktree{row.wt}), m.worktreeCommand("SELECTED WORKTREE", "Delete checkout and branches", "remove branch", "d", "delete-worktrees", s.target, []*Worktree{row.wt}))
 			}
@@ -198,6 +224,7 @@ func (m *Model) searchPaletteCommands() []paletteCommand {
 		case KindWorktree:
 			if item.worktree != nil {
 				commands = append(commands, m.worktreeCommand("SELECTED RESULT", "Open shell", "launch", "enter", "worktree-shell", item.parentProj, []*Worktree{item.worktree}))
+				commands = append(commands, m.runnerCommands("SELECTED RESULT", m.worktreeRunnerTarget(item.parentProj, item.worktree), item.worktree.Path)...)
 				if !item.worktree.IsMain {
 					commands = append(commands, m.worktreeCommand("SELECTED RESULT", "Archive checkout", "preserve branch", "a", "archive-worktrees", item.parentProj, []*Worktree{item.worktree}), m.worktreeCommand("SELECTED RESULT", "Delete checkout and branches", "remove branch", "d", "delete-worktrees", item.parentProj, []*Worktree{item.worktree}))
 				}
@@ -242,55 +269,6 @@ func (m *Model) activityPaletteCommands() []paletteCommand {
 		commands = append(commands, c)
 	}
 	return append(commands, command("ACTIVITY", "Search Activity", "filter jobs", "/", "activity-search"), command("ACTIVITY", "Return to captured origin", "close", "", "activity-return"))
-}
-
-func (m *Model) paletteTitle() string {
-	switch m.mode {
-	case viewNewWorktree:
-		if m.popupProj != nil {
-			return "Commands · New worktree · " + presentLabel(m.popupProj.Name)
-		}
-		return "Commands · New worktree"
-	case viewEditProject:
-		if m.popupProj != nil {
-			return "Commands · Edit project · " + presentLabel(m.popupProj.Name)
-		}
-		return "Commands · Edit project"
-	case viewLifecycle:
-		return "Commands · " + m.lifecycleScopeLabel() + " · " + m.lifecyclePhaseLabel()
-	case viewJobs:
-		if m.jobsSelectedID != "" {
-			return "Commands · Activity " + m.jobsSelectedID
-		}
-		return "Commands · Activity"
-	case viewFlash:
-		if item := m.currentItem(); item != nil {
-			return "Commands · Search · " + presentLabel(m.itemSearchName(*item))
-		}
-		return "Commands · Search"
-	}
-	if m.sheet != nil {
-		if selected := m.sheet.visualWorktrees(); len(selected) > 0 {
-			return fmt.Sprintf("Commands · %d worktrees", len(selected))
-		}
-		if row := m.sheet.focused(); row != nil {
-			if row.wt != nil {
-				return "Commands · " + presentLabel(worktreeDisplayName(*row.wt))
-			}
-			if row.proj != nil {
-				return "Commands · " + presentLabel(row.proj.Name)
-			}
-		}
-	}
-	if item := m.currentItem(); item != nil {
-		if item.kind == KindProject && item.project != nil {
-			return "Commands · " + presentLabel(item.project.Name)
-		}
-		if item.kind == KindGroup {
-			return "Commands · @" + presentLabel(item.group)
-		}
-	}
-	return "Commands · Home"
 }
 
 func (m *Model) filteredPaletteCommands() []paletteCommand {
@@ -370,7 +348,7 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 		return m, nil
 	}
 	switch command.action {
-	case "open-project", "quick-project":
+	case "open-project":
 		if origin != nil && origin.mode == viewFlash {
 			m.exitFlash(true)
 		}
@@ -453,6 +431,36 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 		m.reverseRecentOrder()
 	case "activity":
 		m.openActivity(origin.sheet)
+	case "open-runners":
+		m.openRunnerView()
+	case "runner-create":
+		m.openRunnerForm(command.runnerTarget)
+	case "runner-replace":
+		m.confirmSelectedReplacement(false)
+	case "runner-force-replace":
+		m.confirmSelectedReplacement(true)
+	case "runner-start":
+		return m, m.runnerJob("start", command.runnerTarget, false)
+	case "runner-restart", "runner-shutdown", "runner-forget", "runner-force-restart", "runner-force-shutdown":
+		action := strings.TrimPrefix(command.action, "runner-")
+		force := strings.HasPrefix(action, "force-")
+		action = strings.TrimPrefix(action, "force-")
+		m.confirmRunner(command.runnerTarget, action, force)
+	case "runner-return":
+		m.closeRunnerView()
+	case "edit-alias":
+		command.aliasTarget.existing = m.aliasForTarget(command.aliasTarget.workspaceRoot, command.aliasTarget.target)
+		m.openAlias(command.aliasTarget)
+	case "runner-form-submit":
+		return m.submitRunnerForm()
+	case "runner-form-cancel":
+		m.restoreRunnerForm()
+	case "runner-prefix":
+		m.openRunnerPrefix()
+	case "runner-prefix-submit":
+		return m.submitRunnerPrefix()
+	case "runner-prefix-cancel":
+		m.closeRunnerPrefix()
 	case "maintain-global":
 		m.captureLifecycleOrigin(origin)
 		m.openLifecycle(lifecycleScope{kind: lifecycleGlobal})
@@ -482,6 +490,10 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 		return m.executeNewWorktree()
 	case "save-project":
 		return m.executeEditProject()
+	case "save-alias":
+		return m.updateAlias(tui.KeyMsg{Type: tui.KeyEnter})
+	case "cancel-alias":
+		m.closeAlias()
 	case "cancel-form":
 		if m.mode == viewNewWorktree {
 			m.wtBranch.Blur()
@@ -659,12 +671,9 @@ func (m *Model) openLocalSearch() {
 }
 
 func (m *Model) switchHomeProjection() {
-	switch m.homeView {
-	case config.ExplorerViewRecent:
+	if m.homeView == config.ExplorerViewRecent {
 		m.homeView = config.ExplorerViewProjects
-	case config.ExplorerViewProjects:
-		m.homeView = config.ExplorerViewLanguage
-	default:
+	} else {
 		m.homeView = config.ExplorerViewRecent
 	}
 	m.saveExplorerPreferences()
@@ -683,110 +692,6 @@ func (m *Model) reverseRecentOrder() {
 	}
 	m.saveExplorerPreferences()
 	m.rebuildItems()
-}
-
-func (m *Model) paletteFavoriteLabel(project *Project) string {
-	if project.Favorite {
-		return "Remove favorite"
-	}
-	return "Add favorite"
-}
-
-func (m *Model) viewWhichKey() string {
-	commands := m.filteredPaletteCommands()
-	width := min(88, max(30, m.width-4))
-	if m.width < 76 {
-		width = max(1, m.width)
-	}
-	height := min(max(8, m.height-2), max(10, m.height*2/3))
-	if m.width < 76 {
-		height = max(1, m.height-1)
-	}
-	title := "Commands"
-	if m.paletteOrigin != nil {
-		title = m.paletteOrigin.title
-	}
-	rows := []string{whichKeyTitleStyle.Render(title), flashSearchStyle.Width(max(1, width-4)).Render("> " + m.paletteQuery.View()), ""}
-	contentHeight := max(1, height-2)
-	commandLines := make([]string, 0, len(commands))
-	selectedLine, lastGroup := 0, ""
-	for i, command := range commands {
-		if command.group != lastGroup {
-			if lastGroup != "" {
-				commandLines = append(commandLines, "")
-			}
-			commandLines = append(commandLines, dimStyle.Render(command.group))
-			lastGroup = command.group
-		}
-		line := padPanelRight("  "+command.name, command.key, max(1, width-4))
-		if i == m.paletteCursor {
-			line = "▌" + selectedStyle.Width(max(1, width-5)).Render(tui.Truncate(line[1:], max(1, width-5)))
-			selectedLine = len(commandLines)
-		}
-		commandLines = append(commandLines, line)
-	}
-	visibleRows := max(1, contentHeight-4)
-	start, end := tui.WindowAround(selectedLine, len(commandLines), visibleRows)
-	rows = append(rows, commandLines[start:end]...)
-	for len(rows) < contentHeight-1 {
-		rows = append(rows, "")
-	}
-	rows = append(rows, dimStyle.Render("Enter open · j/k move · Ctrl+O/q close"))
-	panel := whichKeyBorderStyle.Width(width - 2).Render(tui.JoinVertical(tui.Left, rows...))
-	return tui.Overlay(tui.DimCanvas(m.width, m.height, m.paletteBackgroundView()), panel, m.width, m.height)
-}
-
-func (m *Model) paletteBackgroundView() string {
-	mode := m.mode
-	if m.paletteOrigin != nil {
-		m.mode = m.paletteOrigin.mode
-	}
-	defer func() { m.mode = mode }()
-	switch m.mode {
-	case viewNewWorktree:
-		return m.viewNewWorktree()
-	case viewEditProject:
-		return m.viewEditProject()
-	case viewLifecycle:
-		return m.viewLifecycle()
-	case viewJobs:
-		return m.viewJobs()
-	}
-	if m.sheet != nil {
-		return m.sheet.view(m)
-	}
-	return m.viewList()
-}
-
-func (m *Model) reconcilePaletteAfterRefresh() {
-	if m.paletteOrigin == nil {
-		return
-	}
-	originalSheet := m.paletteOrigin.sheet
-	m.paletteOrigin.sheet = m.reconcileLifecycleSheet(originalSheet)
-	if m.paletteOrigin.project != nil {
-		m.paletteOrigin.project = m.findLifecycleProject(m.paletteOrigin.project.WorkspaceRoot, m.paletteOrigin.project.ID)
-	}
-	if m.paletteOrigin.project == nil && (m.paletteOrigin.mode == viewEditProject || m.paletteOrigin.mode == viewNewWorktree) {
-		m.paletteOrigin.mode = viewList
-		m.paletteOrigin.commands = m.homePaletteCommands()
-		m.paletteOrigin.title = "Commands · Home"
-		m.statusMsg = "target is no longer available"
-	}
-	if originalSheet != m.paletteOrigin.sheet && m.paletteOrigin.sheet != nil {
-		currentSheet := m.sheet
-		m.sheet = m.paletteOrigin.sheet
-		m.paletteOrigin.commands = m.sheetPaletteCommands()
-		m.paletteOrigin.title = m.paletteTitle()
-		m.sheet = currentSheet
-		m.statusMsg = "target is no longer available"
-	}
-	if originalSheet != nil && m.paletteOrigin.sheet == nil {
-		m.paletteOrigin.mode = viewList
-		m.paletteOrigin.commands = m.homePaletteCommands()
-		m.paletteOrigin.title = "Commands · Home"
-		m.statusMsg = "target is no longer available"
-	}
 }
 
 func (m *Model) toggleFavoriteGroup(root, group string) tui.Cmd {

@@ -21,6 +21,9 @@ func TestSameNamedGroupsStayIndependentAcrossWorkspaces(t *testing.T) {
 		{Root: rootA, Groups: []string{"shared"}, Projects: []Project{projectA}, FavoriteGroups: map[string]bool{}},
 		{Root: rootB, Groups: []string{"shared"}, Projects: []Project{projectB}, FavoriteGroups: map[string]bool{}},
 	})
+	m.expanded[groupKey(rootA, "shared")] = true
+	m.expanded[groupKey(rootB, "shared")] = true
+	m.rebuildItems()
 
 	m.toggleExpand(groupKey(rootA, "shared"))
 	if m.expanded[groupKey(rootA, "shared")] || !m.expanded[groupKey(rootB, "shared")] {
@@ -53,12 +56,7 @@ func TestExplorerLaunchContracts(t *testing.T) {
 	p := Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: projectPath, Favorite: true}
 	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{p}}})
 
-	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'1'}})
-	if m.sheet == nil || m.sheet.target == nil || m.sheet.target.ID != p.ID || m.Launch != nil {
-		t.Fatalf("digit picker = sheet %#v launch %+v", m.sheet, m.Launch)
-	}
-	m.sheet = nil
-	m.cursor = 0
+	m.jumpToProject(root, p.ID)
 	m.updateList(tui.KeyMsg{Type: tui.KeyRunes, Runes: []rune{'l'}})
 	if m.sheet == nil || m.Launch != nil {
 		t.Fatalf("project open = sheet %v launch %+v", m.sheet, m.Launch)

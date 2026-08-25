@@ -31,9 +31,10 @@ func requirePaletteActions(t *testing.T, commands []paletteCommand, expected ...
 func TestCommandPaletteHomeContextsAndStandaloneRemoval(t *testing.T) {
 	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Path: "/ws/alpha", Group: "team", Favorite: true}
 	m := NewModel([]WorkspaceData{{Root: "/ws", Groups: []string{"team"}, Projects: []Project{p}}})
+	m.homeView = config.ExplorerViewRecent
 	m.items = []listItem{{kind: KindProject, project: &m.workspaces[0].Projects[0], workspaceRoot: "/ws"}}
 	commands := m.paletteCommands()
-	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "edit-project", "favorite-project", "maintain-project", "search-local", "search-global", "switch-projection", "reverse-recent", "activity", "maintain-global", "quick-project")
+	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "edit-project", "favorite-project", "maintain-project", "search-local", "search-global", "switch-projection", "reverse-recent", "activity", "maintain-global")
 	for _, command := range commands {
 		if strings.HasPrefix(command.action, "standalone:") || command.group == "WORKSPACE" {
 			t.Fatalf("standalone placeholder remains: %#v", command)
@@ -166,7 +167,7 @@ func TestCommandPaletteTitleSectionsInvocationAndDirectFiltering(t *testing.T) {
 	for _, command := range m.paletteOrigin.commands {
 		groups[command.group] = true
 	}
-	for _, group := range []string{"SELECTED PROJECT", "HOME", "SESSION", "QUICK ACCESS"} {
+	for _, group := range []string{"SELECTED PROJECT", "HOME", "SESSION"} {
 		if !groups[group] {
 			t.Fatalf("palette missing section %q: %#v", group, m.paletteOrigin.commands)
 		}
@@ -233,6 +234,20 @@ func TestCommandPaletteProjectionOrderCommandOnlyForRecent(t *testing.T) {
 	m.homeView = config.ExplorerViewProjects
 	if _, ok := paletteActions(m.paletteCommands())["reverse-recent"]; ok {
 		t.Fatal("Recent order command shown outside Recent")
+	}
+}
+
+func TestSwitchHomeProjectionTogglesRecentAndProjects(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	m := NewModel(nil)
+	m.homeView = config.ExplorerViewRecent
+	m.switchHomeProjection()
+	if m.homeView != config.ExplorerViewProjects {
+		t.Fatalf("first projection = %q", m.homeView)
+	}
+	m.switchHomeProjection()
+	if m.homeView != config.ExplorerViewRecent {
+		t.Fatalf("second projection = %q", m.homeView)
 	}
 }
 
@@ -371,7 +386,8 @@ func TestCommandPaletteFormReturnsToCancellableGlobalSearch(t *testing.T) {
 		t.Fatalf("form did not restore global search: mode=%v query=%q", m.mode, m.flashQuery.Value())
 	}
 	m.exitFlash(false)
-	if m.mode != viewList || len(m.items) == 0 || m.items[0].project == nil || m.items[0].project.ID != "alpha" {
+	m.jumpToProject("/ws", "alpha")
+	if item := m.currentItem(); m.mode != viewList || item == nil || item.project == nil || item.project.ID != "alpha" {
 		t.Fatalf("global search cancellation lost Home origin: mode=%v items=%#v", m.mode, m.items)
 	}
 }
