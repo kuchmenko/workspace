@@ -21,10 +21,11 @@ type runnerRefreshMsg struct {
 type runnerRefreshTickMsg struct{}
 
 type runnerForm struct {
-	target config.RunnerConfig
-	field  int
-	remote bool
-	error  string
+	target     config.RunnerConfig
+	originalID string
+	field      int
+	remote     bool
+	error      string
 }
 
 type runnerConfirmation struct {
@@ -145,10 +146,32 @@ func (m *Model) updateRunners(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.forceSelectedRunner()
 	case "d":
 		m.confirmSelectedRunner("forget", false)
+	case "e":
+		m.editSelectedRunner()
 	case "p":
 		m.openRunnerPrefix()
 	}
 	return m, nil
+}
+
+func (m *Model) editSelectedRunner() {
+	info := m.selectedRunner()
+	if info == nil || info.Definition.ID == "" {
+		return
+	}
+	m.editRunner(info.Definition, info.Status)
+}
+
+func (m *Model) editRunner(def config.RunnerConfig, status runner.Status) {
+	if status != runner.StatusStopped && status != runner.StatusMissing {
+		m.statusMsg = "stop the runner before editing its ID"
+		return
+	}
+	m.runnerReturnMode, m.runnerReturnSheet = m.mode, m.sheet
+	m.runnerForm = &runnerForm{target: def, originalID: def.ID}
+	m.runnerID.SetValue(def.ID)
+	m.runnerID.Focus()
+	m.mode, m.sheet = viewRunnerForm, nil
 }
 
 func (m *Model) startSelectedRunner() (tui.Model, tui.Cmd) {
@@ -253,7 +276,10 @@ func (m *Model) updateRunnerForm(msg tui.KeyMsg) (tui.Model, tui.Cmd) {
 		m.restoreRunnerForm()
 		return m, nil
 	}
-	const fields = 2
+	fields := 2
+	if form.originalID != "" {
+		fields = 1
+	}
 	switch msg.String() {
 	case "esc", "ctrl+c":
 		m.restoreRunnerForm()
@@ -297,6 +323,15 @@ func (m *Model) submitRunnerForm() (tui.Model, tui.Cmd) {
 	form := m.runnerForm
 	def := form.target
 	def.ID = strings.TrimSpace(m.runnerID.Value())
+	if form.originalID != "" {
+		if err := runner.RenameDefinition(form.originalID, def.ID); err != nil {
+			form.error = err.Error()
+			return m, nil
+		}
+		m.restoreRunnerForm()
+		m.statusMsg = "saved runner ID " + def.ID
+		return m, nil
+	}
 	def.RemoteControlTerminal = form.remote
 	if err := runner.SaveDefinition(def); err != nil {
 		form.error = err.Error()

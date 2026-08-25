@@ -53,10 +53,12 @@ func (m *Model) runnerPaletteCommands() []paletteCommand {
 		commands = append([]paletteCommand{restart, shutdown, forceRestart, forceShutdown}, commands...)
 	} else {
 		start := command("SELECTED RUNNER", "Start", "launch", "s", "runner-start")
+		edit := command("SELECTED RUNNER", "Edit runner ID", "rename", "e", "runner-edit")
 		start.runnerTarget = info.Definition
-		commands = append([]paletteCommand{start}, commands...)
+		edit.runnerTarget = info.Definition
+		commands = append([]paletteCommand{start, edit}, commands...)
 	}
-	forget := command("SELECTED RUNNER", "Forget", "remove definition", "d", "runner-forget")
+	forget := command("SELECTED RUNNER", "Remove", "forget definition", "d", "runner-forget")
 	forget.runnerTarget = info.Definition
 	return append(commands, forget)
 }

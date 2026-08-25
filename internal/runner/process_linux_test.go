@@ -32,6 +32,28 @@ func TestAmpRunnerCommand(t *testing.T) {
 	}
 }
 
+func TestListKeepsStoppedDefinitions(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	definition := config.RunnerConfig{ID: "arch-saved", Path: t.TempDir()}
+	if err := config.SaveMachineConfig(&config.MachineConfig{Runners: []config.RunnerConfig{definition}}); err != nil {
+		t.Fatal(err)
+	}
+	infos, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range infos {
+		if info.Definition.ID == definition.ID {
+			if info.Status != StatusStopped {
+				t.Fatalf("saved runner status = %q", info.Status)
+			}
+			return
+		}
+	}
+	t.Fatalf("saved runner is missing from %#v", infos)
+}
+
 func TestProcessStartTimeReadsCurrentProcess(t *testing.T) {
 	start, err := processStartTime(os.Getpid())
 	if err != nil {

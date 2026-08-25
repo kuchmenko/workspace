@@ -143,10 +143,11 @@ definition.
 The runner view supports:
 
 - `s` — start the selected stopped runner.
+- `e` — edit the ID of a stopped or missing saved runner.
 - `r` — restart the selected runner after confirmation.
 - `x` — shut down the selected runner after confirmation.
 - `X` — force shutdown when graceful shutdown did not complete.
-- `d` — forget a stopped runner definition.
+- `d` — remove a stopped runner definition after confirmation.
 - `p` — set the machine-local runner ID prefix used for new runners. It defaults
   to the configured machine name.
 - `Enter` on an external runner — confirm replacement, gracefully stop that

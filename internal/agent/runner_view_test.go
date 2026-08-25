@@ -67,6 +67,35 @@ func TestRunnerViewListsProcessesAndShowsContextualActions(t *testing.T) {
 	}
 }
 
+func TestStoppedRunnerCanBeEditedOrRemoved(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	info := runner.Info{Definition: config.RunnerConfig{ID: "arch-old", Path: "/dev/project"}, Status: runner.StatusStopped, Path: "/dev/project"}
+	m := NewModel(nil)
+	m.mode, m.runnerInfos = viewRunners, []runner.Info{info}
+	if footer := m.runnerFooter(); !strings.Contains(footer, "e edit ID") || !strings.Contains(footer, "d remove") {
+		t.Fatalf("stopped runner footer = %q", footer)
+	}
+	commands := m.runnerPaletteCommands()
+	if !hasPaletteAction(commands, "runner-edit") || !hasPaletteAction(commands, "runner-forget") {
+		t.Fatalf("stopped runner commands = %#v", commands)
+	}
+	m.editSelectedRunner()
+	if m.mode != viewRunnerForm || m.runnerForm == nil || m.runnerForm.originalID != "arch-old" || m.runnerID.Value() != "arch-old" {
+		t.Fatalf("runner editor = mode %v form %#v ID %q", m.mode, m.runnerForm, m.runnerID.Value())
+	}
+}
+
+func TestRunningRunnerIDCannotBeEdited(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	info := runner.Info{Definition: config.RunnerConfig{ID: "arch-running", Path: "/dev/project"}, Status: runner.StatusRunning, Path: "/dev/project", PID: 42}
+	m := NewModel(nil)
+	m.mode, m.runnerInfos = viewRunners, []runner.Info{info}
+	m.editSelectedRunner()
+	if m.mode != viewRunners || m.runnerForm != nil || m.statusMsg != "stop the runner before editing its ID" {
+		t.Fatalf("running runner editor = mode %v form %#v status %q", m.mode, m.runnerForm, m.statusMsg)
+	}
+}
+
 func TestRunnerRowsUseCompactPathsAndAlignedColumns(t *testing.T) {
 	t.Setenv("HOME", "/home/user")
 	infos := []runner.Info{

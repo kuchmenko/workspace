@@ -6,6 +6,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/metrics"
+	"github.com/kuchmenko/workspace/internal/runner"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -448,6 +449,8 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 		m.confirmRunner(command.runnerTarget, action, force)
 	case "runner-return":
 		m.closeRunnerView()
+	case "runner-edit":
+		m.editRunner(command.runnerTarget, runner.Inspect(command.runnerTarget).Status)
 	case "edit-alias":
 		command.aliasTarget.existing = m.aliasForTarget(command.aliasTarget.workspaceRoot, command.aliasTarget.target)
 		m.openAlias(command.aliasTarget)

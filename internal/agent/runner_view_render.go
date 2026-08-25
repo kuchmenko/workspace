@@ -111,7 +111,7 @@ func (m *Model) runnerFooter() string {
 	if info.Status == runner.StatusRunning {
 		return " r restart · x shutdown · X force shutdown · p prefix · q back"
 	}
-	return " s start · d forget · p prefix · q back"
+	return " s start · e edit ID · d remove · p prefix · q back"
 }
 
 func (m *Model) viewRunnerForm() string {
@@ -125,18 +125,30 @@ func (m *Model) viewRunnerForm() string {
 	if form.remote {
 		remote = "on"
 	}
+	title := "Create Amp runner"
+	if form.originalID != "" {
+		title = "Edit Amp runner"
+	}
 	rows := []string{
-		whichKeyTitleStyle.Render("Create Amp runner"),
+		whichKeyTitleStyle.Render(title),
 		"",
 		"Runner ID",
 		flashSearchStyle.Width(width - 4).Render(m.runnerID.View()),
 	}
 	rows = append(rows, "", "Target", dimStyle.Render(target))
-	rows = append(rows, "", "Remote terminal  "+remote)
+	if form.originalID == "" {
+		rows = append(rows, "", "Remote terminal  "+remote)
+	}
 	if form.error != "" {
 		rows = append(rows, "", statusMsgStyle.Render(form.error))
 	}
-	rows = append(rows, "", dimStyle.Render("Tab move · Space toggle · Enter create and start · Esc cancel"))
+	hint := "Enter create and start · Esc cancel"
+	if form.originalID != "" {
+		hint = "Enter save · Esc cancel"
+	} else {
+		hint = "Tab move · Space toggle · " + hint
+	}
+	rows = append(rows, "", dimStyle.Render(hint))
 	panel := whichKeyBorderStyle.Width(width - 2).Render(tui.JoinVertical(tui.Left, rows...))
 	background := m.viewList()
 	if m.runnerReturnMode == viewRunners {
@@ -153,7 +165,11 @@ func (m *Model) viewRunnerConfirm() string {
 		return m.viewRunners()
 	}
 	width := min(68, max(30, m.width-4))
-	title := strings.ToUpper(confirm.action[:1]) + confirm.action[1:]
+	action := confirm.action
+	if action == "forget" {
+		action = "remove"
+	}
+	title := strings.ToUpper(action[:1]) + action[1:]
 	name := confirm.definition.ID
 	if confirm.action == "replace" {
 		name = confirm.external.Path

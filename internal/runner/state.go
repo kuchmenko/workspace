@@ -142,3 +142,32 @@ func RemoveDefinition(id string) error {
 	}
 	return removeState(id)
 }
+
+func RenameDefinition(oldID, newID string) error {
+	machine, err := config.LoadMachineConfig()
+	if err != nil {
+		return err
+	}
+	index := -1
+	for i, def := range machine.Runners {
+		if strings.EqualFold(def.ID, oldID) {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("runner %q is not configured", oldID)
+	}
+	status := Inspect(machine.Runners[index]).Status
+	if status != StatusStopped && status != StatusMissing {
+		return errors.New("runner must be stopped before editing its ID")
+	}
+	machine.Runners[index].ID = newID
+	if err := config.SaveMachineConfig(machine); err != nil {
+		return err
+	}
+	if !strings.EqualFold(oldID, newID) {
+		return removeState(oldID)
+	}
+	return nil
+}
