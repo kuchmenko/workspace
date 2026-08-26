@@ -2,7 +2,7 @@ package agent
 
 import (
 	"fmt"
-	"sort"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,6 +40,8 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 
 		var line string
 		switch item.kind {
+		case KindWorkspace:
+			line = m.renderWorkspace(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindGroup:
 			line = m.renderGroup(item, selected, inFlash, isMatch, flashLabel, listW, dimAll)
 		case KindProject:
@@ -55,6 +57,34 @@ func (m *Model) renderListRows(listW int, dimAll bool) []string {
 	return rows
 }
 
+func (m *Model) renderWorkspace(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
+	arrow := "▸"
+	if m.expanded[item.expandKey] {
+		arrow = "▾"
+	}
+	name := presentLabel(item.workspaceName)
+	if name == "" {
+		name = presentLabel(filepath.Base(item.workspaceRoot))
+	}
+	if inFlash && isMatch {
+		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
+	}
+	label := fmt.Sprintf("  %s %s", arrow, name)
+	badges := []string{}
+	if alias := m.aliasForTarget(item.workspaceRoot, workspaceAliasRootTarget); alias != "" {
+		badges = append(badges, "alias "+alias)
+	}
+	badges = append(badges, projectCountLabel(item.count))
+	label = m.padRight(label, strings.Join(badges, " · "), w)
+	if dimAll || (inFlash && !isMatch) {
+		return dimStyle.Width(w).Render(label)
+	}
+	if selected {
+		return m.renderSelected(label, workspaceStyle, w)
+	}
+	return workspaceStyle.Width(w).Render(label)
+}
+
 func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	if item.projectionGroup && item.expandKey == recentKey() {
 		return strings.Repeat(" ", w)
@@ -67,8 +97,19 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 	if inFlash && isMatch {
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
-	label := fmt.Sprintf("   %s %s", arrow, name)
-	label = tui.Truncate(label, w)
+	label := fmt.Sprintf("%s%s %s", strings.Repeat("  ", item.indent+1), arrow, name)
+	var badgeParts []string
+	if !item.projectionGroup {
+		if alias := m.aliasForTarget(item.workspaceRoot, item.group); alias != "" {
+			badgeParts = append(badgeParts, "alias "+alias)
+		}
+		if badge := m.runnerBadge(m.groupRunnerTarget(item.workspaceRoot, item.group), item.path); badge != "" {
+			badgeParts = append(badgeParts, badge)
+		}
+		badgeParts = append(badgeParts, projectCountLabel(item.count))
+	}
+	badge := strings.Join(badgeParts, " · ")
+	label = m.padRight(label, badge, w)
 
 	if dimAll || (inFlash && !isMatch) {
 		return dimStyle.Width(w).Render(label)
@@ -79,6 +120,13 @@ func (m *Model) renderGroup(item listItem, selected, inFlash, isMatch bool, flas
 	return groupStyle.Width(w).Render(label)
 }
 
+func projectCountLabel(count int) string {
+	if count == 1 {
+		return "1 project"
+	}
+	return fmt.Sprintf("%d projects", count)
+}
+
 func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, flashLabel rune, w int, dimAll bool) string {
 	p := item.project
 	name := presentLabel(p.Name)
@@ -86,9 +134,18 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 		name = flashInlineLabel(name, m.flashQuery.Value(), flashLabel)
 	}
 
-	left := "  " + name
+	left := strings.Repeat("  ", item.indent+1) + name
+	if item.indent > 0 {
+		left = "  " + left
+	}
 
 	var badgeParts []string
+	if alias := m.aliasForTarget(p.WorkspaceRoot, p.ID); alias != "" {
+		badgeParts = append(badgeParts, "alias "+alias)
+	}
+	if badge := m.runnerBadge(m.projectRunnerTarget(p), p.Path); badge != "" {
+		badgeParts = append(badgeParts, badge)
+	}
 	if p.WorktreeCount > 1 {
 		badgeParts = append(badgeParts, fmt.Sprintf("%d worktrees", p.WorktreeCount))
 	}
@@ -107,7 +164,7 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 	}
 
 	if badges != "" {
-		leftPart := tui.Truncate("  "+name, max(0, w-tui.Width(badges)-1))
+		leftPart := tui.Truncate(left, max(0, w-tui.Width(badges)-1))
 		padding := w - tui.Width(leftPart) - tui.Width(badges) - 1
 		if padding < 1 {
 			padding = 1
@@ -118,8 +175,11 @@ func (m *Model) renderProject(item listItem, selected, inFlash, isMatch bool, fl
 }
 func (m *Model) renderSelected(content string, base tui.Style, w int) string {
 	bar := accentBarStyle.Render("▌")
-
-	rest := selectedStyle.Width(w - 1).Render(tui.Truncate(content, w-1))
+	rest := ""
+	if len(content) > 0 {
+		rest = content[1:]
+	}
+	rest = selectedStyle.Width(w - 1).Render(tui.Truncate(rest, w-1))
 	return bar + rest
 }
 
@@ -166,12 +226,6 @@ func (m *Model) viewList() string {
 	if strip := m.jobsStrip(); strip != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(strip, listW)))
 	}
-	if !inFlash {
-		for _, slots := range m.quickSlotLines(listW) {
-			rows = append(rows, dimStyle.Width(listW).Render(slots))
-		}
-	}
-
 	status := m.statusMsg
 	if status != "" && !inFlash {
 		rows = append(rows, statusMsgStyle.Width(listW).Render(tui.Truncate(" "+presentLabel(status), listW)))
@@ -181,36 +235,14 @@ func (m *Model) viewList() string {
 		footer := m.padRight(tui.Truncate(matchInfo, max(0, listW-tui.Width(hint)-2)), tui.Truncate(hint+" ", listW), listW)
 		rows = append(rows, footerStyle.Width(listW).Render(footer))
 	} else {
-		footer := " Ctrl+O commands · / search · S search all · q quit"
+		footer := " Ctrl+O commands · a alias · / search · R runners · S search all · q quit"
 		rows = append(rows, footerStyle.Width(listW).Render(tui.Truncate(footer, listW)))
 	}
 	return tui.GradientCanvas(m.width, m.height, tui.JoinVertical(tui.Left, rows...))
 }
 
-func (m *Model) quickSlotLines(width int) []string {
-	if len(m.headerChips) == 0 || width < 1 {
-		return nil
-	}
-	lines := []string{}
-	line := " Quick access"
-	for i, slot := range m.headerChips {
-		entry := fmt.Sprintf("%d %s", i+1, presentLabel(slot.Name))
-		candidate := line + " · " + entry
-		if tui.Width(candidate) > width {
-			lines = append(lines, tui.Truncate(line, width))
-			line = " " + entry
-		} else {
-			line = candidate
-		}
-	}
-	lines = append(lines, tui.Truncate(line, width))
-	return lines
-}
-
 func (m *Model) homeTitle() string {
 	switch m.homeView {
-	case config.ExplorerViewLanguage:
-		return "Language"
 	case config.ExplorerViewProjects:
 		return "Projects"
 	default:
@@ -219,49 +251,6 @@ func (m *Model) homeTitle() string {
 		}
 		return "Recent · newest first"
 	}
-}
-
-const HeaderCap = 9
-
-func buildHeaderChips(workspaces []WorkspaceData) []Chip {
-	var favs, recent []Chip
-	for i := range workspaces {
-		ws := &workspaces[i]
-		for j := range ws.Projects {
-			p := &ws.Projects[j]
-			c := Chip{
-				Kind:          KindProject,
-				Name:          p.Name,
-				Path:          p.Path,
-				Favorite:      p.Favorite,
-				LastActiveAt:  p.LastActiveAt,
-				Project:       p,
-				WorkspaceRoot: ws.Root,
-			}
-			if p.Favorite {
-				favs = append(favs, c)
-			} else if !p.LastActiveAt.IsZero() {
-				recent = append(recent, c)
-			}
-		}
-	}
-	sortChipsByActivity(favs)
-	sortChipsByActivity(recent)
-	merged := append(favs, recent...)
-	if len(merged) > HeaderCap {
-		merged = merged[:HeaderCap]
-	}
-	return merged
-}
-
-func sortChipsByActivity(cs []Chip) {
-	sort.Slice(cs, func(i, j int) bool {
-		ai, aj := cs[i].LastActiveAt, cs[j].LastActiveAt
-		if !ai.Equal(aj) {
-			return ai.After(aj)
-		}
-		return cs[i].Name < cs[j].Name
-	})
 }
 
 func humanizeAge(t time.Time) string {
@@ -315,6 +304,7 @@ var (
 	footerStyle    = tui.Amber.Footer
 	accentBarStyle = tui.NewStyle().Foreground("215")
 	selectedStyle  = tui.Amber.Selected
+	workspaceStyle = tui.NewStyle().Foreground("215").Bold(true)
 	groupStyle     = tui.Amber.Group
 	itemStyle      = tui.Amber.Item
 	dimStyle       = tui.Amber.Dim

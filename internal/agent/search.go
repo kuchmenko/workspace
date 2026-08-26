@@ -262,6 +262,8 @@ func (m *Model) availableJumpLabels() []rune {
 
 func (m *Model) itemSearchName(item listItem) string {
 	switch item.kind {
+	case KindWorkspace:
+		return item.workspaceName
 	case KindGroup:
 		return item.group
 	case KindProject:

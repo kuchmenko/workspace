@@ -431,6 +431,18 @@ func (s *sheet) close(m *Model) (tui.Model, tui.Cmd) {
 
 func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd) {
 	switch key {
+	case "R":
+		m.openRunnerView()
+		return true, m, nil
+	case "r":
+		if row := s.focused(); row != nil && row.wt != nil {
+			model, cmd := m.openRunnerForTarget(m.worktreeRunnerTarget(s.target, row.wt), row.wt.Path)
+			return true, model, cmd
+		}
+		if row := s.focused(); row != nil && row.proj != nil {
+			model, cmd := m.openRunnerForTarget(m.projectRunnerTarget(row.proj), row.proj.Path)
+			return true, model, cmd
+		}
 	case "s":
 		model, cmd := m.launch(s.workspaceRootForTarget(), s.primaryPath())
 		return true, model, cmd

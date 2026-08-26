@@ -40,7 +40,7 @@ func (s *sheet) view(m *Model) string {
 		top = append(top, flashSearchStyle.Width(panelW).Render(tui.Truncate(" "+iconSearch+" "+prompt, panelW)))
 	}
 
-	footer := " Ctrl+O actions · / search · q back"
+	footer := " Ctrl+O actions · r runner · R runners · / search · q back"
 	if s.visual {
 		footer = fmt.Sprintf(" %d selected · Ctrl+O actions · a archive · d delete · q cancel", len(s.visualWorktrees()))
 	}

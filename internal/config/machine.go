@@ -15,16 +15,28 @@ import (
 )
 
 type MachineConfig struct {
-	MachineName    string   `toml:"machine_name"`
-	WorkspaceRoots []string `toml:"workspace_roots,omitempty"`
-	ExplorerView   string   `toml:"explorer_view,omitempty"`
-	RecentOrder    string   `toml:"recent_order,omitempty"`
+	MachineName    string `toml:"machine_name"`
+	RunnerIDPrefix string `toml:"runner_id_prefix,omitempty"`
+
+	WorkspaceRoots []string       `toml:"workspace_roots,omitempty"`
+	ExplorerView   string         `toml:"explorer_view,omitempty"`
+	RecentOrder    string         `toml:"recent_order,omitempty"`
+	Runners        []RunnerConfig `toml:"runners,omitempty"`
+}
+
+type RunnerConfig struct {
+	ID                    string `toml:"id"`
+	Workspace             string `toml:"workspace,omitempty"`
+	Group                 string `toml:"group,omitempty"`
+	Project               string `toml:"project,omitempty"`
+	Worktree              string `toml:"worktree,omitempty"`
+	Path                  string `toml:"path,omitempty"`
+	RemoteControlTerminal bool   `toml:"remote_control_terminal,omitempty"`
 }
 
 const (
 	ExplorerViewProjects = "projects"
 	ExplorerViewRecent   = "recent"
-	ExplorerViewLanguage = "language"
 	RecentOrderAsc       = "asc"
 	RecentOrderDesc      = "desc"
 )
@@ -36,6 +48,7 @@ type legacyDaemonConfig struct {
 }
 
 var machineNameSanitizer = regexp.MustCompile(`[^a-z0-9-]+`)
+var runnerHostnameLabel = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 
 func legacyDaemonProcessAlive(pid int) bool {
 	process, err := os.FindProcess(pid)
@@ -122,6 +135,8 @@ func LoadMachineConfig() (*MachineConfig, error) {
 
 func SaveMachineConfig(cfg *MachineConfig) error {
 	cleaned := *cfg
+	cleaned.WorkspaceRoots = append([]string(nil), cfg.WorkspaceRoots...)
+	cleaned.Runners = append([]RunnerConfig(nil), cfg.Runners...)
 	if err := normalizeMachineConfig(&cleaned); err != nil {
 		return err
 	}
@@ -211,10 +226,17 @@ func ListWorkspaceRoots() ([]string, error) {
 }
 
 func normalizeMachineConfig(cfg *MachineConfig) error {
+	cfg.RunnerIDPrefix = strings.TrimSpace(cfg.RunnerIDPrefix)
+	if cfg.RunnerIDPrefix != "" && !validRunnerID(cfg.RunnerIDPrefix) {
+		return errors.New("runner_id_prefix must be a valid hostname")
+	}
 	if cfg.ExplorerView == "" {
 		cfg.ExplorerView = ExplorerViewRecent
 	}
-	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent && cfg.ExplorerView != ExplorerViewLanguage {
+	if cfg.ExplorerView == "language" {
+		cfg.ExplorerView = ExplorerViewProjects
+	}
+	if cfg.ExplorerView != ExplorerViewProjects && cfg.ExplorerView != ExplorerViewRecent {
 		return fmt.Errorf("invalid explorer_view %q", cfg.ExplorerView)
 	}
 	if cfg.RecentOrder == "" {
@@ -236,7 +258,92 @@ func normalizeMachineConfig(cfg *MachineConfig) error {
 	}
 	sort.Strings(roots)
 	cfg.WorkspaceRoots = roots[:dedupeSorted(roots)]
+	return normalizeRunners(cfg)
+}
+
+func RunnerIDPrefix(cfg *MachineConfig) string {
+	if cfg != nil && cfg.RunnerIDPrefix != "" {
+		return cfg.RunnerIDPrefix
+	}
+	if cfg != nil && cfg.MachineName != "" {
+		return cfg.MachineName
+	}
+	return DefaultMachineName()
+}
+
+func normalizeRunners(cfg *MachineConfig) error {
+	ids := make(map[string]bool, len(cfg.Runners))
+	targets := make(map[string]bool, len(cfg.Runners))
+	for i := range cfg.Runners {
+		runner := &cfg.Runners[i]
+		runner.ID = strings.TrimSpace(runner.ID)
+		runner.Workspace = strings.TrimSpace(runner.Workspace)
+		runner.Group = strings.TrimSpace(runner.Group)
+		runner.Project = strings.TrimSpace(runner.Project)
+		runner.Worktree = strings.TrimSpace(runner.Worktree)
+		runner.Path = strings.TrimSpace(runner.Path)
+		if err := validateRunnerConfig(*runner); err != nil {
+			return fmt.Errorf("runner %q: %w", runner.ID, err)
+		}
+		id := strings.ToLower(runner.ID)
+		if ids[id] {
+			return fmt.Errorf("duplicate runner id %q", runner.ID)
+		}
+		ids[id] = true
+		target := runnerTargetKey(*runner)
+		if targets[target] {
+			return fmt.Errorf("runner %q duplicates another runner target", runner.ID)
+		}
+		targets[target] = true
+	}
+	sort.Slice(cfg.Runners, func(i, j int) bool {
+		return strings.ToLower(cfg.Runners[i].ID) < strings.ToLower(cfg.Runners[j].ID)
+	})
 	return nil
+}
+
+func validateRunnerConfig(runner RunnerConfig) error {
+	if !validRunnerID(runner.ID) {
+		return errors.New("id must be a valid hostname")
+	}
+	if runner.Path != "" {
+		if runner.Workspace != "" || runner.Group != "" || runner.Project != "" || runner.Worktree != "" {
+			return errors.New("path cannot be combined with a workspace target")
+		}
+		return nil
+	}
+	if runner.Workspace == "" {
+		return errors.New("workspace is required for group, project, and worktree targets")
+	}
+	if runner.Group != "" {
+		if runner.Project != "" || runner.Worktree != "" {
+			return errors.New("group cannot be combined with project or worktree")
+		}
+		return nil
+	}
+	if runner.Project == "" {
+		return errors.New("group, project, or path is required")
+	}
+	return nil
+}
+
+func validRunnerID(id string) bool {
+	if id == "" || len(id) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(id, ".") {
+		if !runnerHostnameLabel.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
+
+func runnerTargetKey(runner RunnerConfig) string {
+	if runner.Path != "" {
+		return "path\x00" + runner.Path
+	}
+	return strings.Join([]string{"workspace", runner.Workspace, runner.Group, runner.Project, runner.Worktree}, "\x00")
 }
 
 func canonicalWorkspaceRoot(root string) (string, error) {

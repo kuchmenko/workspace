@@ -101,7 +101,7 @@ func TestProjectSheetLoadsFullDetailsInsteadOfInventory(t *testing.T) {
 	}
 }
 
-func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
+func TestRebuildItemsBuildsAlphabeticalWorkspaceTree(t *testing.T) {
 	now := time.Now()
 	m := &Model{
 		workspaces: []WorkspaceData{{
@@ -120,6 +120,9 @@ func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
 	}
 
 	m.rebuildItems()
+	if len(m.items) == 0 || m.items[0].kind == KindWorkspace {
+		t.Fatalf("single workspace should be hidden: %#v", m.items)
+	}
 
 	var got []string
 	for _, it := range m.items {
@@ -131,10 +134,7 @@ func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
 		}
 	}
 
-	// Ungrouped first by activity desc (a, z, then activity-less m),
-	// then groups by their freshest project (beta before alpha),
-	// with beta expanded into its projects by activity desc.
-	want := []string{"a", "z", "m", "@beta", "beta-fresh", "beta-stale", "@alpha"}
+	want := []string{"a", "m", "z", "@alpha", "@beta", "beta-fresh", "beta-stale"}
 	if len(got) != len(want) {
 		t.Fatalf("items = %v, want %v", got, want)
 	}
@@ -142,6 +142,35 @@ func TestRebuildItems_SortsProjectsAndGroupsByActivityDesc(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestProjectTreeLeftNavigationFollowsParents(t *testing.T) {
+	project := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/org/alpha"}
+	m := &Model{
+		workspaces: []WorkspaceData{
+			{Name: "shared", Root: "/ws", Groups: []string{"org"}, Projects: []Project{project}},
+			{Name: "other", Root: "/other"},
+		},
+		expanded: map[string]bool{
+			workspaceKey("/ws"):    true,
+			groupKey("/ws", "org"): true,
+		},
+		wtCache:  NewWorktreeCache(),
+		homeView: config.ExplorerViewProjects,
+	}
+	m.rebuildItems()
+	if len(m.items) != 4 || m.items[0].kind != KindWorkspace || m.items[1].kind != KindGroup || m.items[1].indent != 1 || m.items[2].kind != KindProject || m.items[2].indent != 2 || m.items[3].kind != KindWorkspace {
+		t.Fatalf("project tree = %#v", m.items)
+	}
+	m.cursor = 2
+	m.updateList(tui.KeyMsg{Type: tui.KeyLeft})
+	if item := m.currentItem(); item == nil || item.kind != KindGroup || m.expanded[groupKey("/ws", "org")] {
+		t.Fatalf("project left = item %#v expanded %#v", item, m.expanded)
+	}
+	m.updateList(tui.KeyMsg{Type: tui.KeyLeft})
+	if item := m.currentItem(); item == nil || item.kind != KindWorkspace {
+		t.Fatalf("group left = item %#v", item)
 	}
 }
 
@@ -294,18 +323,6 @@ func TestProjectionHeadingActionsAreSafe(t *testing.T) {
 	}
 }
 
-func TestLanguageProjectionDoesNotOpenCanonicalGroupSheet(t *testing.T) {
-	m := &Model{
-		workspaces: []WorkspaceData{{Root: "/ws", Projects: []Project{{Name: "alpha", Language: "Go"}}}},
-		expanded:   map[string]bool{}, homeView: config.ExplorerViewLanguage,
-	}
-	m.rebuildItems()
-	m.updateList(tui.KeyMsg{Type: tui.KeyEnter})
-	if m.sheet != nil || !m.expanded[languageKey("Go")] {
-		t.Fatalf("language projection opened canonical actions: sheet=%v expanded=%v", m.sheet, m.expanded)
-	}
-}
-
 func TestGlobalSearchIncludesCollapsedWorktreeRendersAndRestoresHome(t *testing.T) {
 	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/alpha"}
 	m := newTestModel(&p, []Worktree{{Path: "/ws/alpha-wt-feature", Branch: "feat/search"}})
@@ -446,12 +463,11 @@ func TestGlobalSearchProjectSelectionExpandsParentProjection(t *testing.T) {
 		key      string
 	}{
 		{name: "projects", homeView: config.ExplorerViewProjects, key: groupKey("/ws", "org")},
-		{name: "language", homeView: config.ExplorerViewLanguage, key: languageKey("Go")},
 		{name: "recent", homeView: config.ExplorerViewRecent, key: recentKey()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			project := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/alpha", Language: "Go"}
+			project := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "org", Path: "/ws/alpha"}
 			m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Groups: []string{"org"}, Projects: []Project{project}}}, expanded: map[string]bool{}, wtCache: NewWorktreeCache(), homeView: tt.homeView}
 			m.flashQuery = tui.NewTextInput()
 			m.rebuildItems()
@@ -466,16 +482,5 @@ func TestGlobalSearchProjectSelectionExpandsParentProjection(t *testing.T) {
 				t.Fatalf("project picker = %#v", m.sheet)
 			}
 		})
-	}
-}
-
-func TestLanguageProjectLeftReturnsToLanguageHeading(t *testing.T) {
-	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Group: "canonical", Language: "Go"}
-	m := &Model{workspaces: []WorkspaceData{{Root: "/ws", Projects: []Project{p}}}, expanded: map[string]bool{languageKey("Go"): true}, homeView: config.ExplorerViewLanguage}
-	m.rebuildItems()
-	m.cursor = 1
-	m.updateList(tui.KeyMsg{Type: tui.KeyLeft})
-	if item := m.currentItem(); item == nil || item.kind != KindGroup || item.group != "Go" || m.expanded[languageKey("Go")] {
-		t.Fatalf("item=%#v expanded=%v", item, m.expanded)
 	}
 }

@@ -149,6 +149,14 @@ func StateFilePath() (string, error) {
 }
 
 func WriteStateFile(ws *config.Workspace, root string) error {
+	var resolved []Resolved
+	if ws != nil {
+		resolved = ResolveAll(ws, root)
+	}
+	return WriteResolvedStateFile(resolved)
+}
+
+func WriteResolvedStateFile(resolved []Resolved) error {
 	path, err := StateFilePath()
 	if err != nil {
 		return err
@@ -156,13 +164,7 @@ func WriteStateFile(ws *config.Workspace, root string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating state dir: %w", err)
 	}
-	var content string
-	if ws == nil || len(ws.Aliases) == 0 {
-		content = "# ws aliases — generated, do not edit\n"
-	} else {
-		resolved := ResolveAll(ws, root)
-		content = RenderZsh(resolved)
-	}
+	content := RenderZsh(resolved)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
 	}

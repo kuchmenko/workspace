@@ -2,11 +2,9 @@ package agent
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -36,7 +34,6 @@ type Project struct {
 	LastActiveAt      time.Time
 	LastActiveMachine string
 	BranchActivity    map[string]time.Time
-	Language          string
 	WorktreeInventory []Worktree
 }
 
@@ -45,19 +42,8 @@ type WorkspaceData struct {
 	Root           string
 	Groups         []string
 	Projects       []Project
+	Aliases        map[string]string
 	FavoriteGroups map[string]bool
-}
-
-type Chip struct {
-	Kind         NodeKind
-	Name         string
-	Path         string
-	Favorite     bool
-	LastActiveAt time.Time
-
-	Project *Project
-
-	WorkspaceRoot string
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -124,105 +110,6 @@ func findProjectByPath(ws *config.Workspace, wsRoot, abs string) (string, *confi
 		}
 	}
 	return "", nil
-}
-
-const (
-	iconGo         = ""
-	iconRust       = ""
-	iconPython     = ""
-	iconNode       = ""
-	iconTypeScript = ""
-	iconJavaScript = ""
-	iconRuby       = ""
-	iconJava       = ""
-	iconCSharp     = ""
-	iconDocker     = ""
-	iconShell      = ""
-	iconMarkdown   = ""
-)
-
-var projectIconCache sync.Map
-
-func DetectIcon(path string) string {
-	if path == "" {
-		return iconProject
-	}
-	if v, ok := projectIconCache.Load(path); ok {
-		return v.(string)
-	}
-	icon := detectIconUncached(path)
-	projectIconCache.Store(path, icon)
-	return icon
-}
-
-var markerFiles = []struct {
-	file string
-	icon string
-}{
-	{"go.mod", iconGo},
-	{"Cargo.toml", iconRust},
-	{"pyproject.toml", iconPython},
-	{"requirements.txt", iconPython},
-	{"setup.py", iconPython},
-	{"tsconfig.json", iconTypeScript},
-	{"Gemfile", iconRuby},
-	{"pom.xml", iconJava},
-	{"build.gradle", iconJava},
-	{"build.gradle.kts", iconJava},
-	{"package.json", iconNode},
-}
-
-var suffixIcons = []struct {
-	suffix string
-	icon   string
-}{
-	{".csproj", iconCSharp},
-	{".sln", iconCSharp},
-	{".rs", iconRust},
-	{".go", iconGo},
-	{".ts", iconTypeScript},
-	{".tsx", iconTypeScript},
-	{".js", iconJavaScript},
-	{".py", iconPython},
-	{".rb", iconRuby},
-	{".java", iconJava},
-	{".cs", iconCSharp},
-	{".sh", iconShell},
-	{".bash", iconShell},
-	{".zsh", iconShell},
-}
-
-func detectIconUncached(path string) string {
-	for _, m := range markerFiles {
-		if _, err := os.Stat(filepath.Join(path, m.file)); err == nil {
-			return m.icon
-		}
-	}
-
-	if _, err := os.Stat(filepath.Join(path, "Dockerfile")); err == nil {
-		return iconDocker
-	}
-
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		return iconProject
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		for _, s := range suffixIcons {
-			if strings.HasSuffix(name, s.suffix) {
-				return s.icon
-			}
-		}
-	}
-
-	if _, err := os.Stat(filepath.Join(path, "README.md")); err == nil {
-		return iconMarkdown
-	}
-	return iconProject
 }
 
 func MutateAndSave(wsRoot string, apply func(*config.Workspace) bool) error {
@@ -297,7 +184,11 @@ func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) 
 	ws := &WorkspaceData{
 		Name:           filepath.Base(root),
 		Root:           root,
+		Aliases:        make(map[string]string, len(w.Aliases)),
 		FavoriteGroups: map[string]bool{},
+	}
+	for name, target := range w.Aliases {
+		ws.Aliases[name] = target
 	}
 
 	groupSet := map[string]bool{}
@@ -355,7 +246,6 @@ func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) 
 			LastActiveAt:      lastAt,
 			LastActiveMachine: lastMachine,
 			BranchActivity:    branchActivity(p.Branches),
-			Language:          languageForIcon(DetectIcon(mainPath)),
 		}
 
 		proj.WorktreeInventory, err = LoadWorktreeInventory(mainPath)
@@ -389,15 +279,6 @@ func branchActivity(branches []config.BranchMeta) map[string]time.Time {
 		}
 	}
 	return result
-}
-
-func languageForIcon(icon string) string {
-	for _, value := range []struct{ icon, name string }{{iconGo, "Go"}, {iconRust, "Rust"}, {iconPython, "Python"}, {iconTypeScript, "TypeScript"}, {iconJavaScript, "JavaScript"}, {iconRuby, "Ruby"}, {iconJava, "Java"}, {iconCSharp, "C#"}, {iconDocker, "Docker"}, {iconShell, "Shell"}, {iconMarkdown, "Markdown"}} {
-		if value.icon == icon {
-			return value.name
-		}
-	}
-	return "Other"
 }
 
 func projectActivity(branches []config.BranchMeta) (time.Time, string) {

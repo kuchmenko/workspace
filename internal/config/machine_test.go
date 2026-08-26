@@ -95,6 +95,79 @@ func TestLoadMachineConfigNormalizesExistingRoots(t *testing.T) {
 	}
 }
 
+func TestMachineConfigRunnerRoundTripAndSort(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := &MachineConfig{MachineName: "linux", RunnerIDPrefix: "arch", Runners: []RunnerConfig{
+		{ID: "linux-workspace", Workspace: "shared", Project: "workspace"},
+		{ID: "linux-lmts", Workspace: "shared", Group: "limitless-labs-group", RemoteControlTerminal: true},
+		{ID: "linux-dotfiles", Path: "~/.config/dotfiles"},
+	}}
+	if err := SaveMachineConfig(cfg); err != nil {
+		t.Fatalf("SaveMachineConfig: %v", err)
+	}
+	loaded, err := LoadMachineConfig()
+	if err != nil {
+		t.Fatalf("LoadMachineConfig: %v", err)
+	}
+	got := []string{loaded.Runners[0].ID, loaded.Runners[1].ID, loaded.Runners[2].ID}
+	want := []string{"linux-dotfiles", "linux-lmts", "linux-workspace"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner order = %v, want %v", got, want)
+	}
+	if !loaded.Runners[1].RemoteControlTerminal {
+		t.Fatal("remote terminal setting was not preserved")
+	}
+	if RunnerIDPrefix(loaded) != "arch" {
+		t.Fatalf("runner prefix = %q", RunnerIDPrefix(loaded))
+	}
+}
+
+func TestRunnerIDPrefixDefaultsToMachineName(t *testing.T) {
+	if got := RunnerIDPrefix(&MachineConfig{MachineName: "archlinux"}); got != "archlinux" {
+		t.Fatalf("runner prefix = %q", got)
+	}
+	if err := normalizeMachineConfig(&MachineConfig{RunnerIDPrefix: "bad prefix"}); err == nil {
+		t.Fatal("invalid runner prefix should be rejected")
+	}
+}
+
+func TestMachineConfigMigratesRemovedLanguageView(t *testing.T) {
+	config := &MachineConfig{ExplorerView: "language"}
+	if err := normalizeMachineConfig(config); err != nil {
+		t.Fatal(err)
+	}
+	if config.ExplorerView != ExplorerViewProjects {
+		t.Fatalf("explorer view = %q", config.ExplorerView)
+	}
+}
+
+func TestMachineConfigRejectsInvalidRunners(t *testing.T) {
+	tests := []RunnerConfig{
+		{ID: "bad id", Path: "/tmp"},
+		{ID: "linux-a"},
+		{ID: "linux-a", Workspace: "shared", Group: "personal", Project: "workspace"},
+		{ID: "linux-a", Path: "/tmp", Workspace: "shared", Project: "workspace"},
+		{ID: "linux-a", Workspace: "shared", Worktree: "feat/x"},
+	}
+	for _, runner := range tests {
+		if err := normalizeMachineConfig(&MachineConfig{Runners: []RunnerConfig{runner}}); err == nil {
+			t.Fatalf("runner should be rejected: %#v", runner)
+		}
+	}
+	if err := normalizeMachineConfig(&MachineConfig{Runners: []RunnerConfig{
+		{ID: "linux-a", Workspace: "shared", Project: "workspace"},
+		{ID: "LINUX-A", Path: "/tmp"},
+	}}); err == nil {
+		t.Fatal("case-insensitive duplicate id should be rejected")
+	}
+	if err := normalizeMachineConfig(&MachineConfig{Runners: []RunnerConfig{
+		{ID: "linux-a", Workspace: "shared", Project: "workspace"},
+		{ID: "linux-b", Workspace: "shared", Project: "workspace"},
+	}}); err == nil {
+		t.Fatal("duplicate target should be rejected")
+	}
+}
+
 func TestLoadMachineConfigMigratesLegacyDaemonRoots(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)

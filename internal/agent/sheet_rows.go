@@ -43,6 +43,12 @@ func buildProjectSheetRows(m *Model, p *Project) []sheetRow {
 		wt := &wts[idx]
 		label := worktreeDisplayName(*wt)
 		hint := wtHint(wt)
+		if badge := m.runnerBadge(m.worktreeRunnerTarget(p, wt), wt.Path); badge != "" {
+			if hint != "" {
+				hint += " "
+			}
+			hint += badge
+		}
 		activity := humanizeAge(wt.LastActiveAt)
 		if activity == "" {
 			activity = "—"
@@ -98,6 +104,7 @@ func buildGroupSheetRows(m *Model, workspaceRoot, group, groupPath string) []she
 		rows = append(rows, sheetRow{
 			kind:     rowProject,
 			label:    p.Name,
+			hint:     m.runnerBadge(m.projectRunnerTarget(p), p.Path),
 			activity: activity,
 			proj:     p,
 			section:  "projects",

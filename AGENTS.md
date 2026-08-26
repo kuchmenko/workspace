@@ -59,6 +59,12 @@ machine_name = "linux"
 Machine-specific preferences remain in this file. Workspace names, roots, and
 registry contents live in SQLite.
 
+Machine-local Amp runner definitions also live in this file. A runner targets
+one named workspace group, project, worktree branch, or explicit path. Runtime
+PID identity and logs do not belong in configuration. `runner_id_prefix`
+controls generated IDs for new runners and defaults to `machine_name`; each
+saved runner retains its complete editable ID.
+
 ### On-Disk Project Layout
 
 After `ws migrate`, or immediately for projects created by `ws add` /
@@ -228,6 +234,27 @@ bootstrap and migrate sidecars can be reported and removed by
 
 Sidecars do not signal or pause a background process; none exists.
 
+### Amp Runners
+
+The Explorer manages detached Linux `amp --no-tui` processes without terminal
+windows. `internal/runner` owns symbolic target resolution, `/proc` discovery,
+PID plus process-start-time identity, runtime files, launch, graceful shutdown,
+forced shutdown, and restart. `internal/agent` owns runner presentation, forms,
+confirmations, contextual actions, and Explorer Jobs.
+
+Targets may be workspace group directories, project main checkouts, exact
+worktree branches, or explicit existing directories. Canonical cwd is the
+duplicate boundary. Unmanaged Amp processes are read-only except for an
+explicitly confirmed replacement: verify PID, process-start time, cwd, and Amp
+command before signaling the external process, then launch a new managed
+process. Never adopt an external process in place.
+
+Runner status means local OS process status only. Amp provides no supported
+busy or drain contract. Restart and shutdown therefore require confirmation and
+may interrupt active work. Shutdown sends `SIGTERM` and waits; `SIGKILL` is
+available only through an explicit force action. There is no runner daemon,
+systemd unit, terminal launcher, crash restart, or login auto-start.
+
 ### Migration
 
 `internal/repo/migrate.go` converts a plain checkout to the bare+worktree
@@ -383,6 +410,9 @@ Workspace peer commands do not invoke project Git synchronization.
 | `ws alias init [zsh]` | Generate shell initialization code. |
 | `ws alias install` | Install the generated alias-state hook in zsh. |
 
+The Explorer's Runner view starts, inspects, restarts, shuts down, and forgets
+machine-local Amp runners for groups, projects, worktrees, and explicit paths.
+
 ### Authentication and Setup
 
 | Command | Purpose |
@@ -397,6 +427,8 @@ Workspace peer commands do not invoke project Git synchronization.
 - `$XDG_STATE_HOME/ws/registry.db`: authoritative runtime workspace registry.
 - `workspace.toml`: optional import/export and migration interchange data.
 - `~/.config/ws/config.toml`: machine-local settings including `machine_name`.
+- `~/.local/state/ws/runners/<id>.json`: managed Amp PID and process-start identity.
+- `~/.local/state/ws/runners/<id>.log`: detached Amp runner output.
 - `~/.config/ws/token`: GitHub discovery token.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,

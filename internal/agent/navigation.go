@@ -30,6 +30,8 @@ func (m *Model) openCurrentItem() (tui.Model, tui.Cmd) {
 		return m, nil
 	}
 	switch item.kind {
+	case KindWorkspace:
+		m.toggleExpand(item.expandKey)
 	case KindGroup:
 		if item.projectionGroup {
 			m.toggleExpand(item.expandKey)
@@ -52,7 +54,7 @@ func (m *Model) toggleExpand(key string) {
 
 func (m *Model) jumpToExpandKey(key string) {
 	for i, it := range m.items {
-		if it.kind == KindGroup && it.expandKey == key {
+		if it.expandKey == key {
 			m.cursor = i
 			break
 		}
@@ -71,11 +73,10 @@ func (m *Model) jumpToProject(workspaceRoot, projID string) {
 			}
 			switch m.homeView {
 			case config.ExplorerViewProjects:
+				m.expanded[workspaceKey(workspaceRoot)] = true
 				if project.Group != "" {
 					m.expanded[groupKey(workspaceRoot, project.Group)] = true
 				}
-			case config.ExplorerViewLanguage:
-				m.expanded[languageKey(project.Language)] = true
 			case config.ExplorerViewRecent:
 				m.expanded[recentKey()] = true
 			}

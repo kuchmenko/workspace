@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -84,6 +85,10 @@ func Sequence(cmds ...Cmd) Cmd {
 	}
 	c := tea.Sequence(teaCmds...)
 	return ownCmd(c)
+}
+
+func Tick(duration time.Duration, message func(time.Time) Msg) Cmd {
+	return ownCmd(tea.Tick(duration, func(at time.Time) tea.Msg { return message(at) }))
 }
 
 func WithContext(ctx context.Context) ProgramOption {

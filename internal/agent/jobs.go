@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -42,6 +43,8 @@ type jobResult struct {
 	Outcomes         []targetOutcome
 	AffectedProjects []ProjectIdentity
 	ArchivedProjects []ProjectIdentity
+	RefreshRunners   bool
+	RunnerFormTarget *config.RunnerConfig
 }
 
 func (r jobResult) state() jobState {
@@ -70,6 +73,7 @@ func (r jobResult) state() jobState {
 type explorerJob struct {
 	ID, Label, Current              string
 	State                           jobState
+	RunnerKey, RunnerStatus         string
 	Completed, Total                int
 	QueuedAt, StartedAt, FinishedAt time.Time
 	Summary, Error                  string
@@ -101,10 +105,11 @@ type operationRunner struct {
 	mu       sync.Mutex
 	registry map[string]*sync.Mutex
 	projects map[string]*sync.Mutex
+	runners  map[string]*sync.Mutex
 }
 
 func newOperationRunner() *operationRunner {
-	return &operationRunner{registry: map[string]*sync.Mutex{}, projects: map[string]*sync.Mutex{}}
+	return &operationRunner{registry: map[string]*sync.Mutex{}, projects: map[string]*sync.Mutex{}, runners: map[string]*sync.Mutex{}}
 }
 
 func (r *operationRunner) nextID() string { return fmt.Sprintf("J%04d", r.id.Add(1)) }
@@ -130,6 +135,8 @@ func (r *operationRunner) lockProject(root, id, path string) func() {
 }
 
 func (r *operationRunner) lockRegistry(root string) func() { return r.lock(r.registry, root) }
+
+func (r *operationRunner) lockRunner(id string) func() { return r.lock(r.runners, strings.ToLower(id)) }
 
 type jobContext struct {
 	runner *operationRunner
@@ -160,6 +167,12 @@ func (c *jobContext) withProject(root, id, path string, run func()) {
 
 func (c *jobContext) withRegistry(root string, run func()) {
 	unlock := c.runner.lockRegistry(root)
+	defer unlock()
+	run()
+}
+
+func (c *jobContext) withRunner(id string, run func()) {
+	unlock := c.runner.lockRunner(id)
 	defer unlock()
 	run()
 }
@@ -285,6 +298,12 @@ func (m *Model) applyJobEvent(msg jobEvent) {
 		job.Details = append(job.Details, msg.result.Details...)
 		job.Outcomes = append([]targetOutcome(nil), msg.result.Outcomes...)
 		job.FinishedAt = time.Now()
+		if msg.result.RefreshRunners {
+			m.loadRunnerInfos()
+		}
+		if msg.result.RunnerFormTarget != nil && job.State == jobComplete && m.mode == viewRunners {
+			m.openRunnerForm(*msg.result.RunnerFormTarget)
+		}
 		m.logJob(job.ID, "finished state=%s summary=%q error=%q", job.State, job.Summary, job.Error)
 		acknowledgeJob(msg)
 		return
