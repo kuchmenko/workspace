@@ -229,8 +229,8 @@ See [Sync: Conflicts](sync.md#conflicts) for the catalog.
 
 ## Plain checkouts
 
-Plain checkouts are unsupported. Move the path aside, register its remote with
-add if needed, then let sync clone the bare+worktree layout.
+Plain checkouts are unsupported. For a registered project, move the path aside,
+then run `ws sync`. Use `ws add` only for an unregistered remote.
 
 ## Tests
 

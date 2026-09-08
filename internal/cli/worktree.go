@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -25,13 +24,7 @@ func ensureMachineName() (string, error) {
 	if mc.MachineName != "" {
 		return mc.MachineName, nil
 	}
-	def := config.DefaultMachineName()
-	fmt.Printf("Machine name [%s]: ", def)
-	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	if strings.TrimSpace(line) == "" {
-		line = def
-	}
-	name := config.SanitizeMachineName(line)
+	name := config.SanitizeMachineName(config.DefaultMachineName())
 	if name == "" {
 		return "", errors.New("machine name cannot be empty after sanitization")
 	}
@@ -68,7 +61,10 @@ func resolveProject(name string) (config.Project, string, string, error) {
 	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return proj, mainPath, barePath, fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside and clone through `ws add` and `ws sync`", name, filepath.Base(barePath))
+		if errors.Is(err, os.ErrNotExist) {
+			return proj, mainPath, barePath, fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside, then run `ws sync`", name, filepath.Base(barePath))
+		}
+		return proj, mainPath, barePath, fmt.Errorf("inspect bare repository %s for project %q: %w", barePath, name, err)
 	}
 	return proj, mainPath, barePath, nil
 }

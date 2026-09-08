@@ -225,7 +225,10 @@ func loadWorktreeProject(root, name string, workspace *config.Workspace) (*confi
 	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return nil, config.Project{}, "", "", fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside and clone through `ws add` and `ws sync`", name, filepath.Base(barePath))
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, config.Project{}, "", "", fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside, then run `ws sync`", name, filepath.Base(barePath))
+		}
+		return nil, config.Project{}, "", "", fmt.Errorf("inspect bare repository %s for project %q: %w", barePath, name, err)
 	}
 	return workspace, project, mainPath, barePath, nil
 }

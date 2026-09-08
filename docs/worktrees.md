@@ -13,7 +13,7 @@ personal/
 ```
 
 Projects added through `ws add` start in this layout directly. Plain checkouts
-are unsupported; move one aside and clone its remote through add and sync.
+are unsupported; move one aside, then run `ws sync`.
 
 ## Branch naming
 

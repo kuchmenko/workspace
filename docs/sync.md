@@ -118,7 +118,7 @@ For each selected active project:
 
 - Missing main and bare paths are cloned into the bare+worktree layout.
 - A plain checkout without its sibling bare repository records
-  `needs-migration`; move it aside and clone the remote through add and sync.
+  `needs-migration`; move it aside, then run `ws sync`.
 - A blocked path records `path-blocked` and is left untouched.
 - Existing bare repositories must have an origin URL matching the frozen
   plan, then fetch only that explicit origin with pruning and tags.
@@ -148,7 +148,7 @@ Current conflict kinds:
 
 - `main-divergence`: a main worktree cannot fast-forward.
 - `needs-migration`: a project is an unsupported plain checkout; move it aside
-  and clone the remote through add and sync.
+  and run `ws sync`.
 - `needs-bootstrap`: cloning could not determine a default branch; initialize
   or set the remote default branch, then rerun sync.
 - `path-blocked`: the expected project or bare path is occupied by an
@@ -168,7 +168,9 @@ work.
 `~/.local/state/ws/add/<sha>.toml` for crash recovery and
 same-command exclusion. A foreground sync checks for a live sidecar before
 execution and skips rather than racing an in-progress operation. Sidecars
-do not coordinate with a background process because none exists.
+from removed create, bootstrap, and migrate commands are still recognized
+during upgrades. Sidecars do not coordinate with a background process because
+none exists.
 
 ## Workspace Registry
 

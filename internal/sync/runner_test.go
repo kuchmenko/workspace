@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -16,6 +17,29 @@ import (
 	"github.com/kuchmenko/workspace/internal/registry"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
+
+func TestCloneFailureDistinguishesExistingLayouts(t *testing.T) {
+	runner := &Runner{}
+	tests := []struct {
+		name       string
+		err        error
+		diagnostic string
+	}{
+		{name: "needs migration", err: git.ErrNeedsMigration, diagnostic: "plain checkout unsupported; move it aside, then run `ws sync`"},
+		{name: "already cloned", err: fmt.Errorf("existing layout: %w", git.ErrAlreadyCloned), diagnostic: "existing layout: project already cloned"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := runner.cloneFailure("app", test.err, nil, nil)
+			if result.Status != ResultSkipped || result.Reason != SkipState || result.Diagnostic != test.diagnostic {
+				t.Fatalf("cloneFailure = %#v", result)
+			}
+			if errors.Is(test.err, git.ErrAlreadyCloned) && strings.Contains(result.Diagnostic, "plain checkout") {
+				t.Fatalf("already-cloned diagnostic misclassified layout: %q", result.Diagnostic)
+			}
+		})
+	}
+}
 
 func TestRunContextLeavesExcludedExistingAndMissingProjectsUntouched(t *testing.T) {
 	root := newTestWorkspace(t)

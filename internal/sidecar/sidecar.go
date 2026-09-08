@@ -36,7 +36,10 @@ import (
 type Kind string
 
 const (
-	KindAdd Kind = "add"
+	KindAdd       Kind = "add"
+	KindCreate    Kind = "create"
+	KindBootstrap Kind = "bootstrap"
+	KindMigrate   Kind = "migrate"
 )
 
 type Meta struct {
@@ -316,7 +319,7 @@ func interpretSignalError(err error) bool {
 }
 
 func AnyActive(wsRoot string) *Sidecar {
-	for _, k := range []Kind{KindAdd} {
+	for _, k := range []Kind{KindAdd, KindCreate, KindBootstrap, KindMigrate} {
 		sc, err := Load(wsRoot, k)
 		if err != nil || sc == nil {
 			continue

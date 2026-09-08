@@ -37,8 +37,9 @@ Three input modes:
   ws add -                read URLs from stdin, one per line
   ws add                  open the interactive TUI with clipboard / GitHub suggestions
 
-Headless invocations (any with positional URLs, or stdin '-', or a non-TTY
-context) clone directly into <path>.bare + <path> form.`,
+Headless invocations with positional URLs or stdin clone immediately into
+<path>.bare + <path> form. --no-clone only registers projects; a later
+ws sync creates their checkout layout.`,
 		Annotations: agentAnnotations("project-add", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectRead, "text", "0,1"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			metrics.RecordAddInvoked()
@@ -102,7 +103,7 @@ context) clone directly into <path>.bare + <path> form.`,
 	cmd.Flags().StringVarP(&category, "category", "c", "personal", "project category: personal or work")
 	cmd.Flags().StringVarP(&group, "group", "g", "", "group/directory for the project (e.g. example, personal/tools)")
 	cmd.Flags().StringVarP(&name, "name", "n", "", "project name (default: derived from URL; only valid with a single URL)")
-	cmd.Flags().BoolVar(&noClone, "no-clone", false, "register without cloning")
+	cmd.Flags().BoolVar(&noClone, "no-clone", false, "register only; create the checkout on a later ws sync")
 	cmd.Flags().BoolVar(&tui, "tui", false, "force interactive TUI (default when no URLs given on a TTY)")
 	cmd.Flags().BoolVar(&noTUI, "no-tui", false, "force headless mode; error if no URLs are provided")
 

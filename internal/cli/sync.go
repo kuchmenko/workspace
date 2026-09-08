@@ -201,7 +201,7 @@ func printConflictHeader(c conflict.Conflict) {
 
 func resolveNeedsMigration(c conflict.Conflict) (bool, error) {
 	fmt.Println("This project is a plain checkout, which ws does not support.")
-	fmt.Println("Move it aside, then register or clone the remote with `ws add` and `ws sync`.")
+	fmt.Println("Move it aside, then run `ws sync`.")
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
 	_ = readLine()
 	return false, nil

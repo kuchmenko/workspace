@@ -252,8 +252,8 @@ systemd unit, terminal launcher, crash restart, or login auto-start.
 
 ### Plain Checkouts
 
-Plain checkouts are unsupported. Move the path aside and clone the registered
-remote through add and sync.
+Plain checkouts are unsupported. Move the path aside, then run `ws sync` to
+clone the registered remote.
 
 ### Conflict Store and Resolution
 
@@ -395,8 +395,8 @@ GitHub discovery prefers saved ws OAuth/PAT credentials and can fall back to gh.
 - `~/.local/state/ws/runners/<id>.log`: detached Amp runner output.
 - `~/.config/ws/token`: GitHub discovery token.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
-- `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,
-  `create`, `bootstrap`, and `migrate`.
+- `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`; legacy
+  `create`, `bootstrap`, and `migrate` sidecars remain recognized during upgrades.
 - `~/.local/state/ws/aliases.zsh`: generated shell aliases.
 - `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
   counters; never contains identifiers, arguments, diagnostics, or history.

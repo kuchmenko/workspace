@@ -169,6 +169,33 @@ func TestAnyActiveIgnoresStale(t *testing.T) {
 	}
 }
 
+func TestAnyActiveRecognizesLegacyKinds(t *testing.T) {
+	for _, kind := range []sidecar.Kind{sidecar.KindCreate, sidecar.KindBootstrap, sidecar.KindMigrate} {
+		t.Run(string(kind)+" live", func(t *testing.T) {
+			withStateDir(t)
+			wsRoot := t.TempDir()
+			if err := sidecar.Save(sidecar.New(wsRoot, kind)); err != nil {
+				t.Fatal(err)
+			}
+			if got := sidecar.AnyActive(wsRoot); got == nil || got.Meta.Kind != kind {
+				t.Fatalf("AnyActive = %#v, want live %s sidecar", got, kind)
+			}
+		})
+		t.Run(string(kind)+" stale", func(t *testing.T) {
+			withStateDir(t)
+			wsRoot := t.TempDir()
+			sc := sidecar.New(wsRoot, kind)
+			sc.Meta.PID = 999999999
+			if err := sidecar.Save(sc); err != nil {
+				t.Fatal(err)
+			}
+			if got := sidecar.AnyActive(wsRoot); got != nil {
+				t.Fatalf("AnyActive returned stale %s sidecar: %#v", kind, got)
+			}
+		})
+	}
+}
+
 func TestAcquireLockAllowsOnlyOneConcurrentOwner(t *testing.T) {
 	withStateDir(t)
 	wsRoot := "/tmp/concurrent-lock-test"
