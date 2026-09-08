@@ -1,6 +1,7 @@
 package add
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/kuchmenko/workspace/internal/config"
@@ -29,13 +30,6 @@ func TestGroupKey(t *testing.T) {
 			wantOrder: 0,
 		},
 		{
-			name:      "disk-only repo",
-			s:         Suggestion{Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/foo"},
-			wantKey:   "_disk",
-			wantLabel: "Local (unregistered)",
-			wantOrder: 1,
-		},
-		{
 			name:      "github repo with owner → group key by owner",
 			s:         Suggestion{Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko"},
 			wantKey:   "gh:kuchmenko",
@@ -43,11 +37,10 @@ func TestGroupKey(t *testing.T) {
 			wantOrder: 2,
 		},
 		{
-			name: "mixed disk+github lands in the github bucket — disk presence is a row-level highlight",
+			name: "github repo lands in its owner bucket",
 			s: Suggestion{
-				Sources:     []SourceKind{SourceDisk, SourceGitHub},
+				Sources:     []SourceKind{SourceGitHub},
 				InferredGrp: "myorg",
-				DiskPath:    "/tmp/foo",
 			},
 			wantKey:   "gh:myorg",
 			wantLabel: "myorg",
@@ -89,7 +82,7 @@ func TestBuildBrowseRows_GroupsAndOrders(t *testing.T) {
 		{Name: "b", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko"},
 		{Name: "c", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko"},
 		{Name: "d", Sources: []SourceKind{SourceClipboard}, RemoteURL: "git@github.com:foo/bar.git"},
-		{Name: "e", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/e"},
+		{Name: "e", Sources: []SourceKind{SourceGitHub}},
 	}
 
 	// buildBrowseRows expects a sorted view (matches the production
@@ -102,10 +95,10 @@ func TestBuildBrowseRows_GroupsAndOrders(t *testing.T) {
 
 	// Expected order:
 	//   [Clipboard (1)]  d
-	//   [Local... (1)]   e
+	//   [Other (1)]      e
 	//   [kuchmenko (2)]  b, c
 	//   [myorg (1)]      a
-	wantHeaderOrder := []string{"Clipboard", "Local (unregistered)", "kuchmenko", "myorg"}
+	wantHeaderOrder := []string{"Clipboard", "kuchmenko", "myorg", "Other"}
 	var headerSeen []string
 	for _, r := range rows {
 		if r.kind == rowGroup {
@@ -119,7 +112,7 @@ func TestBuildBrowseRows_GroupsAndOrders(t *testing.T) {
 			}
 		}
 	}
-	if !sliceEq(headerSeen, wantHeaderOrder) {
+	if !reflect.DeepEqual(headerSeen, wantHeaderOrder) {
 		t.Errorf("header order: got %v, want %v", headerSeen, wantHeaderOrder)
 	}
 
@@ -142,7 +135,7 @@ func TestSortByRelevance_GroupOrderMatchesTreeOrder(t *testing.T) {
 		{Name: "kuchmenko-b", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko", GhActivity: 50},
 		{Name: "clip-d", Sources: []SourceKind{SourceClipboard}, RemoteURL: "git@h:foo/d.git"},
 		{Name: "kuchmenko-c", Sources: []SourceKind{SourceGitHub}, InferredGrp: "kuchmenko", GhActivity: 10},
-		{Name: "disk-e", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/e"},
+		{Name: "github-e", Sources: []SourceKind{SourceGitHub}},
 	}
 
 	sortByRelevance(view)
@@ -209,6 +202,13 @@ func TestKnownRemotesFromWorkspace(t *testing.T) {
 	}
 	if _, ok := got["empty"]; ok {
 		t.Error("empty-remote entry should not be in the map")
+	}
+}
+
+func TestBuildSourcesExcludesDiskDiscovery(t *testing.T) {
+	sources := buildSources(Options{Workspace: &config.Workspace{}})
+	if len(sources) != 2 || sources[0].Name() != "clipboard" || sources[1].Name() != "github" {
+		t.Fatalf("sources = %#v, want clipboard and github", sources)
 	}
 }
 

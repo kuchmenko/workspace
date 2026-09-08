@@ -171,12 +171,12 @@ func (r *Runner) cloneFailure(name string, err error, report *Report, onEvent fu
 	switch {
 	case errors.Is(err, git.ErrNeedsBootstrap):
 		kind = conflict.KindNeedsBootstrap
-		diagnostic = "default branch could not be auto-detected; run `ws bootstrap " + name + "`"
+		diagnostic = "remote default branch cannot be determined; initialize it or set the remote default branch, then run `ws sync`"
 	case errors.Is(err, git.ErrPathBlocked):
 		kind = conflict.KindPathBlocked
 		diagnostic = "non-repo files at project path; clean up manually and re-run"
 	case errors.Is(err, git.ErrNeedsMigration), errors.Is(err, git.ErrAlreadyCloned):
-		return OperationResult{Status: ResultSkipped, Operation: "clone", Project: name, Reason: SkipState, Diagnostic: err.Error()}
+		return OperationResult{Status: ResultSkipped, Operation: "clone", Project: name, Reason: SkipState, Diagnostic: "plain checkout unsupported; move it aside, then register or clone the remote with `ws add` and `ws sync`"}
 	}
 	r.recordProjectConflict(name, "", kind, diagnostic)
 	r.addConflictResult(report, name, "", kind, diagnostic, onEvent)

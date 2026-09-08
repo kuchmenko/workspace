@@ -479,14 +479,6 @@ func (s *sheet) updateContextKey(m *Model, key string) (bool, tui.Model, tui.Cmd
 			m.mode = viewEditProject
 			return true, m, nil
 		}
-	case "f":
-		if s.target != nil {
-			return true, m, m.toggleFavoriteFor(s.target)
-		} else if s.group != "" {
-			return true, m, m.toggleFavoriteGroup(s.workspaceRoot, s.group)
-		}
-		s.rebuild(m)
-		return true, m, nil
 	}
 	return false, m, nil
 }

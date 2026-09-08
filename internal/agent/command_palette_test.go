@@ -29,12 +29,12 @@ func requirePaletteActions(t *testing.T, commands []paletteCommand, expected ...
 }
 
 func TestCommandPaletteHomeContextsAndStandaloneRemoval(t *testing.T) {
-	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Path: "/ws/alpha", Group: "team", Favorite: true}
+	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Path: "/ws/alpha", Group: "team"}
 	m := NewModel([]WorkspaceData{{Root: "/ws", Groups: []string{"team"}, Projects: []Project{p}}})
 	m.homeView = config.ExplorerViewRecent
 	m.items = []listItem{{kind: KindProject, project: &m.workspaces[0].Projects[0], workspaceRoot: "/ws"}}
 	commands := m.paletteCommands()
-	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "edit-project", "favorite-project", "maintain-project", "search-local", "search-global", "switch-projection", "reverse-recent", "activity", "maintain-global")
+	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "edit-project", "maintain-project", "search-local", "search-global", "switch-projection", "reverse-recent", "activity", "maintain-global")
 	for _, command := range commands {
 		if strings.HasPrefix(command.action, "standalone:") || command.group == "WORKSPACE" {
 			t.Fatalf("standalone placeholder remains: %#v", command)
@@ -43,7 +43,7 @@ func TestCommandPaletteHomeContextsAndStandaloneRemoval(t *testing.T) {
 
 	m.items = []listItem{{kind: KindGroup, workspaceRoot: "/ws", group: "team"}}
 	commands = m.paletteCommands()
-	requirePaletteActions(t, commands, "open-group", "group-shell", "favorite-group", "maintain-group", "search-local", "activity")
+	requirePaletteActions(t, commands, "open-group", "group-shell", "maintain-group", "search-local", "activity")
 	if _, ok := paletteActions(commands)["maintain-project"]; ok {
 		t.Fatal("group inherited project action")
 	}
@@ -83,7 +83,7 @@ func TestCommandPaletteProjectAndGroupSheetSelections(t *testing.T) {
 
 	m.sheet = newGroupSheet(m, "/ws", "team")
 	commands = m.paletteCommands()
-	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "group-shell", "favorite-group", "maintain-group", "search-sheet", "close-sheet", "activity")
+	requirePaletteActions(t, commands, "open-project", "project-shell", "add-worktree", "group-shell", "maintain-group", "search-sheet", "close-sheet", "activity")
 }
 
 func TestCommandPaletteSearchFormsLifecycleAndActivityContexts(t *testing.T) {
@@ -152,7 +152,7 @@ func TestCommandPaletteSearchFormsLifecycleAndActivityContexts(t *testing.T) {
 }
 
 func TestCommandPaletteTitleSectionsInvocationAndDirectFiltering(t *testing.T) {
-	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Path: "/ws/alpha", Favorite: true}
+	p := Project{ID: "alpha", Name: "alpha", WorkspaceRoot: "/ws", Path: "/ws/alpha"}
 	m := NewModel([]WorkspaceData{{Root: "/ws", Projects: []Project{p}}})
 	m.items = []listItem{{kind: KindProject, project: &m.workspaces[0].Projects[0], workspaceRoot: "/ws"}}
 	m.width, m.height = 100, 30

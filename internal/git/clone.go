@@ -59,7 +59,7 @@ type CloneResult struct {
 
 var (
 	ErrAlreadyCloned  = errors.New("project already cloned")
-	ErrNeedsMigration = errors.New("project exists as plain clone, run 'ws migrate'")
+	ErrNeedsMigration = errors.New("project exists as unsupported plain checkout")
 	ErrPathBlocked    = errors.New("non-repo files present at project path")
 	ErrNeedsBootstrap = errors.New("default branch needs interactive selection")
 )

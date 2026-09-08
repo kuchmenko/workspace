@@ -94,7 +94,6 @@ func resetCLIWorkspace() {
 	}
 	wsRoot = ""
 	ws = nil
-	wsLoadErr = nil
 	registryStore = nil
 	registryState = registry.Workspace{}
 }

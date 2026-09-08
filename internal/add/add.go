@@ -106,7 +106,6 @@ func buildSources(opts Options) []Source {
 	}
 
 	return []Source{
-		NewDiskSource(opts.WsRoot, opts.Workspace),
 		&ClipboardSource{Reader: DefaultClipboardReader},
 		&GitHubSource{
 			Provider:     gh,

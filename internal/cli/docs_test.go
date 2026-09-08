@@ -15,8 +15,6 @@ func TestAgentContractProductionInventory(t *testing.T) {
 		"ws alias list",
 		"ws alias rm",
 		"ws auth logout",
-		"ws doctor",
-		"ws migrate",
 		"ws path",
 		"ws sync",
 		"ws workspace create",
@@ -54,14 +52,11 @@ func TestAgentContractAliasesAndSafetyDistinctions(t *testing.T) {
 	if !reflect.DeepEqual(commands["ws worktree add"].Aliases, []string{"ws wt add"}) {
 		t.Errorf("worktree add aliases = %v", commands["ws worktree add"].Aliases)
 	}
-	if commands["ws migrate"].Mutation != AgentEffectConditional {
-		t.Errorf("migrate mutation = %q, want conditional for --check", commands["ws migrate"].Mutation)
-	}
 	if commands["ws add"].Interaction != AgentInteractionConditional {
 		t.Errorf("add interaction = %q, want conditional", commands["ws add"].Interaction)
 	}
-	if commands["ws add"].Network != AgentEffectRead || commands["ws doctor"].Network != AgentEffectRead || commands["ws worktree add"].Network != AgentEffectRead {
-		t.Errorf("read-only network metadata: add=%q doctor=%q worktree-add=%q", commands["ws add"].Network, commands["ws doctor"].Network, commands["ws worktree add"].Network)
+	if commands["ws add"].Network != AgentEffectRead || commands["ws worktree add"].Network != AgentEffectRead {
+		t.Errorf("read-only network metadata: add=%q worktree-add=%q", commands["ws add"].Network, commands["ws worktree add"].Network)
 	}
 }
 
@@ -89,9 +84,9 @@ func TestAgentContractJSONDeterministic(t *testing.T) {
 
 func TestZeroArgumentLeavesRejectStrayArguments(t *testing.T) {
 	paths := [][]string{
-		{"sync"}, {"sync", "resolve"}, {"setup"}, {"status"}, {"scan"},
-		{"favorite", "list"}, {"auth", "login"}, {"auth", "logout"}, {"auth", "status"},
-		{"alias", "list"}, {"alias", "install"}, {"docs"}, {"create"},
+		{"sync"}, {"sync", "resolve"}, {"status"},
+		{"auth", "login"}, {"auth", "logout"}, {"auth", "status"},
+		{"alias", "list"}, {"alias", "install"}, {"docs"},
 	}
 	root := NewRootCmd()
 	for _, path := range paths {

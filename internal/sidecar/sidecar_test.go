@@ -28,7 +28,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	withStateDir(t)
 	wsRoot := "/tmp/fake-workspace"
 
-	sc := sidecar.New(wsRoot, sidecar.KindBootstrap)
+	sc := sidecar.New(wsRoot, sidecar.KindAdd)
 	if err := sc.Set("proj-a", fakeEntry{Branch: "main", When: "now"}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	loaded, err := sidecar.Load(wsRoot, sidecar.KindBootstrap)
+	loaded, err := sidecar.Load(wsRoot, sidecar.KindAdd)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -47,8 +47,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatal("Load returned nil after Save")
 		return
 	}
-	if loaded.Meta.Kind != sidecar.KindBootstrap {
-		t.Errorf("Kind = %s, want bootstrap", loaded.Meta.Kind)
+	if loaded.Meta.Kind != sidecar.KindAdd {
+		t.Errorf("Kind = %s, want add", loaded.Meta.Kind)
 	}
 	if loaded.Meta.PID != os.Getpid() {
 		t.Errorf("PID = %d, want %d", loaded.Meta.PID, os.Getpid())
@@ -67,7 +67,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 
 func TestLoadMissingReturnsNil(t *testing.T) {
 	withStateDir(t)
-	sc, err := sidecar.Load("/tmp/never-existed", sidecar.KindMigrate)
+	sc, err := sidecar.Load("/tmp/never-existed", sidecar.KindAdd)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -79,18 +79,18 @@ func TestLoadMissingReturnsNil(t *testing.T) {
 func TestDeleteIsIdempotent(t *testing.T) {
 	withStateDir(t)
 	wsRoot := "/tmp/fake-workspace"
-	if err := sidecar.Delete(wsRoot, sidecar.KindBootstrap); err != nil {
+	if err := sidecar.Delete(wsRoot, sidecar.KindAdd); err != nil {
 		t.Errorf("Delete on missing: %v", err)
 	}
 
-	sc := sidecar.New(wsRoot, sidecar.KindBootstrap)
+	sc := sidecar.New(wsRoot, sidecar.KindAdd)
 	if err := sidecar.Save(sc); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if err := sidecar.Delete(wsRoot, sidecar.KindBootstrap); err != nil {
+	if err := sidecar.Delete(wsRoot, sidecar.KindAdd); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if err := sidecar.Delete(wsRoot, sidecar.KindBootstrap); err != nil {
+	if err := sidecar.Delete(wsRoot, sidecar.KindAdd); err != nil {
 		t.Errorf("Delete second time: %v", err)
 	}
 }
@@ -135,58 +135,17 @@ func TestAnyActiveFindsBoth(t *testing.T) {
 		t.Errorf("AnyActive returned %+v, want nil", got)
 	}
 
-	// Bootstrap sidecar with our pid → should be found.
-	sc := sidecar.New(wsRoot, sidecar.KindBootstrap)
+	// Add sidecar with our pid should be found.
+	sc := sidecar.New(wsRoot, sidecar.KindAdd)
 	sc.Meta.Started = time.Now().UTC()
 	if err := sidecar.Save(sc); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	got := sidecar.AnyActive(wsRoot)
-	if got == nil || got.Meta.Kind != sidecar.KindBootstrap {
-		t.Errorf("AnyActive after bootstrap save: %+v", got)
-	}
-
-	// Cleanup
-	_ = sidecar.Delete(wsRoot, sidecar.KindBootstrap)
-
-	// Migrate sidecar instead.
-	sc2 := sidecar.New(wsRoot, sidecar.KindMigrate)
-	if err := sidecar.Save(sc2); err != nil {
-		t.Fatalf("Save migrate: %v", err)
-	}
-	got = sidecar.AnyActive(wsRoot)
-	if got == nil || got.Meta.Kind != sidecar.KindMigrate {
-		t.Errorf("AnyActive after migrate save: %+v", got)
-	}
-
-	// Cleanup migrate before testing add (AnyActive returns the first
-	// active sidecar in its iteration order, which is Bootstrap →
-	// Migrate → Add; leftover migrate would mask the add result).
-	_ = sidecar.Delete(wsRoot, sidecar.KindMigrate)
-
-	// Add participates in the same active-operation exclusion as bootstrap
-	// and migrate.
-	sc3 := sidecar.New(wsRoot, sidecar.KindAdd)
-	if err := sidecar.Save(sc3); err != nil {
-		t.Fatalf("Save add: %v", err)
-	}
-	got = sidecar.AnyActive(wsRoot)
 	if got == nil || got.Meta.Kind != sidecar.KindAdd {
 		t.Errorf("AnyActive after add save: %+v", got)
 	}
 	_ = sidecar.Delete(wsRoot, sidecar.KindAdd)
-
-	// Create participates in the same active-operation exclusion while a
-	// repository is being materialized.
-	sc4 := sidecar.New(wsRoot, sidecar.KindCreate)
-	if err := sidecar.Save(sc4); err != nil {
-		t.Fatalf("Save create: %v", err)
-	}
-	got = sidecar.AnyActive(wsRoot)
-	if got == nil || got.Meta.Kind != sidecar.KindCreate {
-		t.Errorf("AnyActive after create save: %+v", got)
-	}
-	_ = sidecar.Delete(wsRoot, sidecar.KindCreate)
 }
 
 func TestAnyActiveIgnoresStale(t *testing.T) {
@@ -199,7 +158,7 @@ func TestAnyActiveIgnoresStale(t *testing.T) {
 			PID:           999999999,
 			Started:       time.Now().UTC().Add(-1 * time.Hour),
 			WorkspaceRoot: wsRoot,
-			Kind:          sidecar.KindBootstrap,
+			Kind:          sidecar.KindAdd,
 		},
 	}
 	if err := sidecar.Save(sc); err != nil {

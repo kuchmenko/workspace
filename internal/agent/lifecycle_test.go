@@ -484,14 +484,6 @@ func TestArchiveProjectsReportsEveryTargetProgress(t *testing.T) {
 	}
 }
 
-func TestLifecycleJobBlocksForegroundRegistryMutation(t *testing.T) {
-	m := NewModel(nil)
-	m.submitJob("lifecycle", 1, func(*jobContext) jobResult { return jobResult{} })
-	if cmd := m.toggleFavoriteFor(&Project{}); cmd != nil {
-		t.Fatal("unresolvable favorite submitted")
-	}
-}
-
 func TestLifecycleRefreshClosesRemovedProjectSheet(t *testing.T) {
 	project := Project{ID: "project", Name: "project", WorkspaceRoot: "/ws", Path: "/ws/project"}
 	lm := &lifecycleModel{phase: lifecycleRefreshing}

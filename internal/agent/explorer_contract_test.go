@@ -18,8 +18,8 @@ func TestSameNamedGroupsStayIndependentAcrossWorkspaces(t *testing.T) {
 	projectA := Project{ID: "a", Name: "a", WorkspaceRoot: rootA, Group: "shared", Path: filepath.Join(rootA, "shared", "a")}
 	projectB := Project{ID: "b", Name: "b", WorkspaceRoot: rootB, Group: "shared", Path: filepath.Join(rootB, "shared", "b")}
 	m := NewModel([]WorkspaceData{
-		{Root: rootA, Groups: []string{"shared"}, Projects: []Project{projectA}, FavoriteGroups: map[string]bool{}},
-		{Root: rootB, Groups: []string{"shared"}, Projects: []Project{projectB}, FavoriteGroups: map[string]bool{}},
+		{Root: rootA, Groups: []string{"shared"}, Projects: []Project{projectA}},
+		{Root: rootB, Groups: []string{"shared"}, Projects: []Project{projectB}},
 	})
 	m.expanded[groupKey(rootA, "shared")] = true
 	m.expanded[groupKey(rootB, "shared")] = true
@@ -38,13 +38,6 @@ func TestSameNamedGroupsStayIndependentAcrossWorkspaces(t *testing.T) {
 	if len(projectRows) != 1 || projectRows[0].proj.ID != "a" {
 		t.Fatalf("group sheet projects = %#v", projectRows)
 	}
-
-	runExplorerJob(t, m, m.toggleFavoriteGroup(rootB, "shared"))
-	loadedA := loadRegistryFixture(t, rootA)
-	loadedB := loadRegistryFixture(t, rootB)
-	if loadedA.Groups["shared"].Favorite || !loadedB.Groups["shared"].Favorite {
-		t.Fatal("favorite mutation targeted the wrong workspace")
-	}
 }
 
 func TestExplorerLaunchContracts(t *testing.T) {
@@ -53,7 +46,7 @@ func TestExplorerLaunchContracts(t *testing.T) {
 	if err := os.Mkdir(projectPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: projectPath, Favorite: true}
+	p := Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: projectPath, BranchActivity: map[string]time.Time{"main": time.Now()}}
 	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{p}}})
 
 	m.jumpToProject(root, p.ID)
@@ -72,20 +65,6 @@ func TestExplorerLaunchContracts(t *testing.T) {
 	m.launch(root, outside)
 	if m.Launch != nil || !strings.Contains(m.statusMsg, "outside workspace") {
 		t.Fatalf("outside launch was not blocked: launch=%+v status=%q", m.Launch, m.statusMsg)
-	}
-}
-
-func TestProjectFavoritePersists(t *testing.T) {
-	root := explorerWorkspace(t, "favorite")
-	workspace := loadRegistryFixture(t, root)
-	workspace.Projects["project"] = config.Project{Path: "project", Status: config.StatusActive}
-	saveRegistryFixture(t, root, workspace)
-	p := &Project{ID: "project", Name: "project", WorkspaceRoot: root, Path: filepath.Join(root, "project")}
-	m := NewModel([]WorkspaceData{{Root: root, Projects: []Project{*p}}})
-	runExplorerJob(t, m, m.toggleFavoriteFor(p))
-	loaded := loadRegistryFixture(t, root)
-	if !loaded.Projects["project"].Favorite {
-		t.Fatal("project favorite was not persisted")
 	}
 }
 

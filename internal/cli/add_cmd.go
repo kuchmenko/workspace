@@ -35,12 +35,10 @@ Three input modes:
   ws add <url>            register and clone a single URL
   ws add <url> <url> ...  register and clone several URLs (sequential)
   ws add -                read URLs from stdin, one per line
-  ws add                  open the interactive TUI with disk / clipboard / GitHub suggestions
+  ws add                  open the interactive TUI with clipboard / GitHub suggestions
 
 Headless invocations (any with positional URLs, or stdin '-', or a non-TTY
-context) call clone.CloneIntoLayout — the same path 'ws bootstrap' uses —
-so new projects land directly in <path>.bare + <path> form. No follow-up
-'ws migrate' is required.`,
+context) clone directly into <path>.bare + <path> form.`,
 		Annotations: agentAnnotations("project-add", AgentInteractionConditional, AgentApprovalRequired, AgentEffectWrite, AgentEffectRead, "text", "0,1"),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			metrics.RecordAddInvoked()

@@ -200,16 +200,16 @@ func printConflictHeader(c conflict.Conflict) {
 }
 
 func resolveNeedsMigration(c conflict.Conflict) (bool, error) {
-	fmt.Println("This project needs migration. Run:")
-	fmt.Printf("  ws migrate %s\n", c.Project)
+	fmt.Println("This project is a plain checkout, which ws does not support.")
+	fmt.Println("Move it aside, then register or clone the remote with `ws add` and `ws sync`.")
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
 	_ = readLine()
 	return false, nil
 }
 
 func resolveNeedsBootstrap(c conflict.Conflict) (bool, error) {
-	fmt.Println("This project needs to be cloned on this machine. Run:")
-	fmt.Printf("  ws bootstrap %s\n", c.Project)
+	fmt.Println("The remote default branch cannot be determined.")
+	fmt.Println("Initialize it or set the remote default branch, then run `ws sync`.")
 	fmt.Println("Press enter to continue (the conflict will clear automatically on next sync).")
 	_ = readLine()
 	return false, nil
@@ -231,7 +231,7 @@ func resolveCloneFailed(c conflict.Conflict) (bool, error) {
 	if len(c.Details) > 0 {
 		fmt.Printf("  details: %s\n", string(c.Details))
 	}
-	fmt.Println("Check credentials and network, then re-run `ws bootstrap` or `ws sync`.")
+	fmt.Println("Fix credentials or network access, then re-run `ws sync`.")
 	fmt.Println("Press enter to continue.")
 	_ = readLine()
 	return false, nil

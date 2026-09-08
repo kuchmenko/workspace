@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,31 @@ import (
 	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/spf13/cobra"
 )
+
+func ensureMachineName() (string, error) {
+	mc, err := config.LoadMachineConfig()
+	if err != nil {
+		return "", err
+	}
+	if mc.MachineName != "" {
+		return mc.MachineName, nil
+	}
+	def := config.DefaultMachineName()
+	fmt.Printf("Machine name [%s]: ", def)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	if strings.TrimSpace(line) == "" {
+		line = def
+	}
+	name := config.SanitizeMachineName(line)
+	if name == "" {
+		return "", errors.New("machine name cannot be empty after sanitization")
+	}
+	mc.MachineName = name
+	if err := config.SaveMachineConfig(mc); err != nil {
+		return "", err
+	}
+	return name, nil
+}
 
 func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -42,7 +68,7 @@ func resolveProject(name string) (config.Project, string, string, error) {
 	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return proj, mainPath, barePath, fmt.Errorf("project %q is not migrated yet (no %s); run `ws migrate %s`", name, filepath.Base(barePath), name)
+		return proj, mainPath, barePath, fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside and clone through `ws add` and `ws sync`", name, filepath.Base(barePath))
 	}
 	return proj, mainPath, barePath, nil
 }

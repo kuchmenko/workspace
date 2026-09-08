@@ -30,7 +30,6 @@ type Project struct {
 	Path              string
 	DefaultBranch     string
 	WorktreeCount     int
-	Favorite          bool
 	LastActiveAt      time.Time
 	LastActiveMachine string
 	BranchActivity    map[string]time.Time
@@ -38,12 +37,11 @@ type Project struct {
 }
 
 type WorkspaceData struct {
-	Name           string
-	Root           string
-	Groups         []string
-	Projects       []Project
-	Aliases        map[string]string
-	FavoriteGroups map[string]bool
+	Name     string
+	Root     string
+	Groups   []string
+	Projects []Project
+	Aliases  map[string]string
 }
 
 func StampLaunchFromPath(cwd string) error {
@@ -182,10 +180,9 @@ func loadOneWorkspace(root string) (*WorkspaceData, []string) {
 func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) {
 	var diagnostics []string
 	ws := &WorkspaceData{
-		Name:           filepath.Base(root),
-		Root:           root,
-		Aliases:        make(map[string]string, len(w.Aliases)),
-		FavoriteGroups: map[string]bool{},
+		Name:    filepath.Base(root),
+		Root:    root,
+		Aliases: make(map[string]string, len(w.Aliases)),
 	}
 	for name, target := range w.Aliases {
 		ws.Aliases[name] = target
@@ -216,9 +213,6 @@ func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) 
 	sort.Strings(names)
 	for g := range groupSet {
 		ws.Groups = append(ws.Groups, g)
-		if entry, ok := w.Groups[g]; ok && entry.Favorite {
-			ws.FavoriteGroups[g] = true
-		}
 	}
 	sort.Strings(ws.Groups)
 
@@ -242,7 +236,6 @@ func workspaceData(root string, w *config.Workspace) (*WorkspaceData, []string) 
 			Category:          string(p.Category),
 			Path:              mainPath,
 			DefaultBranch:     p.DefaultBranch,
-			Favorite:          p.Favorite,
 			LastActiveAt:      lastAt,
 			LastActiveMachine: lastMachine,
 			BranchActivity:    branchActivity(p.Branches),

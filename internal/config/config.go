@@ -173,22 +173,6 @@ type Group struct {
 	Favorite bool `toml:"favorite,omitempty"`
 }
 
-func (w *Workspace) SetGroupFavorite(name string, fav bool) bool {
-	if w.Groups == nil {
-		return false
-	}
-	g, ok := w.Groups[name]
-	if !ok {
-		return false
-	}
-	if g.Favorite == fav {
-		return false
-	}
-	g.Favorite = fav
-	w.Groups[name] = g
-	return true
-}
-
 type Meta struct {
 	Version int    `toml:"version"`
 	Root    string `toml:"root,omitempty"`
@@ -204,35 +188,6 @@ type Workspace struct {
 
 type AgentConfig struct {
 	DefaultView string `toml:"default_view,omitempty"`
-}
-
-const (
-	AgentViewAll       = "all"
-	AgentViewFavorites = "favorites"
-)
-
-func (w *Workspace) AgentDefaultView() string {
-	switch w.Agent.DefaultView {
-	case AgentViewFavorites:
-		return AgentViewFavorites
-	default:
-		return AgentViewAll
-	}
-}
-
-func (w *Workspace) SetAgentDefaultView(view string) bool {
-	var canonical string
-	switch view {
-	case AgentViewFavorites:
-		canonical = AgentViewFavorites
-	default:
-		canonical = ""
-	}
-	if w.Agent.DefaultView == canonical {
-		return false
-	}
-	w.Agent.DefaultView = canonical
-	return true
 }
 
 func FindRoot() (string, error) {
@@ -532,12 +487,4 @@ type Project struct {
 	Branches []BranchMeta `toml:"branches,omitempty"`
 
 	LegacyAutopush *legacyAutopush `toml:"autopush,omitempty"`
-}
-
-func (p *Project) SetFavorite(fav bool) bool {
-	if p.Favorite == fav {
-		return false
-	}
-	p.Favorite = fav
-	return true
 }

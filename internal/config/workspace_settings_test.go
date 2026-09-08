@@ -6,22 +6,6 @@ import (
 	"testing"
 )
 
-func TestSetFavorite_Idempotent(t *testing.T) {
-	p := &Project{}
-	if !p.SetFavorite(true) {
-		t.Error("first SetFavorite(true) should report changed")
-	}
-	if p.SetFavorite(true) {
-		t.Error("second SetFavorite(true) should be no-op")
-	}
-	if !p.SetFavorite(false) {
-		t.Error("SetFavorite(false) on favorited project should report changed")
-	}
-	if p.SetFavorite(false) {
-		t.Error("second SetFavorite(false) should be no-op")
-	}
-}
-
 func TestFavorite_RoundTrip_OmitWhenFalse(t *testing.T) {
 	const src = `
 [meta]
@@ -93,42 +77,6 @@ func isolateProject(t *testing.T, body, name string) string {
 	return body[start : start+len(header)+bestNext]
 }
 
-func TestAgentDefaultView_FallsBackToAll(t *testing.T) {
-	cases := []struct {
-		raw, want string
-	}{
-		{"", AgentViewAll},
-		{"all", AgentViewAll},
-		{"favorites", AgentViewFavorites},
-		{"garbage", AgentViewAll},
-	}
-	for _, tc := range cases {
-		ws := &Workspace{Agent: AgentConfig{DefaultView: tc.raw}}
-		if got := ws.AgentDefaultView(); got != tc.want {
-			t.Errorf("raw=%q: want %q, got %q", tc.raw, tc.want, got)
-		}
-	}
-}
-
-func TestSetAgentDefaultView_NormalizesAndReportsChange(t *testing.T) {
-	ws := &Workspace{}
-	if ws.SetAgentDefaultView("all") {
-		t.Error(`SetAgentDefaultView("all") on empty should be no-op (canonical is "")`)
-	}
-	if !ws.SetAgentDefaultView("favorites") {
-		t.Error(`SetAgentDefaultView("favorites") should report changed`)
-	}
-	if ws.Agent.DefaultView != "favorites" {
-		t.Errorf("want stored value 'favorites', got %q", ws.Agent.DefaultView)
-	}
-	if !ws.SetAgentDefaultView("garbage") {
-		t.Error(`SetAgentDefaultView("garbage") flips back to "" (changed=true)`)
-	}
-	if ws.Agent.DefaultView != "" {
-		t.Errorf("unknown values should normalize to empty; got %q", ws.Agent.DefaultView)
-	}
-}
-
 func TestAgentConfig_RoundTrip(t *testing.T) {
 	const src = `
 [meta]
@@ -144,8 +92,8 @@ default_view = "favorites"
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got := ws.AgentDefaultView(); got != AgentViewFavorites {
-		t.Errorf("want favorites view post-Load, got %q", got)
+	if ws.Agent.DefaultView != "favorites" {
+		t.Errorf("legacy default view was not decoded: %q", ws.Agent.DefaultView)
 	}
 	if err := Save(dir, ws); err != nil {
 		t.Fatalf("Save: %v", err)
