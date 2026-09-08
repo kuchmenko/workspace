@@ -53,7 +53,6 @@ Navigation:
 - `v` — cycle home views; `o` — reverse Recent order
 - `h` / `←` — collapse to the parent heading on home, or close a sheet
 - `l` / `→` — open the selected projection, group, project, or worktree
-- `1`-`9` — open a shell for the matching chip
 - `q` — quit
 
 Per-row actions:
@@ -79,10 +78,6 @@ Per-row actions:
   cleanup.
 - `A` — archive projects or preview/archive old safe worktrees in the current
   project or group when invoked there, or globally when invoked from home.
-- `f` — on a project row, toggle favorite. Equivalent to
-  `ws favorite add` / `ws favorite rm` from the CLI. The new flag is
-  persisted to the SQLite workspace registry.
-
 Search:
 
 - `s` — flash search inside the current view (jump labels per match).

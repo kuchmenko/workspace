@@ -26,70 +26,52 @@ The repository is private, so installation requires an authenticated GitHub
 CLI session with repository access. `~/.local/bin` should be on your `PATH`.
 If not, the installer prints a reminder.
 
-## First-time setup (interactive)
+## Bootstrap a workspace
+
+Choose one of three supported starts.
+
+### First machine
 
 ```sh
 mkdir ~/dev
 ws workspace create ~/dev --name personal
 cd ~/dev
 ws auth login            # GitHub device flow (or `--pat` for a token)
-ws setup                 # TUI: pick repos and organize them into groups
-ws sync                  # preflight, review, clone/fetch, and ff-pull safely
+ws add                    # TUI: choose clipboard or GitHub repositories
 ```
 
-To migrate an existing TOML registry instead, run
-`ws workspace import /path/to/workspace.toml --name personal --root ~/dev`.
-Normal commands use SQLite afterward and do not modify the imported file.
+To register without cloning, use `ws add --no-clone <remote-url>`, then run
+top-level `ws sync` to materialize the missing repository.
+
+### Trusted new machine
+
+```sh
+ws workspace attach personal --root ~/dev
+cd ~/dev
+ws sync
+```
+
+Attach fetches the authorized registry. Top-level `ws sync` then materializes
+its missing repositories.
+
+### TOML recovery
+
+```sh
+ws workspace import /path/to/workspace.toml --name personal --root ~/dev
+cd ~/dev
+ws sync
+```
+
+Import restores the registry. Top-level `ws sync` then materializes missing
+repositories. Normal commands use SQLite afterward and do not modify the
+imported file.
 
 That's enough for one machine. For cross-machine workflow see
 [Multi-machine sync](sync.md#multi-machine-flow).
 
-### `ws setup` — interactive
-
-`ws setup` walks you through three steps.
-
-**Step 1 — Select repos.** Lists every repo you have access to on
-GitHub, sorted by your activity (last 90 days). Filter by org, search
-by name, multi-select.
-
-```text
- ws setup   Select repos
-
-  Search: _                            sort: activity (ctrl+s)
-   all   acme-corp  personal                          (tab)
-
-> ● acme-corp/api-gateway        3d ago  ●●●●●
-  ● acme-corp/web-dashboard      5d ago  ●●●●
-  ○ acme-corp/legacy-service    45d ago  ●○○○○
-  ● personal/dotfiles            1d ago  ●●●●●
-  ● personal/cli-tools           8d ago  ●●●
-
-  ↓ 42 more
-
-  Selected: 4 / 49
-  ↑↓ navigate  space select  ctrl+a toggle all  enter next  esc quit
-```
-
-**Step 2 — Confirm.** Review the planned registry shape — groups
-(usually GitHub orgs) and per-project category (`personal` / `work` is
-auto-detected from org ownership; you can override).
-
-**Step 3 — Write.** `ws setup` writes the selected SQLite workspace and exits.
-Run `ws sync` to clone everything; the result is a directory tree like:
-
-```text
-~/dev/
-├── acme-corp/                  ← work group (gitignored)
-│   ├── api-gateway/
-│   └── web-dashboard/
-└── personal/                   ← personal group (gitignored)
-    ├── dotfiles/
-    └── cli-tools/
-```
-
 ## Adding more repos later
 
-Three flows; pick whichever matches what you have:
+Two flows; pick whichever matches what you have:
 
 ```sh
 # I have a URL or a list:
@@ -97,15 +79,12 @@ ws add git@github.com:owner/repo.git
 ws add url1 url2 url3
 echo url | ws add -                # stdin, one URL per line
 
-# I want a brand-new repo on GitHub created for me:
-ws create                          # TUI: owner / name / visibility
-ws create --owner me --name foo
-
-# I have a plain git checkout on disk that should join the registry:
-ws migrate <name>                  # converts to bare+worktree layout
+# Seed registration without cloning, then materialize through sync:
+ws add --no-clone git@github.com:owner/repo.git
+ws sync
 ```
 
-All three end at the same place: an entry in the SQLite registry plus a
+Both flows end at the same place: an entry in the SQLite registry plus a
 project laid out as `<name>/` (main worktree) + `<name>.bare/` (bare
 repo) under the chosen group/category directory.
 
@@ -126,7 +105,7 @@ root. TOML export is explicit and is never a runtime fallback.
 
 ## Authentication
 
-`ws auth login` is the GitHub device flow used by `ws setup` to list
+`ws auth login` is the GitHub device flow used by interactive add to list
 your repos and orgs. Token lives at `~/.config/ws/token`.
 
 ```sh
@@ -136,10 +115,8 @@ ws auth status         # show current state
 ws auth logout         # remove the token
 ```
 
-`ws create` is the one exception: it shells out to `gh repo create` and
-therefore needs `gh auth login` to be set up separately. The two
-authentications are independent — `ws` doesn't reuse the `gh` token and
-vice versa.
+If no saved ws token exists, GitHub discovery can optionally fall back to an
+authenticated `gh` installation.
 
 ## What to read next
 

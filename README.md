@@ -32,7 +32,7 @@ mkdir ~/dev
 ws workspace create ~/dev --name personal
 cd ~/dev
 ws auth login            # GitHub device flow (or `--pat` for a token)
-ws setup                 # TUI: pick repos, organize into groups
+ws add                    # TUI: choose clipboard or GitHub repositories
 ws sync                  # preflight, review, then synchronize explicitly
 ```
 
@@ -47,7 +47,8 @@ ws worktree push myapp feat/auth-refactor  # explicit publish + metadata stamp
 Import an existing TOML registry with
 `ws workspace import ./workspace.toml --name personal --root ~/dev`, export
 one with `ws workspace export personal`, and inspect local workspaces with
-`ws workspace list`.
+`ws workspace list`. After import, top-level `ws sync` materializes missing
+registered repositories.
 
 After pairing trusted devices, share and attach a registry directly over the
 LAN:
@@ -59,7 +60,7 @@ ws workspace share personal --with all --role writer
 # Another online device
 ws workspace available
 ws workspace attach personal --root ~/dev
-ws workspace sync personal
+ws sync
 ```
 
 This exchanges signed SQLite registry revisions only. Workspace roots remain
@@ -72,7 +73,7 @@ worktree.
 ## What's where
 
 - [Getting started](docs/getting-started.md) — install, first-time
-  setup, adding more repos, authentication.
+  workspace bootstrap, adding repositories, authentication.
 - [Worktrees](docs/worktrees.md) — `ws worktree add/list/push/rm`,
   branch naming, cross-machine handoff, recovering from
   `branch-orphan` and re-registering legacy `wt/<machine>/*`.
