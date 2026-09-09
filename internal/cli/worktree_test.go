@@ -97,6 +97,62 @@ func setupTestWorkspace(t *testing.T, machine, projName, defaultBranch string) s
 	return root
 }
 
+func TestEnsureMachineNameUsesAndPersistsDefaultWithoutReadingStdin(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	input := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(input, []byte("not-the-default\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	oldStdin := os.Stdin
+	os.Stdin = file
+	t.Cleanup(func() { os.Stdin = oldStdin })
+
+	want := config.SanitizeMachineName(config.DefaultMachineName())
+	got, err := ensureMachineName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("machine name = %q, want default %q", got, want)
+	}
+	saved, err := config.LoadMachineConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.MachineName != want {
+		t.Fatalf("persisted machine name = %q, want %q", saved.MachineName, want)
+	}
+}
+
+func TestResolveProjectPropagatesBarePathStatError(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "personal", "app")
+	if err := os.MkdirAll(mainPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	barePath := layout.BarePath(mainPath)
+	if err := os.Symlink(barePath, barePath); err != nil {
+		t.Fatal(err)
+	}
+	wsRoot = root
+	ws = &config.Workspace{Projects: map[string]config.Project{
+		"app": {Path: filepath.Join("personal", "app")},
+	}}
+	_, _, gotBarePath, err := resolveProject("app")
+	if err == nil || !strings.Contains(err.Error(), "inspect bare repository "+gotBarePath) {
+		t.Fatalf("resolveProject error = %v, want stat context for %s", err, barePath)
+	}
+	if strings.Contains(err.Error(), "plain checkouts are unsupported") {
+		t.Fatalf("resolveProject misclassified stat error: %v", err)
+	}
+}
+
 func loadCLIRegistryState(t *testing.T, root string) registry.Workspace {
 	t.Helper()
 	path, err := registry.DefaultPath()

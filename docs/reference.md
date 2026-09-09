@@ -9,12 +9,6 @@ the workspace-root auto-detection.
 
 ## Project management
 
-### `ws setup`
-
-Interactive onboarding TUI. Lists every repo you have access to on
-GitHub, lets you pick / group them, and writes the SQLite registry. See
-[Getting started](getting-started.md#ws-setup--interactive).
-
 ### `ws sync` / `ws sync resolve`
 
 ```sh
@@ -59,60 +53,11 @@ ws add                            # interactive TUI
 Holds an `add/<sha>.toml` sidecar for crash recovery and same-workspace
 operation exclusion.
 
-### `ws create`
-
-Create a new GitHub repo (in any owner you can push to via `gh`),
-then register + clone it.
-
-```sh
-ws create                                            # TUI: owner / name / visibility / desc
-ws create --owner <user-or-org> --name <repo>        # headless
-      [--public]                                     # default: private
-      [--description "..."]
-```
-
-Repos are created with `--add-readme` so the default branch + first
-commit exist before the clone runs (avoids the bootstrap-default-
-ambiguous error path).
-
-Requires `gh auth login` (separate from `ws auth login`). Holds a
-`create/<sha>.toml` sidecar.
-
-### `ws bootstrap [name]`
-
-Clone projects listed in the selected SQLite workspace that are missing on this
-machine. TUI by default; `--dry-run` shows the plan without cloning.
-Holds a `bootstrap/<sha>.toml` sidecar.
-
-### `ws migrate [name]`
-
-Convert plain git checkouts into the bare+worktree layout in place.
-
-```sh
-ws migrate <name>             # interactive TUI (default)
-ws migrate --all              # walk every active project, skip migrated
-ws migrate --check [name...]  # preview without touching anything
-ws migrate --wip              # snapshot dirty working tree to a wt/<machine>/migration-wip-<ts> branch
-ws migrate --no-tui           # force headless mode
-```
-
-Pre-flight handles dirty trees, stash entries, and detached HEADs as
-recovery branches. Holds a `migrate/<sha>.toml` sidecar; the
-attach-worktree strategy is documented in
-[Architecture — On-disk layout](architecture.md#on-disk-layout).
-
 ### `ws status`
 
 Table view: project / group / status / branch / last commit / layout.
 The LAYOUT column reads `plain`, `worktree`, `worktree+N` (where N
 counts extra worktrees), or `missing`.
-
-### `ws scan`
-
-Find git repos under the workspace's category / group directories
-that are not registered in SQLite. Ignores `*.bare/` and
-`*-wt-*/` siblings so the worktree layout doesn't show up as
-orphans.
 
 ### `ws path [project]`
 
@@ -129,23 +74,10 @@ Exit codes:
 
 - `0` — success.
 - `1` — outside any workspace, or project registered but checkout
-  doesn't exist on disk (hint: `ws bootstrap`).
+  doesn't exist on disk (hint: `ws sync`).
 - `2` — project name not in the selected registry. Lists registered names
   if there are < 5; otherwise just the error.
 - `64` — usage error (more than one positional arg).
-
-### `ws doctor`
-
-Unified diagnostic + auto-fix pass. See
-[Sync: Health Check](sync.md#health-check).
-
-```sh
-ws doctor                     # all projects + system, print findings
-ws doctor <project>           # one project
-ws doctor --fix               # apply safe auto-repairs in batch
-ws doctor --json              # machine-readable
-ws doctor --skip-remote       # skip network-touching checks
-```
 
 ## Worktrees
 
@@ -266,9 +198,7 @@ ws auth status
 ws auth logout
 ```
 
-Token at `~/.config/ws/token`. `ws create` uses `gh repo create`
-under the hood and therefore needs `gh auth login` separately —
-the two authentications don't share state.
+Token stored at `~/.config/ws/token`; GitHub discovery can fall back to gh.
 
 ## Explorer TUI
 

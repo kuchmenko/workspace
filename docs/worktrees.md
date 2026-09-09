@@ -12,8 +12,8 @@ personal/
 └── myapp-wt-linux-feat-fix-login/    ← extra worktree for branch feat/fix-login
 ```
 
-Convert any plain checkout once with `ws migrate <name>`; new projects
-created via `ws add` / `ws create` start in this layout directly.
+Projects added through `ws add` start in this layout directly. Plain checkouts
+are unsupported; move one aside, then run `ws sync`.
 
 ## Branch naming
 

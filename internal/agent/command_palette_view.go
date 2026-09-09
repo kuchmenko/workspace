@@ -7,13 +7,6 @@ import (
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
-func (m *Model) paletteFavoriteLabel(project *Project) string {
-	if project.Favorite {
-		return "Remove favorite"
-	}
-	return "Add favorite"
-}
-
 func (m *Model) paletteTitle() string {
 	switch m.mode {
 	case viewNewWorktree:

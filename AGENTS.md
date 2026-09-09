@@ -67,8 +67,7 @@ saved runner retains its complete editable ID.
 
 ### On-Disk Project Layout
 
-After `ws migrate`, or immediately for projects created by `ws add` /
-`ws create`, paths are siblings:
+Projects cloned by add or sync use sibling paths:
 
 ```text
 personal/
@@ -222,17 +221,13 @@ machine-local, and peer sync never transfers project files or credentials.
 
 ### Sidecars
 
-`ws add`, `ws create`, `ws bootstrap`, and `ws migrate` use sidecars at
-`~/.local/state/ws/<kind>/<sha>.toml`. Sidecars support crash recovery and
+`ws add` uses sidecars at `~/.local/state/ws/add/<sha>.toml`. Sidecars support crash recovery and
 same-workspace command exclusion. Foreground sync skips when any live sidecar
 would make execution race an in-progress operation.
 
 `internal/sidecar` centralizes path, lock, pid, load/save/delete, and stale
-process behavior. Command packages own command-specific payloads. Stale
-bootstrap and migrate sidecars can be reported and removed by
-`ws doctor --fix`.
-
-Sidecars do not signal or pause a background process; none exists.
+process behavior. Command packages own command-specific payloads. Sidecars do
+not signal or pause a background process; none exists.
 
 ### Amp Runners
 
@@ -255,34 +250,10 @@ may interrupt active work. Shutdown sends `SIGTERM` and waits; `SIGKILL` is
 available only through an explicit force action. There is no runner daemon,
 systemd unit, terminal launcher, crash restart, or login auto-start.
 
-### Migration
+### Plain Checkouts
 
-`internal/repo/migrate.go` converts a plain checkout to the bare+worktree
-layout. It is fail-safe rather than generally reversible. Preflight handles:
-
-- Detached HEAD: abort by default, or preserve unreachable commits on a
-  migration branch before checking out the default branch.
-- Stash entries: abort by default, or materialize each stash into a migration
-  branch and commit it.
-- Dirty tree: abort by default, or snapshot it to a migration WIP branch.
-
-Migration preserves all local branches and executable non-sample hooks.
-Internal recovery branches use
-`wt/<machine>/migration-{detached,stash,wip}-<timestamp>` and become part of
-the bare repository.
-
-To attach the existing non-empty project directory safely:
-
-1. Move `.git` aside to a recoverable path.
-2. Add a temporary worktree with `--no-checkout`.
-3. Move only the pointer file into the existing project directory.
-4. Remove the empty temporary directory.
-5. Repair worktree metadata for the final path.
-6. Verify HEAD did not change.
-
-Failures before final verification restore the original `.git` and remove
-the incomplete bare repository. `ws migrate --check` is read-only;
-`ws migrate --all` skips already-migrated or missing projects.
+Plain checkouts are unsupported. Move the path aside, then run `ws sync` to
+clone the registered remote.
 
 ### Conflict Store and Resolution
 
@@ -321,7 +292,7 @@ The `[agent]` block is stored in each SQLite workspace and represented in TOML e
 
 ```toml
 [agent]
-default_view = "favorites" # "all" by default
+default_view = "favorites" # legacy compatibility only
 ```
 
 Machine-specific preferences belong in `~/.config/ws/config.toml`, not this
@@ -336,7 +307,7 @@ path           = "personal/myapp"
 status         = "active"
 category       = "personal"
 default_branch = "main"
-favorite       = true
+favorite       = true # legacy compatibility only
 group          = "personal"
 
 [projects.myapp.mirrors]
@@ -362,18 +333,11 @@ configuration is migrated to branch metadata on load and removed on save.
 
 | Command | Purpose |
 |---|---|
-| `ws setup` | Interactive GitHub repo selection, registry creation, and local workspace-root registration. |
 | `ws add [remote-url...]` | Register and clone one or more repositories directly into the bare+worktree layout; supports stdin and interactive/headless modes. |
-| `ws create` | Create a GitHub repository through `gh`, then register and clone it. |
-| `ws bootstrap [name]` | Clone registered projects missing on this machine; supports interactive and dry-run flows. |
-| `ws migrate [name]` | Convert plain checkouts into the bare+worktree layout. |
 | `ws sync` | Explicit preflight, optional interactive selection/conversion, sequential synchronization, and summary. |
 | `ws sync resolve` | Inspect and manually resolve persisted conflicts. |
 | `ws status` | Show project, group, status, branch, last commit, and layout. |
-| `ws scan` | Find unregistered repositories while ignoring bare/worktree siblings. |
 | `ws path [project]` | Print the workspace or project path for scripts. |
-| `ws doctor [name] [--fix] [--json] [--skip-remote]` | Check system and project health; apply only safe fixes. |
-| `ws favorite add/rm/list <project>` | Manage explorer favorites stored in SQLite. |
 
 ### Workspace Registry
 
@@ -420,7 +384,7 @@ machine-local Amp runners for groups, projects, worktrees, and explicit paths.
 | `ws auth login/logout/status` | Manage the token used for GitHub discovery. |
 | `ws docs --agent` | Emit generated command capability metadata. |
 
-`ws create` uses `gh` and therefore requires separate `gh auth login`.
+GitHub discovery prefers saved ws OAuth/PAT credentials and can fall back to gh.
 
 ## Runtime Files
 
@@ -431,8 +395,8 @@ machine-local Amp runners for groups, projects, worktrees, and explicit paths.
 - `~/.local/state/ws/runners/<id>.log`: detached Amp runner output.
 - `~/.config/ws/token`: GitHub discovery token.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
-- `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`,
-  `create`, `bootstrap`, and `migrate`.
+- `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`; legacy
+  `create`, `bootstrap`, and `migrate` sidecars remain recognized during upgrades.
 - `~/.local/state/ws/aliases.zsh`: generated shell aliases.
 - `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
   counters; never contains identifiers, arguments, diagnostics, or history.
@@ -500,8 +464,6 @@ Current coverage locations include:
 
 - `internal/git/*_test.go`: clone, remote parsing/probing, context handling,
   mirrors, and worktrees.
-- `internal/repo/migrate_test.go`: migration preservation and rollback.
-- `internal/repo/bootstrap_test.go`: bootstrap planning.
 - `internal/sidecar/sidecar_test.go`: lifecycle and active/stale behavior.
 - `internal/sync/*_test.go`: plans, parallel probes, selections,
   conversions, projects, mirrors, cancellation, and reports.
@@ -514,7 +476,6 @@ Current coverage locations include:
 - `internal/network/workspace_test.go`: authenticated workspace discovery,
   fetch, and bidirectional revision synchronization.
 - `internal/agent/workspaces_test.go`: multi-workspace explorer loading.
-- `internal/cli/doctor_*_test.go`: system and project health checks.
 
 Run everything with `go test ./...`. CI runs
 `go test -race -timeout 5m ./...` on every push and PR.

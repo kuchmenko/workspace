@@ -16,6 +16,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func ensureMachineName() (string, error) {
+	mc, err := config.LoadMachineConfig()
+	if err != nil {
+		return "", err
+	}
+	if mc.MachineName != "" {
+		return mc.MachineName, nil
+	}
+	name := config.SanitizeMachineName(config.DefaultMachineName())
+	if name == "" {
+		return "", errors.New("machine name cannot be empty after sanitization")
+	}
+	mc.MachineName = name
+	if err := config.SaveMachineConfig(mc); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
 func newWorktreeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "worktree",
@@ -42,7 +61,10 @@ func resolveProject(name string) (config.Project, string, string, error) {
 	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return proj, mainPath, barePath, fmt.Errorf("project %q is not migrated yet (no %s); run `ws migrate %s`", name, filepath.Base(barePath), name)
+		if errors.Is(err, os.ErrNotExist) {
+			return proj, mainPath, barePath, fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside, then run `ws sync`", name, filepath.Base(barePath))
+		}
+		return proj, mainPath, barePath, fmt.Errorf("inspect bare repository %s for project %q: %w", barePath, name, err)
 	}
 	return proj, mainPath, barePath, nil
 }

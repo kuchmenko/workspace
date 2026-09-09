@@ -91,7 +91,7 @@ func TestRunPath_RegisteredButMissingDir(t *testing.T) {
 	if !strings.Contains(stderr.String(), `not cloned: "missing"`) {
 		t.Fatalf("stderr missing 'not cloned' line: %q", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "ws bootstrap missing") {
+	if !strings.Contains(stderr.String(), "ws sync") {
 		t.Fatalf("stderr missing bootstrap hint: %q", stderr.String())
 	}
 }

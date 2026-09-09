@@ -61,7 +61,7 @@ status         = "active"
 category       = "personal"
 group          = "personal"
 default_branch = "main"
-favorite       = true
+favorite       = true # legacy compatibility only; Explorer ignores it
 
 [projects.myapp.mirrors]
 codeberg = "git@codeberg.org:user/myapp.git"
@@ -87,7 +87,7 @@ the next save.
 
 ## On-Disk Layout
 
-After `ws migrate`, or immediately after `ws add` / `ws create`, a project
+After add or sync clones a project, it
 uses sibling paths under its group or category directory:
 
 ```text
@@ -204,16 +204,14 @@ releases it. Plain `git push` remains valid but does not update metadata.
 
 ## Sidecars
 
-`ws add`, `ws create`, `ws bootstrap`, and `ws migrate` write
-`~/.local/state/ws/<kind>/<sha>.toml` while operating. Sidecars provide
+`ws add` writes `~/.local/state/ws/add/<sha>.toml` while operating. Sidecars provide
 crash recovery and prevent another command, including foreground sync,
 from racing the same workspace operation. They are not messages to a
 background process.
 
 The shared `internal/sidecar` package owns file, lock, pid, and stale
 process checks. Command-specific payloads remain with their command
-packages. `ws doctor` reports stale bootstrap and migrate sidecars for
-manual removal after the user confirms that no matching command is running.
+packages.
 
 ## Conflicts
 
@@ -229,26 +227,10 @@ after the user chooses that action.
 
 See [Sync: Conflicts](sync.md#conflicts) for the catalog.
 
-## Migration
+## Plain checkouts
 
-`internal/repo/migrate.go` converts a plain checkout into the
-bare+worktree layout. It preserves local branches, executable hooks,
-detached commits, stash contents, and optional dirty WIP according to the
-chosen migration strategy.
-
-The attach sequence preserves the existing working files:
-
-1. Move `.git` to a recoverable temporary name.
-2. Add a temporary worktree with `--no-checkout`.
-3. Move only its `.git` pointer into the existing project path.
-4. Remove the empty temporary directory.
-5. Run `git worktree repair` for the final path.
-6. Verify HEAD did not move.
-
-Failures before final verification restore the original `.git` and remove
-the incomplete bare repository. Migration-internal recovery branches use
-`wt/<machine>/migration-{wip,stash,detached}-<timestamp>`; ordinary new
-worktrees never synthesize that namespace.
+Plain checkouts are unsupported. For a registered project, move the path aside,
+then run `ws sync`. Use `ws add` only for an unregistered remote.
 
 ## Tests
 

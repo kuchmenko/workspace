@@ -1,6 +1,4 @@
-// Package sidecar implements the per-workspace progress + lockfile pattern
-// shared between long-running interactive commands like `ws bootstrap` and
-// `ws migrate`.
+// Package sidecar implements per-workspace progress and lock files.
 //
 // A sidecar is:
 //
@@ -14,9 +12,7 @@
 //   - A crash-recovery hint. If the recorded pid is no longer alive, a new
 //     run of the same command can prompt the user to resume or discard.
 //
-// The Done map carries command-specific per-project entries. Bootstrap and
-// migrate use different value shapes, so the package stores them as
-// json.RawMessage and lets each command unmarshal into its own struct.
+// The Done map carries command-specific entries as json.RawMessage.
 //
 // IMPORTANT: sidecars live outside the workspace git tree so they cannot be
 // committed by accident.
@@ -40,10 +36,10 @@ import (
 type Kind string
 
 const (
-	KindBootstrap Kind = "bootstrap"
-	KindMigrate   Kind = "migrate"
 	KindAdd       Kind = "add"
 	KindCreate    Kind = "create"
+	KindBootstrap Kind = "bootstrap"
+	KindMigrate   Kind = "migrate"
 )
 
 type Meta struct {
@@ -323,7 +319,7 @@ func interpretSignalError(err error) bool {
 }
 
 func AnyActive(wsRoot string) *Sidecar {
-	for _, k := range []Kind{KindBootstrap, KindMigrate, KindAdd, KindCreate} {
+	for _, k := range []Kind{KindAdd, KindCreate, KindBootstrap, KindMigrate} {
 		sc, err := Load(wsRoot, k)
 		if err != nil || sc == nil {
 			continue

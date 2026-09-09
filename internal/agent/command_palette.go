@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/kuchmenko/workspace/internal/config"
-	"github.com/kuchmenko/workspace/internal/metrics"
 	"github.com/kuchmenko/workspace/internal/runner"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -76,7 +75,6 @@ func (m *Model) projectCommands(section string, project *Project, includePicker 
 		projectCommand(section, "Add worktree", "new branch", "w", "add-worktree", project),
 		projectCommand(section, "Edit organization", "group category", "e", "edit-project", project),
 		aliasCommand(section, "a", explorerAliasTarget{workspaceRoot: project.WorkspaceRoot, target: project.ID, label: project.Name}),
-		projectCommand(section, m.paletteFavoriteLabel(project), "star", "f", "favorite-project", project),
 		projectCommand(section, "Project maintenance", "archive cleanup", "M", "maintain-project", project),
 	)
 	commands = append(commands, m.runnerCommands(section, m.projectRunnerTarget(project), project.Path)...)
@@ -85,15 +83,14 @@ func (m *Model) projectCommands(section string, project *Project, includePicker 
 
 func (m *Model) groupCommands(section, root, name string, includeOpen bool) []paletteCommand {
 	commands := make([]paletteCommand, 0, 4)
-	shellKey, favoriteKey, maintenanceKey := "g", "F", ""
+	shellKey, maintenanceKey := "g", ""
 	if includeOpen {
 		commands = append(commands, groupCommand(section, "Open group", "projects picker", "enter", "open-group", root, name))
-		shellKey, favoriteKey, maintenanceKey = "s", "f", "M"
+		shellKey, maintenanceKey = "s", "M"
 	}
 	commands = append(commands,
 		groupCommand(section, "Open group shell", "shell", shellKey, "group-shell", root, name),
 		aliasCommand(section, "a", explorerAliasTarget{workspaceRoot: root, target: name, label: "@" + name}),
-		groupCommand(section, "Toggle group favorite", "star", favoriteKey, "favorite-group", root, name),
 		groupCommand(section, "Group maintenance", "archive cleanup", maintenanceKey, "maintain-group", root, name),
 	)
 	return append(commands, m.runnerCommands(section, m.groupRunnerTarget(root, name), groupRootPath(root, name))...)
@@ -368,7 +365,7 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		return m.launch(project.WorkspaceRoot, worktree.Path)
-	case "add-worktree", "edit-project", "favorite-project", "maintain-project":
+	case "add-worktree", "edit-project", "maintain-project":
 		if command.action == "add-worktree" || command.action == "edit-project" {
 			m.captureFormOrigin(origin)
 		}
@@ -392,12 +389,6 @@ func (m *Model) invokePalette(command paletteCommand) (tui.Model, tui.Cmd) {
 			return m, nil
 		}
 		return m.launch(command.groupRoot, groupRootPath(command.groupRoot, command.groupName))
-	case "favorite-group":
-		if !m.paletteGroupExists(command.groupRoot, command.groupName) {
-			m.statusMsg = "target is no longer available"
-			return m, nil
-		}
-		return m, m.toggleFavoriteGroup(command.groupRoot, command.groupName)
 	case "maintain-group":
 		if !m.paletteGroupExists(command.groupRoot, command.groupName) {
 			m.statusMsg = "target is no longer available"
@@ -605,8 +596,6 @@ func (m *Model) invokeProjectPaletteAction(project *Project, action string, orig
 			m.editCategory = config.CategoryPersonal
 		}
 		m.editField, m.editErr, m.sheet, m.mode = 0, "", nil, viewEditProject
-	case "favorite-project":
-		return m, m.toggleFavoriteFor(project)
 	case "maintain-project":
 		m.sheet = nil
 		m.openLifecycle(lifecycleScope{kind: lifecycleProject, project: project})
@@ -695,66 +684,6 @@ func (m *Model) reverseRecentOrder() {
 	}
 	m.saveExplorerPreferences()
 	m.rebuildItems()
-}
-
-func (m *Model) toggleFavoriteGroup(root, group string) tui.Cmd {
-	if root == "" {
-		m.statusMsg = "cannot resolve workspace for group"
-		return nil
-	}
-	return m.submitJob("favorite @"+group, 1, func(ctx *jobContext) jobResult {
-		var outcome targetOutcome
-		ctx.withRegistry(root, func() {
-			err := mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
-				current, ok := workspace.Groups[group]
-				if !ok {
-					return fmt.Errorf("group is not declared in workspace registry")
-				}
-				current.Favorite = !current.Favorite
-				workspace.Groups[group] = current
-				return nil
-			})
-			if err != nil {
-				outcome = targetOutcome{Target: group, Kind: targetFailed, Detail: err.Error()}
-			} else {
-				outcome = targetOutcome{Target: group, Kind: targetSuccess, Detail: "saved"}
-			}
-			ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{WorkspaceRoot: root}}}, outcome.Kind == targetSuccess)
-		})
-		metrics.RecordExplorerFavoriteChanged()
-		return jobResult{Summary: "favorite updated", Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{WorkspaceRoot: root}}}
-	})
-}
-
-func (m *Model) toggleFavoriteFor(proj *Project) tui.Cmd {
-	root := m.workspaceRootFor(proj)
-	if root == "" {
-		m.statusMsg = "cannot resolve workspace for project"
-		return nil
-	}
-	projectID, name := proj.ID, proj.Name
-	return m.submitJob("favorite "+name, 1, func(ctx *jobContext) jobResult {
-		var outcome targetOutcome
-		ctx.withRegistry(root, func() {
-			err := mutateRegistryWorkspace(root, func(workspace *config.Workspace) error {
-				project, ok := workspace.Projects[projectID]
-				if !ok {
-					return fmt.Errorf("project is missing from workspace registry")
-				}
-				project.SetFavorite(!project.Favorite)
-				workspace.Projects[projectID] = project
-				return nil
-			})
-			if err != nil {
-				outcome = targetOutcome{Target: name, Kind: targetFailed, Detail: err.Error()}
-			} else {
-				outcome = targetOutcome{Target: name, Kind: targetSuccess, Detail: "saved"}
-			}
-			ctx.finishChild(jobResult{Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{root, projectID}}}, outcome.Kind == targetSuccess)
-		})
-		metrics.RecordExplorerFavoriteChanged()
-		return jobResult{Summary: "favorite updated", Error: outcomeError(outcome), Outcomes: []targetOutcome{outcome}, AffectedProjects: []ProjectIdentity{{root, projectID}}}
-	})
 }
 
 func outcomeError(outcome targetOutcome) string {

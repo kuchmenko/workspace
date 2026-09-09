@@ -85,7 +85,6 @@ type editFields struct {
 	Category config.Category
 	Group    string
 	Path     string
-	FromDisk string
 }
 
 type branchAnswer struct {
@@ -536,8 +535,6 @@ func renderSelectionPreview(s *Suggestion) string {
 	}
 	if s.RegisteredPath != "" {
 		meta = append(meta, "● already at "+s.RegisteredPath)
-	} else if s.DiskPath != "" {
-		meta = append(meta, "● local at "+s.DiskPath)
 	}
 	if len(meta) > 0 {
 		b.WriteString("  " + addDim.Render(strings.Join(meta, " · ")) + "\n")
@@ -589,7 +586,6 @@ func buildBrowseRows(view []Suggestion) []browseRow {
 func groupKey(s Suggestion) (key, label string, order int) {
 	hasGh := hasSource(s.Sources, SourceGitHub)
 	hasClip := hasSource(s.Sources, SourceClipboard)
-	hasDisk := hasSource(s.Sources, SourceDisk)
 	hasManual := hasSource(s.Sources, SourceManual)
 
 	switch {
@@ -597,8 +593,6 @@ func groupKey(s Suggestion) (key, label string, order int) {
 		return "_clip", "Clipboard", 0
 	case hasManual && !hasGh:
 		return "_manual", "Manual", 0
-	case hasDisk && !hasGh:
-		return "_disk", "Local (unregistered)", 1
 	case hasGh && s.InferredGrp != "":
 		return "gh:" + strings.ToLower(s.InferredGrp), s.InferredGrp, 2
 	default:
@@ -617,11 +611,6 @@ func renderItemLine(cursor string, s *Suggestion) string {
 		nameStyle = addExists
 		suffix = " " + addExistsTag.Render(
 			fmt.Sprintf("● cloned at %s", s.RegisteredPath))
-	case s.DiskPath != "":
-
-		nameStyle = addExists
-		suffix = " " + addExistsTag.Render(
-			fmt.Sprintf("● local: %s", s.DiskPath))
 	}
 
 	url := shortURL(*s)
@@ -661,7 +650,6 @@ func (m AddModel) editFromSuggestion(s Suggestion) editFields {
 		Category: cat,
 		Group:    grp,
 		Path:     buildPath(grp, cat, s.Name),
-		FromDisk: s.DiskPath,
 	}
 }
 
@@ -829,11 +817,6 @@ func (m AddModel) viewConfirm() string {
 	fmt.Fprintf(&b, "       %s → %s\n\n",
 		string(m.editFields.Category),
 		addDim.Render(m.editFields.Path))
-	if m.editFields.FromDisk != "" {
-		b.WriteString("  " + addDim.Render("(disk) repo already at "+m.editFields.FromDisk+
-			" — register only, no clone\n"))
-		b.WriteString("\n")
-	}
 	b.WriteString("  " + addHelp.Render("[y/⏎] add   [n/esc] back"))
 	return b.String()
 }

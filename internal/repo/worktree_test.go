@@ -82,6 +82,28 @@ func TestValidateWorktreeBranch(t *testing.T) {
 	}
 }
 
+func TestLoadWorktreeProjectPropagatesBarePathStatError(t *testing.T) {
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "personal", "app")
+	if err := os.MkdirAll(mainPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	barePath := layout.BarePath(mainPath)
+	if err := os.Symlink(barePath, barePath); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &config.Workspace{Projects: map[string]config.Project{
+		"app": {Path: filepath.Join("personal", "app")},
+	}}
+	_, _, _, gotBarePath, err := loadWorktreeProject(root, "app", workspace)
+	if err == nil || !strings.Contains(err.Error(), "inspect bare repository "+gotBarePath) {
+		t.Fatalf("loadWorktreeProject error = %v, want stat context for %s", err, barePath)
+	}
+	if strings.Contains(err.Error(), "plain checkouts are unsupported") {
+		t.Fatalf("loadWorktreeProject misclassified stat error: %v", err)
+	}
+}
+
 func TestAddWorktreeNewBranchFromDefault(t *testing.T) {
 	root, _, _ := setupWorktreeProject(t, "main")
 	result, err := AddWorktree(addOptions(root, "feat/new"))

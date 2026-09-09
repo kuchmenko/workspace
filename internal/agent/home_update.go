@@ -18,10 +18,10 @@ func (m *Model) footerHints() (actions, nav string) {
 		if item.projectionGroup {
 			actions = "⏎/l:open  h:back  tab:expand"
 		} else {
-			actions = "⏎/l:open  h:back  a:alias  r:runner  f:favorite  tab:expand  A:Activity  M:maintenance  S:search"
+			actions = "⏎/l:open  h:back  a:alias  r:runner  tab:expand  A:Activity  M:maintenance  S:search"
 		}
 	case KindProject:
-		actions = "⏎/l:open  h:back  a:alias  r:runner  w:new  e:edit  f:favorite  A:Activity  M:maintenance  S:search"
+		actions = "⏎/l:open  h:back  a:alias  r:runner  w:new  e:edit  A:Activity  M:maintenance  S:search"
 	default:
 		actions = "⏎:open"
 	}
@@ -83,9 +83,6 @@ func (m *Model) updateHomeActionKey(key string, item *listItem) (tui.Model, tui.
 		m.openWorktreeForm(item)
 	case "e":
 		m.openProjectEditForm(item)
-	case "f":
-		model, cmd := m.toggleItemFavorite(item)
-		return model, cmd, true
 	case "s", "/":
 		m.openLocalSearch()
 	default:
@@ -157,16 +154,6 @@ func (m *Model) openProjectEditForm(item *listItem) {
 	m.editField = 0
 	m.editErr = ""
 	m.mode = viewEditProject
-}
-
-func (m *Model) toggleItemFavorite(item *listItem) (tui.Model, tui.Cmd) {
-	if item != nil && item.kind == KindProject && item.project != nil {
-		return m, m.toggleFavoriteFor(item.project)
-	}
-	if item != nil && item.kind == KindGroup && item.group != "" && !item.projectionGroup {
-		return m, m.toggleFavoriteGroup(item.workspaceRoot, item.group)
-	}
-	return m, nil
 }
 
 func (m *Model) collapseItem(item *listItem) {

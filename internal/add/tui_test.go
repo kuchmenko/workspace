@@ -72,7 +72,7 @@ func TestAddModel_GatherDone_NonEmpty_TransitionsToBrowse(t *testing.T) {
 		name: "fake",
 		items: []Suggestion{
 			{Name: "alpha", RemoteURL: "git@github.com:me/alpha.git", Sources: []SourceKind{SourceGitHub}},
-			{Name: "beta", RemoteURL: "git@github.com:me/beta.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/beta"},
+			{Name: "beta", RemoteURL: "git@github.com:me/beta.git", Sources: []SourceKind{SourceGitHub}},
 		},
 	})
 	if m.state != addStateBrowse {
@@ -103,8 +103,8 @@ func TestAddModel_StreamingGather_FirstResultTransitionsImmediately(t *testing.T
 	m.sources = []Source{nil, nil, nil}
 
 	// First source: 1 item → transition to browse.
-	m, _ = driveModel(m, sourceDoneMsg{name: "disk", items: []Suggestion{
-		{Name: "a", RemoteURL: "g@h:me/a.git", Sources: []SourceKind{SourceDisk}, DiskPath: "/tmp/a"},
+	m, _ = driveModel(m, sourceDoneMsg{name: "clipboard", items: []Suggestion{
+		{Name: "a", RemoteURL: "g@h:me/a.git", Sources: []SourceKind{SourceGitHub}},
 	}})
 	if m.state != addStateBrowse {
 		t.Errorf("after source 1: state = %d, want browse", m.state)
@@ -150,7 +150,7 @@ func TestAddModel_StreamingGather_SourceErrIsRecorded(t *testing.T) {
 		t.Errorf("err not recorded: %+v", m.sourceOutcomes)
 	}
 	// Source 2 succeeds → transition to browse.
-	m, _ = driveModel(m, sourceDoneMsg{name: "disk", items: []Suggestion{{Name: "x"}}})
+	m, _ = driveModel(m, sourceDoneMsg{name: "clipboard", items: []Suggestion{{Name: "x"}}})
 	if m.state != addStateBrowse {
 		t.Errorf("state = %d, want browse", m.state)
 	}

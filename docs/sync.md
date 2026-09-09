@@ -118,7 +118,7 @@ For each selected active project:
 
 - Missing main and bare paths are cloned into the bare+worktree layout.
 - A plain checkout without its sibling bare repository records
-  `needs-migration`; run `ws migrate <name>`.
+  `needs-migration`; move it aside, then run `ws sync`.
 - A blocked path records `path-blocked` and is left untouched.
 - Existing bare repositories must have an origin URL matching the frozen
   plan, then fetch only that explicit origin with pruning and tags.
@@ -147,10 +147,10 @@ reader and mutator for manual resolution.
 Current conflict kinds:
 
 - `main-divergence`: a main worktree cannot fast-forward.
-- `needs-migration`: a project is a plain checkout; run
-  `ws migrate <name>`.
-- `needs-bootstrap`: cloning could not determine a default branch; run
-  `ws bootstrap <name>`.
+- `needs-migration`: a project is an unsupported plain checkout; move it aside
+  and run `ws sync`.
+- `needs-bootstrap`: cloning could not determine a default branch; initialize
+  or set the remote default branch, then rerun sync.
 - `path-blocked`: the expected project or bare path is occupied by an
   incompatible path.
 - `clone-failed`: cloning a missing selected project failed.
@@ -164,11 +164,13 @@ work.
 
 ## Sidecars
 
-`ws add`, `ws create`, `ws bootstrap`, and `ws migrate` use per-workspace
-sidecars under `~/.local/state/ws/<kind>/<sha>.toml` for crash recovery and
+`ws add` uses a per-workspace sidecar under
+`~/.local/state/ws/add/<sha>.toml` for crash recovery and
 same-command exclusion. A foreground sync checks for a live sidecar before
 execution and skips rather than racing an in-progress operation. Sidecars
-do not coordinate with a background process because none exists.
+from removed create, bootstrap, and migrate commands are still recognized
+during upgrades. Sidecars do not coordinate with a background process because
+none exists.
 
 ## Workspace Registry
 
@@ -213,20 +215,3 @@ ws sync
 ws sync
 ws worktree add myapp feat/auth-refactor
 ```
-
-## Health Check
-
-`ws doctor` checks stale bootstrap/migrate sidecars, active conflicts,
-registry validity, layout, fetch refspecs, remote reachability, default
-branches, worktree upstreams, and index locks.
-
-```sh
-ws doctor
-ws doctor <project>
-ws doctor --fix
-ws doctor --json
-ws doctor --skip-remote
-```
-
-Exit codes are `0` for clean, `1` for issues found, and `2` when `--fix`
-applied a repair. Conflicts and index locks are never auto-fixed.

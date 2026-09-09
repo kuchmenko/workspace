@@ -318,7 +318,6 @@ func (m AddModel) startCloneJob(idx int) tui.Cmd {
 			Workspace: m.ws,
 			Save:      m.saveFn,
 			Mode:      ModeHeadless,
-			NoClone:   job.FromDisk != "",
 		}
 
 		regRes, err := RegisterContext(m.ctx, opts, job.URL)
@@ -328,7 +327,7 @@ func (m AddModel) startCloneJob(idx int) tui.Cmd {
 			if errors.Is(err, ErrAlreadyRegistered) {
 				out.skipped = &SkipReason{URL: git.RedactRemote(job.URL), Reason: redactedError}
 			} else if errors.Is(err, git.ErrNeedsBootstrap) {
-				out.err = fmt.Errorf("%s: default branch ambiguous (run `ws bootstrap %s` after add)", job.Name, job.Name)
+				out.err = fmt.Errorf("%s: remote default branch cannot be determined; initialize it or set the remote default branch, then run `ws sync`", job.Name)
 			} else {
 				out.err = errors.New(redactedError)
 			}

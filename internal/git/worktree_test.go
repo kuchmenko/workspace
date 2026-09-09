@@ -19,7 +19,7 @@ func TestWorktreeAdd_ExistingBranch(t *testing.T) {
 	// 1. Create a fake remote with a seed commit on "main".
 	remote := testutil.InitFakeRemote(t, "proj", "main")
 
-	// 2. Clone it as a bare repo (mimics ws bootstrap / migrate).
+	// 2. Clone it as a bare repo (mimics add and sync).
 	tmp := t.TempDir()
 	barePath := filepath.Join(tmp, "proj.bare")
 	testutil.RunGit(t, tmp, "clone", "--bare", remote, barePath)

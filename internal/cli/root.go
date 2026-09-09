@@ -19,7 +19,6 @@ import (
 var (
 	wsRoot        string
 	ws            *config.Workspace
-	wsLoadErr     error
 	registryStore *registry.Store
 	registryState registry.Workspace
 )
@@ -60,20 +59,13 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(
 		newSyncCmd(),
 		newAddCmd(),
-		newCreateCmd(),
 		newPathCmd(),
 		newStatusCmd(),
-		newScanCmd(),
-		newSetupCmd(),
 		newAuthCmd(),
 		newAliasCmd(),
-		newMigrateCmd(),
 		newWorktreeCmd(),
-		newBootstrapCmd(),
 		newExplorerCmd(),
-		newFavoriteCmd(),
 		newDocsCmd(),
-		newDoctorCmd(),
 		newWorkspaceCmd(),
 		newNetworkCmd(),
 	)
@@ -84,12 +76,6 @@ func NewRootCmd() *cobra.Command {
 func prepareCommand(cmd *cobra.Command, _ []string) error {
 	if commandSkipsWorkspace(cmd) {
 		return nil
-	}
-	if cmd.Name() == "doctor" {
-		return loadDoctorWorkspace()
-	}
-	if cmd.Name() == "setup" {
-		return loadSetupWorkspace()
 	}
 	err := loadCurrentWorkspace()
 	if err != nil && commandIsAlias(cmd) && wsRoot == "" && strings.TrimSpace(os.Getenv("WS_ROOT")) == "" {
@@ -116,15 +102,6 @@ func commandSkipsWorkspace(cmd *cobra.Command) bool {
 	return false
 }
 
-func loadDoctorWorkspace() error {
-	wsLoadErr = loadCurrentWorkspace()
-	return wsLoadErr
-}
-
-func loadSetupWorkspace() error {
-	return loadCurrentWorkspace()
-}
-
 func loadCurrentWorkspace() error {
 	if registryStore != nil {
 		_ = registryStore.Close()
@@ -136,7 +113,6 @@ func loadCurrentWorkspace() error {
 		return err
 	}
 	if loaded {
-		wsLoadErr = nil
 		return nil
 	}
 	return errors.New("no SQLite workspace found; run `ws workspace import <workspace.toml>` or `ws workspace create`")
@@ -214,7 +190,6 @@ func loadSoleRegistryWorkspace() error {
 	registryState = workspaces[0]
 	wsRoot = registryState.Root
 	ws = registryState.State
-	wsLoadErr = nil
 	return nil
 }
 

@@ -225,7 +225,10 @@ func loadWorktreeProject(root, name string, workspace *config.Workspace) (*confi
 	}
 	barePath := layout.BarePath(mainPath)
 	if _, err := os.Stat(barePath); err != nil {
-		return nil, config.Project{}, "", "", fmt.Errorf("project %q is not migrated yet (no %s); run `ws migrate %s`", name, filepath.Base(barePath), name)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, config.Project{}, "", "", fmt.Errorf("project %q has no %s; plain checkouts are unsupported, move it aside, then run `ws sync`", name, filepath.Base(barePath))
+		}
+		return nil, config.Project{}, "", "", fmt.Errorf("inspect bare repository %s for project %q: %w", barePath, name, err)
 	}
 	return workspace, project, mainPath, barePath, nil
 }

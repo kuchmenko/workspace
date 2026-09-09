@@ -91,7 +91,7 @@ func runPath(stdout, stderr io.Writer, wsRoot string, ws *config.Workspace, args
 	}
 	info, err := os.Stat(abs)
 	if err != nil || !info.IsDir() {
-		fmt.Fprintf(stderr, "ws path: not cloned: %q (path: %s)\nhint: ws bootstrap %s\n", name, proj.Path, name)
+		fmt.Fprintf(stderr, "ws path: not cloned: %q (path: %s)\nhint: ws sync\n", name, proj.Path)
 		return pathExitMissingDir
 	}
 	fmt.Fprintln(stdout, abs)
