@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.12.0](https://github.com/kuchmenko/workspace/compare/v0.11.0...v0.12.0) (2026-09-09)
+
+
+### Features
+
+* **explorer:** manage Amp runners and aliases ([030b455](https://github.com/kuchmenko/workspace/commit/030b455625d0ddb58d8ac644bb388fe9bcc9caa5))
+* **explorer:** manage Amp runners and aliases ([d0124ec](https://github.com/kuchmenko/workspace/commit/d0124ec8f1044ab7eb34ce3c9d441eea7b1670fa))
+* **runners:** edit persisted runner definitions ([c73419e](https://github.com/kuchmenko/workspace/commit/c73419ea112dad8ce8a5738fdc90441bb7474d64))
+
+
+### Bug Fixes
+
+* **workflows:** preserve upgrade-safe command behavior ([f838de5](https://github.com/kuchmenko/workspace/commit/f838de5abe457426d457e91a397beefce49424c5))
+
 ## [0.11.0](https://github.com/kuchmenko/workspace/compare/v0.10.0...v0.11.0) (2026-08-19)
 
 
