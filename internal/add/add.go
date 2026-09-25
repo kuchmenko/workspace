@@ -70,6 +70,7 @@ func runTUI(ctx context.Context, opts Options) (*Result, error) {
 	model := NewAddModel(AddModelOptions{
 		Context:       ctx,
 		WsRoot:        opts.WsRoot,
+		StartDir:      opts.StartDir,
 		Workspace:     opts.Workspace,
 		Save:          opts.Save,
 		Sources:       sources,
@@ -232,7 +233,10 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 
 	group := opts.Group
 	if group == "" {
-		group = inferGroup(url, cat)
+		group = inferGroup(url, opts.Workspace, opts.WsRoot, opts.StartDir, string(cat))
+	}
+	if opts.Category == "" && group != "personal" {
+		cat = config.CategoryWork
 	}
 
 	relPath := buildPath(group, cat, name)
@@ -278,8 +282,25 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 	return &RegisterResult{Project: proj, Name: name, Cloned: cloned}, nil
 }
 
-func inferGroup(_ string, cat config.Category) string {
-	return string(cat)
+func inferGroup(remote string, ws *config.Workspace, root, startDir, fallback string) string {
+	parsed, err := git.ParseRemote(remote)
+	if err == nil && parsed.Host == "github.com" {
+		parts := strings.Split(parsed.Repository, "/")
+		if len(parts) == 2 {
+			for group := range ws.Groups {
+				if strings.EqualFold(group, parts[0]) {
+					return group
+				}
+			}
+		}
+	}
+	if startDir != "" {
+		rel, err := filepath.Rel(root, startDir)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return strings.Split(rel, string(filepath.Separator))[0]
+		}
+	}
+	return fallback
 }
 
 func buildPath(group string, cat config.Category, name string) string {
@@ -314,7 +335,8 @@ type Options struct {
 
 	Mode Mode
 
-	WsRoot string
+	WsRoot   string
+	StartDir string
 
 	Workspace *config.Workspace
 

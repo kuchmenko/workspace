@@ -19,6 +19,7 @@ type AddModel struct {
 	stateChangedAt  time.Time
 
 	wsRoot   string
+	startDir string
 	ws       *config.Workspace
 	saveFn   func(*config.Workspace) error
 	sources  []Source
@@ -128,6 +129,7 @@ func NewAddModel(opts AddModelOptions) AddModel {
 		externalContext: externalContext,
 		state:           addStateGathering,
 		wsRoot:          opts.WsRoot,
+		startDir:        opts.StartDir,
 		ws:              opts.Workspace,
 		saveFn:          opts.Save,
 		sources:         opts.Sources,
@@ -146,6 +148,7 @@ func NewAddModel(opts AddModelOptions) AddModel {
 type AddModelOptions struct {
 	Context       context.Context
 	WsRoot        string
+	StartDir      string
 	Workspace     *config.Workspace
 	Save          func(*config.Workspace) error
 	Sources       []Source
@@ -639,9 +642,8 @@ func (m AddModel) filteredView() []Suggestion {
 
 func (m AddModel) editFromSuggestion(s Suggestion) editFields {
 	cat := config.CategoryPersonal
-
-	grp := s.InferredGrp
-	if grp != "" && grp != "personal" {
+	grp := inferGroup(s.RemoteURL, m.ws, m.wsRoot, m.startDir, "personal")
+	if grp != "personal" {
 		cat = config.CategoryWork
 	}
 	return editFields{

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,6 +287,35 @@ func TestAddModel_Manual_ValidURL_TransitionsToEdit(t *testing.T) {
 	}
 	if m.editFields.Name != "bar" {
 		t.Errorf("Name = %q, want bar", m.editFields.Name)
+	}
+}
+
+func TestAddModel_GroupSuggestionAcrossInputs(t *testing.T) {
+	m := newTestModel(t, nil)
+	m.ws.Groups = map[string]config.Group{"acme": {}, "personal": {}}
+	m.startDir = filepath.Join(m.wsRoot, "personal", "workspace")
+	url := "https://github.com/acme/infra"
+
+	m.state = addStateManual
+	m.manualInput.SetValue(url)
+	m, _ = driveModel(m, keyEnter())
+	if m.editFields.Group != "acme" || m.editFields.Category != config.CategoryWork || m.editFields.Path != filepath.Join("acme", "infra") {
+		t.Fatalf("manual suggestion = %+v", m.editFields)
+	}
+	if view := m.View(); !strings.Contains(view, "acme/infra") {
+		t.Fatalf("edit screen does not show suggested path: %s", view)
+	}
+
+	clipboard := m.editFromSuggestion(Suggestion{Name: "infra", RemoteURL: url, Sources: []SourceKind{SourceClipboard}})
+	if clipboard.Group != "acme" || clipboard.Path != filepath.Join("acme", "infra") {
+		t.Fatalf("clipboard suggestion = %+v", clipboard)
+	}
+
+	m.allSuggestions = []Suggestion{{Name: "infra", RemoteURL: url, Sources: []SourceKind{SourceGitHub}}}
+	m.selectedURLs = map[string]bool{url: true}
+	queue := m.buildBulkQueue()
+	if len(queue) != 1 || queue[0].Group != "acme" || queue[0].Path != filepath.Join("acme", "infra") {
+		t.Fatalf("bulk suggestion = %+v", queue)
 	}
 }
 
