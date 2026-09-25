@@ -42,13 +42,18 @@ ws add <url>...                   # one or more URLs (sequential)
 ws add -                          # read URLs from stdin
 ws add                            # interactive TUI
 
-  -c, --category <personal|work>  # default: personal
+  -c, --category <personal|work>  # override inferred category
   -g, --group <name>              # group/directory; usually GitHub org
   -n, --name <name>               # override derived name (single URL only)
       --no-clone                  # register only; defer the clone
       --tui                       # force TUI even with positional args
       --no-tui                    # force headless; error if no URLs given
 ```
+
+For GitHub URLs, `ws add` uses the owner as the group when it matches an
+existing workspace group. Otherwise it uses the current workspace directory's
+top-level folder, then `personal`. This applies to CLI URLs and TUI suggestions,
+including pasted URLs; `--group` or the TUI Group field overrides the suggestion.
 
 Holds an `add/<sha>.toml` sidecar for crash recovery and same-workspace
 operation exclusion.

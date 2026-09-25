@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
 	"github.com/kuchmenko/workspace/internal/tui"
@@ -28,13 +27,7 @@ func (m AddModel) updateManual(msg tui.Msg) (tui.Model, tui.Cmd) {
 			}
 
 			name := parseRepoNameFromURL(val)
-			m.editFields = editFields{
-				Name:     name,
-				URL:      val,
-				Category: config.CategoryPersonal,
-				Group:    "",
-				Path:     buildPath("", config.CategoryPersonal, name),
-			}
+			m.editFields = m.editFromSuggestion(Suggestion{Name: name, RemoteURL: val})
 			m.editFocus = 0
 			m.editErr = ""
 			m.transitionTo(addStateEdit)

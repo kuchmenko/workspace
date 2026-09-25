@@ -55,6 +55,10 @@ ws sync creates their checkout layout.`,
 			if name != "" && len(urls) > 1 {
 				return errors.New("--name is only valid with a single URL")
 			}
+			startDir, err := os.Getwd()
+			if err != nil {
+				return err
+			}
 
 			mode := add.ModeAuto
 			switch {
@@ -70,19 +74,15 @@ ws sync creates their checkout layout.`,
 				}
 			}
 
-			cat := config.Category(category)
-			if cat == "" {
-				cat = config.CategoryPersonal
-			}
-
 			res, err := add.Run(cmd.Context(), add.Options{
 				URLs:      urls,
-				Category:  cat,
+				Category:  config.Category(category),
 				Group:     group,
 				Name:      name,
 				NoClone:   noClone,
 				Mode:      mode,
 				WsRoot:    wsRoot,
+				StartDir:  startDir,
 				Workspace: ws,
 				Save:      saveWorkspaceState,
 			})
@@ -100,7 +100,7 @@ ws sync creates their checkout layout.`,
 		},
 	}
 
-	cmd.Flags().StringVarP(&category, "category", "c", "personal", "project category: personal or work")
+	cmd.Flags().StringVarP(&category, "category", "c", "", "project category: personal or work (default: inferred from group)")
 	cmd.Flags().StringVarP(&group, "group", "g", "", "group/directory for the project (e.g. example, personal/tools)")
 	cmd.Flags().StringVarP(&name, "name", "n", "", "project name (default: derived from URL; only valid with a single URL)")
 	cmd.Flags().BoolVar(&noClone, "no-clone", false, "register only; create the checkout on a later ws sync")

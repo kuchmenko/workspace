@@ -42,6 +42,35 @@ func fakeRemote(t *testing.T, name string) string {
 	return testutil.InitFakeRemote(t, name, "main")
 }
 
+func TestRegisterContext_InferGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name, url, dir, group, category, override string
+	}{
+		{"owner wins over current directory", "https://github.com/acme/infra", "personal/workspace", "acme", "work", ""},
+		{"ssh owner matches case insensitively", "git@github.com:ACME/infra.git", "personal/workspace", "acme", "work", ""},
+		{"unmatched owner uses current directory", "https://github.com/alice/infra", "personal/workspace", "personal", "personal", ""},
+		{"custom current directory", "https://github.com/alice/infra", "custom/project", "custom", "work", ""},
+		{"unknown owner at workspace root", "https://github.com/alice/infra", ".", "personal", "personal", ""},
+		{"non-GitHub owner uses current directory", "https://example.org/acme/infra", "personal/workspace", "personal", "personal", ""},
+		{"explicit group wins", "https://github.com/acme/infra", "personal/workspace", "chosen", "work", "chosen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, ws, save := setupWorkspace(t)
+			ws.Groups = map[string]config.Group{"acme": {}, "personal": {}}
+			result, err := RegisterContext(context.Background(), Options{
+				WsRoot: root, StartDir: filepath.Join(root, tc.dir), Workspace: ws,
+				Save: save, NoClone: true, Group: tc.override,
+			}, tc.url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Project.Group != tc.group || result.Project.Category != config.Category(tc.category) || result.Project.Path != filepath.Join(tc.group, "infra") {
+				t.Fatalf("project = %+v, want group %q, category %q", result.Project, tc.group, tc.category)
+			}
+		})
+	}
+}
+
 func TestRun_Headless_SingleURL_RegistersAndClones(t *testing.T) {
 	wsRoot, ws, save := setupWorkspace(t)
 	url := fakeRemote(t, "acme")
