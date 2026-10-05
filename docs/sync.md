@@ -1,8 +1,8 @@
 # Sync
 
-`ws sync` is the primary foreground synchronization entry point. Nothing
-watches the SQLite registry, runs on a timer, or changes repositories in the
-background.
+`ws sync` is the project Git synchronization entry point. Project repositories
+change only in this foreground flow. `ws daemon run` may exchange signed SQLite
+workspace revisions in the background, but it never invokes the Git runner.
 
 The interactive command separates discovery from mutation:
 
@@ -169,13 +169,13 @@ work.
 same-command exclusion. A foreground sync checks for a live sidecar before
 execution and skips rather than racing an in-progress operation. Sidecars
 from removed create, bootstrap, and migrate commands are still recognized
-during upgrades. Sidecars do not coordinate with a background process because
-none exists.
+during upgrades. Sidecars do not signal or pause registry auto-sync. The daemon
+does not run project commands or change project layouts.
 
 ## Workspace Registry
 
 Named local workspaces are stored in `$XDG_STATE_HOME/ws/registry.db` and used
-by commands and the explorer, not by sync scheduling.
+by commands, Explorer, and daemon registry scheduling.
 
 ```sh
 ws workspace create ~/dev --name personal

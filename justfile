@@ -2,40 +2,20 @@ binary := "ws"
 
 # Build the ws binary
 build:
-    GOTOOLCHAIN=auto go build -o {{binary}} ./cmd/ws
+    GOTOOLCHAIN=auto go build -o {{ binary }} ./cmd/ws
 
 # Build and install to ~/.local/bin. Uses `install` rather than `cp` so an
 # existing executable is replaced atomically.
 install: build
-    #!/usr/bin/env bash
-    set -u
-    unit="$HOME/.config/systemd/user/ws-daemon.service"
-    if [[ "$(uname -s)" == "Linux" ]] && { [[ -e "$unit" ]] || { command -v systemctl >/dev/null 2>&1 && systemctl --user cat ws-daemon.service >/dev/null 2>&1; }; }; then
-      cleanup_failed=0
-      if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user disable --now ws-daemon.service >/dev/null 2>&1 || cleanup_failed=1
-      else
-        cleanup_failed=1
-      fi
-      rm -f "$unit" || cleanup_failed=1
-      if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user daemon-reload >/dev/null 2>&1 || cleanup_failed=1
-      fi
-      if (( cleanup_failed )); then
-        printf "Warning: could not fully retire ws-daemon.service. Before running 'ws sync', run: systemctl --user disable --now ws-daemon.service; rm -f '%s'; systemctl --user daemon-reload\n" "$unit" >&2
-      else
-        echo "Removed legacy ws-daemon.service"
-      fi
-    fi
-    install -m 755 {{binary}} ~/.local/bin/{{binary}}
+    install -m 755 {{ binary }} ~/.local/bin/{{ binary }}
 
 # Remove built binary
 clean:
-    rm -f {{binary}}
+    rm -f {{ binary }}
 
 # Build and run with args
 run *args: build
-    ./{{binary}} {{args}}
+    ./{{ binary }} {{ args }}
 
 # Run every check the CI quality gate runs (mirrors
 # .github/workflows/ci-checks.yml). Useful before pushing a PR so
@@ -98,8 +78,8 @@ bench-l3:
 # Refresh per-machine baseline. Run on a clean main branch after merging
 # perf-related PR. Layer: l1 (default) | l2 | all
 bench-baseline layer="l1":
-    bench/scripts/baseline.sh {{layer}}
+    bench/scripts/baseline.sh {{ layer }}
 
 # Compare a layer against current baseline (advisory)
 bench-compare layer="L1":
-    bench/scripts/compare.sh {{layer}}
+    bench/scripts/compare.sh {{ layer }}

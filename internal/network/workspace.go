@@ -41,12 +41,14 @@ type PeerEndpoint struct {
 	Endpoint string                `json:"endpoint"`
 }
 
-func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse, wake func(peerID, workspaceID string)) error {
 	switch request.Action {
 	case "status":
 		return nil
 	case "workspace.list":
 		return listWorkspaces(ctx, store, peerID, response)
+	case "workspace.wake":
+		return wakeWorkspace(ctx, store, peerID, request.WorkspaceID, wake)
 	case "workspace.inventory":
 		return inventoryWorkspace(ctx, store, peerID, request, response)
 	case "workspace.revisions":
@@ -54,6 +56,20 @@ func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID s
 	default:
 		return handleWorkspaceImportRequest(ctx, store, peerID, request, response)
 	}
+}
+
+func wakeWorkspace(ctx context.Context, store *registry.Store, peerID, workspaceID string, wake func(peerID, workspaceID string)) error {
+	name, err := store.WorkspaceNameByID(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	if _, err = store.ManifestFor(ctx, name, peerID); err != nil {
+		return err
+	}
+	if wake != nil {
+		wake(peerID, workspaceID)
+	}
+	return nil
 }
 
 func handleWorkspaceImportRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
@@ -313,6 +329,11 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	remoteComplete = true
 	status := completedSyncStatus(before.Head, after.Head, finished.SyncStatus, conflicts, finished.Conflicts)
 	return SyncResult{Workspace: workspaceName, Device: target.Name, Status: status, Head: after.Head, Conflicts: conflicts}, nil
+}
+
+func WakeWorkspace(ctx context.Context, workspaceID, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) error {
+	_, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.wake", WorkspaceID: workspaceID})
+	return err
 }
 
 func finishPagedSync(ctx context.Context, workspaceName, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string, localPlan, remotePlan registry.RevisionImportPlan) (peerResponse, registry.Workspace, []registry.Conflict, error) {

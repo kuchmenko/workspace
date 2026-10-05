@@ -13,7 +13,8 @@ core invariants are:
 1. `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for named local
    workspace registries.
 2. `workspace.toml` is used only for explicit import and export.
-3. Synchronization runs only through an explicit foreground `ws sync`.
+3. Project Git synchronization runs only through foreground `ws sync`; the
+   daemon may synchronize signed workspace registry revisions in the background.
 4. Project branches are never pushed to origin by sync.
 5. Project updates are non-destructive: clean main worktrees may
    fast-forward; merge, project rebase, reset, force, and branch deletion
@@ -171,8 +172,9 @@ starts and outcomes to either the TUI or plain text renderer.
 Project processing repairs the fetch refspec when needed, fetches origin,
 pushes selected mirrors, examines worktrees, fast-forwards eligible main
 worktrees, refreshes activity metadata, and detects origin-deleted
-branches. Missing selected projects are cloned in the same foreground
-run. There is no timer, service, retry queue, backoff, or cooldown.
+branches. Missing selected projects are cloned in the same foreground run. The
+registry daemon does not call this runner. There is no background project Git
+timer, retry queue, backoff, or cooldown.
 
 Cancellation stops scheduling new work and waits for the current git
 processes to return before the CLI exits. Reports retain completed,
@@ -206,8 +208,8 @@ releases it. Plain `git push` remains valid but does not update metadata.
 
 `ws add` writes `~/.local/state/ws/add/<sha>.toml` while operating. Sidecars provide
 crash recovery and prevent another command, including foreground sync,
-from racing the same workspace operation. They are not messages to a
-background process.
+from racing the same workspace operation. They are not messages to the registry
+daemon, which does not mutate project repositories or layouts.
 
 The shared `internal/sidecar` package owns file, lock, pid, and stale
 process checks. Command-specific payloads remain with their command
@@ -254,4 +256,5 @@ registry and multi-workspace coverage lives in `internal/registry/*_test.go`,
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars.
 - `~/.local/state/ws/aliases.zsh`: generated zsh aliases.
 
-There are no service, socket, pid, log, IPC, or watcher runtime files.
+`ws daemon run` keeps its scheduler in memory. It does not create service,
+socket, pid, log, IPC, watcher, or durable queue files.

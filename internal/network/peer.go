@@ -68,6 +68,7 @@ type ServeOptions struct {
 	ListenAddress    string
 	DisableDiscovery bool
 	Ready            func(endpoint string)
+	WorkspaceWake    func(peerID, workspaceID string)
 }
 
 type PeerInfo struct {
@@ -202,7 +203,7 @@ func servePeerListener(ctx context.Context, options ServeOptions, self registry.
 			defer func() { <-slots }()
 			defer func() { _ = connection.Close() }()
 			_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-			servePeerConnection(options.Store, self, connection)
+			servePeerConnection(options, self, connection)
 		}()
 	}
 }
@@ -319,31 +320,31 @@ func NetworkStatus(ctx context.Context, store *registry.Store, identity device.I
 	return statuses, nil
 }
 
-func servePeerConnection(store *registry.Store, self registry.DeviceRecord, connection net.Conn) {
-	request, peerID, state, err := receivePeerRequest(store, connection)
+func servePeerConnection(options ServeOptions, self registry.DeviceRecord, connection net.Conn) {
+	request, peerID, state, err := receivePeerRequest(options.Store, connection)
 	if err != nil {
 		writePeerResponse(connection, peerResponse{Error: err.Error()})
 		return
 	}
-	bundle, err := store.ExportNetwork(context.Background())
+	bundle, err := options.Store.ExportNetwork(context.Background())
 	if err != nil {
 		writePeerResponse(connection, peerResponse{Error: err.Error()})
 		return
 	}
 	response := peerResponse{Info: PeerInfo{DeviceID: self.ID, Name: self.Name, NetworkID: state.ID, Epoch: state.Epoch}, Network: bundle}
-	_, mergeErr := store.MergeNetworkFrom(context.Background(), request.Network, peerID)
+	_, mergeErr := options.Store.MergeNetworkFrom(context.Background(), request.Network, peerID)
 	if mergeErr != nil && !errors.Is(mergeErr, registry.ErrNetworkConflict) {
 		response.Error = mergeErr.Error()
 		writePeerResponse(connection, response)
 		return
 	}
-	state, err = store.Network(context.Background())
+	state, err = options.Store.Network(context.Background())
 	if err != nil {
 		response.Error = err.Error()
 		writePeerResponse(connection, response)
 		return
 	}
-	bundle, err = store.ExportNetwork(context.Background())
+	bundle, err = options.Store.ExportNetwork(context.Background())
 	if err != nil {
 		response.Error = err.Error()
 		writePeerResponse(connection, response)
@@ -371,7 +372,7 @@ func servePeerConnection(store *registry.Store, self registry.DeviceRecord, conn
 		writePeerResponse(connection, response)
 		return
 	}
-	if err = handleWorkspaceRequest(context.Background(), store, peerID, request, &response); err != nil {
+	if err = handleWorkspaceRequest(context.Background(), options.Store, peerID, request, &response, options.WorkspaceWake); err != nil {
 		response.Error = err.Error()
 	}
 	writePeerResponse(connection, response)

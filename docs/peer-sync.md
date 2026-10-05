@@ -11,6 +11,10 @@ Confirm the same verification number on both sides. Keep `ws network serve`
 running on devices that should be reachable. The stable default TCP port is
 `17337`.
 
+For continuous registry synchronization, run `ws daemon run` instead of
+`ws network serve`. The daemon owns the same peer listener and periodically
+repairs registry differences. It does not fetch, push, or modify Git projects.
+
 Pairing establishes device identity and transport trust only. It does not make
 any workspace visible.
 
@@ -58,6 +62,16 @@ Run synchronization explicitly from either attached device:
 ```sh
 ws workspace sync personal
 ```
+
+Or keep it automatic on every participating device:
+
+```sh
+ws daemon run
+```
+
+For each device pair, only the peer with the lower stable device ID starts the
+bidirectional exchange. The other peer sends an authenticated wake hint. A
+one-minute periodic pass repairs missed hints and offline intervals.
 
 The command pushes and pulls signed registry revisions through authenticated
 TLS. Repeated transfers are idempotent. Independent changes merge

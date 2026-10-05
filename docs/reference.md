@@ -189,6 +189,21 @@ authenticated online peers. They do not transfer repositories. `ws workspace
 sync` performs only that exchange; top-level `ws sync` wraps registry exchange
 around project Git synchronization.
 
+## Daemon
+
+```sh
+ws daemon run \
+  [--listen :17337] \
+  [--sync-interval 1m] \
+  [--discovery-window 1.5s]
+```
+
+Runs the trusted-peer listener and continuously exchanges authorized signed
+workspace registry revisions. The lower stable device ID initiates each
+bidirectional peer exchange; the other peer sends an authenticated wake hint.
+The daemon keeps its scheduler in memory and uses periodic passes for recovery.
+It never invokes project Git synchronization.
+
 ## Authentication
 
 ```sh

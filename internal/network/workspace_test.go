@@ -33,12 +33,14 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 
 	endpoint := make(chan string, 1)
+	wakes := make(chan string, 1)
 	serverOutcome := make(chan error, 1)
 	go func() {
 		serverOutcome <- Serve(ctx, ServeOptions{
 			Store: archStore, Identity: archIdentity, Name: "arch",
 			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
-			Ready: func(address string) { endpoint <- address },
+			Ready:         func(address string) { endpoint <- address },
+			WorkspaceWake: func(_ string, workspaceID string) { wakes <- workspaceID },
 		})
 	}()
 	address := <-endpoint
@@ -57,6 +59,17 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 	if _, err = Attach(ctx, source, asahiStore, asahiIdentity, "asahi", "personal", asahiRoot); err != nil {
 		t.Fatal(err)
+	}
+	if err = WakeWorkspace(ctx, created.WorkspaceID, address, arch, asahiStore, asahiIdentity, "asahi"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case workspaceID := <-wakes:
+		if workspaceID != created.WorkspaceID {
+			t.Fatalf("wake workspace = %q", workspaceID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("workspace wake was not delivered")
 	}
 	if _, err = asahiStore.Mutate(ctx, asahiRoot, func(workspace *config.Workspace) error {
 		workspace.Aliases["from-asahi"] = "yes"
@@ -105,6 +118,23 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	cancel()
 	if err = <-serverOutcome; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceWakeRejectsPeerWithoutWorkspaceAccess(t *testing.T) {
+	store, _, _, peerIdentity := pairedTestStores(t)
+	ctx := context.Background()
+	created, err := store.Create(ctx, "private", t.TempDir(), &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{}, Aliases: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = wakeWorkspace(ctx, store, peerIdentity.ID(), created.WorkspaceID, func(string, string) { called = true })
+	if err == nil {
+		t.Fatal("unauthorized peer wake was accepted")
+	}
+	if called {
+		t.Fatal("unauthorized peer reached wake callback")
 	}
 }
 
@@ -169,7 +199,7 @@ func TestAttachAbortsImportWhenManifestPagingIsInterrupted(t *testing.T) {
 		connection, acceptErr := tlsListener.Accept()
 		if acceptErr == nil {
 			_ = connection.SetDeadline(time.Now().Add(10 * time.Second))
-			servePeerConnection(sourceStore, self, connection)
+			servePeerConnection(options, self, connection)
 			_ = connection.Close()
 		}
 		_ = listener.Close()

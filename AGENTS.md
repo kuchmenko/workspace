@@ -21,10 +21,10 @@ The core invariants are:
 2. **Named local workspaces.** Each SQLite workspace has a unique name and
    canonical root. Commands select the longest containing root unless an exact
    root is supplied. Explorer reads every workspace in the SQLite registry.
-3. **Foreground-only synchronization.** `ws sync` performs project Git
-   preflight, review, confirmation, execution, and summary. `ws workspace sync`
-   explicitly exchanges registry revisions with online peers. Neither runs a
-   background watcher, timer, or retry scheduler.
+3. **Foreground Git, continuous registry sync.** `ws sync` performs project Git
+   preflight, review, confirmation, execution, and summary. `ws daemon run`
+   continuously exchanges signed workspace registry revisions with trusted
+   peers. The daemon never invokes the project Git runner.
 4. **No project branch auto-push to origin.** `ws sync` fetches project
    state and may fast-forward an eligible main worktree, but origin branch
    pushes are explicit through `ws worktree push` or plain `git push`.
@@ -35,8 +35,8 @@ The core invariants are:
    separate main/feature worktrees. Branch names are literal repo-native
    names such as `feat/foo`; legacy `wt/<machine>/*` branches still resolve.
 
-These are deliberate trade-offs. Do not reintroduce background behavior or
-hidden branch publication as a convenience.
+These are deliberate trade-offs. Do not introduce background project Git
+mutation or hidden branch publication as a convenience.
 
 ## Architecture
 
@@ -205,8 +205,8 @@ Cancellation stops new work and waits for in-flight work to return. The
 report records operation starts, results, conversions, conflicts, skips, and
 cancellation for live progress and final summary.
 
-There is no background retry, cooldown, backoff, auto-bootstrap setting, or
-per-project `auto_sync` field. Fix failures and invoke `ws sync` again.
+There is no background project Git retry, cooldown, auto-bootstrap setting, or
+per-project `auto_sync` field. Fix project failures and invoke `ws sync` again.
 
 ### Workspace Registry Storage
 
@@ -227,7 +227,8 @@ would make execution race an in-progress operation.
 
 `internal/sidecar` centralizes path, lock, pid, load/save/delete, and stale
 process behavior. Command packages own command-specific payloads. Sidecars do
-not signal or pause a background process; none exists.
+not signal or pause registry auto-sync. The daemon never invokes the project Git
+runner or changes project layouts.
 
 ### Amp Runners
 
@@ -354,6 +355,12 @@ configuration is migrated to branch metadata on load and removed on save.
 
 Workspace peer commands do not invoke project Git synchronization.
 
+### Daemon
+
+| Command | Purpose |
+|---|---|
+| `ws daemon run` | Serve trusted peers and continuously synchronize signed workspace registry revisions. |
+
 ### Worktrees
 
 | Command | Purpose |
@@ -401,8 +408,9 @@ GitHub discovery prefers saved ws OAuth/PAT credentials and can fall back to gh.
 - `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
   counters; never contains identifiers, arguments, diagnostics, or history.
 
-`ws network serve` is a foreground peer listener; it creates no managed
-service, pid file, log file, watcher, timer, or IPC runtime file.
+`ws network serve` is a foreground listener without synchronization. `ws daemon
+run` owns the listener and in-memory registry scheduler. It keeps no durable job
+queue and performs no project Git operations.
 
 ## Conventions
 
@@ -601,7 +609,7 @@ Changes that do require approval include:
   `<type>(<scope>): <imperative result-oriented description>`.
 - Never create new `wt/<machine>/*` branches; that namespace is legacy or
   migration-internal only.
-- Never use stale `ws worktree new`, `ws worktree promote`, `--auto-push`,
-  `autopush.branches`, daemon commands, or service setup guidance.
+- Never use stale `ws worktree new`, `ws worktree promote`, `--auto-push`, or
+  `autopush.branches`.
 - Open PRs as draft by default. Only the user marks them ready.
 - Never add attribution footers.

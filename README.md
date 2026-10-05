@@ -7,7 +7,8 @@ SQLite at `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for
 named local workspaces, and per-feature worktrees carry explicit branch
 metadata. `workspace.toml` is import/export interchange only. Project Git
 synchronization happens only when you run `ws sync`; branch pushes remain
-a deliberate user action.
+a deliberate user action. A daemon can continuously exchange signed workspace
+registry revisions without touching Git repositories.
 
 ## Install
 
@@ -61,6 +62,9 @@ ws workspace share personal --with all --role writer
 ws workspace available
 ws workspace attach personal --root ~/dev
 ws sync
+
+# Keep later registry changes synchronized
+ws daemon run
 ```
 
 This exchanges signed SQLite registry revisions only. Workspace roots remain
@@ -80,7 +84,10 @@ worktree.
 - [Sync](docs/sync.md) — preflight, interactive selection, execution,
   conflicts, headless behavior, and multi-machine flow.
 - [Peer workspace sync](docs/peer-sync.md) — pairing, workspace policy,
-  attachment, manual registry synchronization, and conflict handling.
+  attachment, automatic or manual registry synchronization, and conflict
+  handling.
+- [P2P suite design](docs/features/p2p-suite/README.md) — full daemon,
+  Activity, and Secrets direction beyond current registry auto-sync.
 - [Aliases](docs/aliases.md) — short shell aliases for projects and
   groups.
 - [Explorer TUI](docs/explorer.md) — bare `ws` opens a Bubble Tea
@@ -94,8 +101,8 @@ worktree.
 
 - Auto-push project branches to origin. Origin pushes are explicit
   (`ws worktree push` or plain `git push`).
-- Synchronize in the background. There is no service, scheduler, or
-  watcher; run `ws sync` when you want remote state changed.
+- Synchronize project Git in the background. `ws daemon run` synchronizes only
+  signed workspace registry state; run `ws sync` for Git operations.
 - Run `merge`, `rebase`, `reset`, `force`, or project-branch `push`
   inside a project repo. Unsafe states become skips or conflicts.
 - Synthesize a `wt/<machine>/<topic>` namespace. Branches use
@@ -111,3 +118,5 @@ multi-machine sync model assumes one human, several machines.
 
 `ws sync` exchanges registry state with trusted peers before and after its
 project Git operations. `ws workspace sync` runs only the registry exchange.
+`ws daemon run` keeps the peer listener available and repeats that registry
+exchange without invoking project Git synchronization.

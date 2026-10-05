@@ -25,7 +25,7 @@ var (
 
 var workspaceIndependentCommands = map[string]bool{
 	"help": true, "completion": true, "docs": true, "auth": true,
-	"explorer": true, "network": true, "ws": true, "workspace": true,
+	"daemon": true, "explorer": true, "network": true, "ws": true, "workspace": true,
 }
 
 const skipsWorkspaceAnnotation = "ws.skips-workspace"
@@ -68,6 +68,7 @@ func NewRootCmd() *cobra.Command {
 		newDocsCmd(),
 		newWorkspaceCmd(),
 		newNetworkCmd(),
+		newDaemonCmd(),
 	)
 
 	return root
