@@ -141,6 +141,10 @@ func (store *Store) Close() error {
 	return store.db.Close()
 }
 
+func (store *Store) Path() string {
+	return store.path
+}
+
 func (store *Store) Create(ctx context.Context, name, root string, state *config.Workspace) (Workspace, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {

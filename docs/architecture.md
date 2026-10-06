@@ -215,6 +215,11 @@ The shared `internal/sidecar` package owns file, lock, pid, and stale
 process checks. Command-specific payloads remain with their command
 packages.
 
+`internal/network.Sync` holds a separate cross-process lock for each registry,
+workspace ID, and peer ID throughout a registry exchange. This serializes
+foreground and daemon exchanges without holding a SQLite transaction across
+network calls.
+
 ## Conflicts
 
 `internal/conflict` persists records in
@@ -254,6 +259,8 @@ registry and multi-workspace coverage lives in `internal/registry/*_test.go`,
 - `~/.config/ws/token`: GitHub token used by `ws auth`.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars.
+- `$XDG_STATE_HOME/ws/registry.db.locks/sync-<sha>.lock`: cross-process
+  workspace-peer registry exchange locks.
 - `~/.local/state/ws/aliases.zsh`: generated zsh aliases.
 
 `ws daemon run` keeps its scheduler in memory. It does not create service,

@@ -293,6 +293,15 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	if err != nil {
 		return SyncResult{}, err
 	}
+	lock, err := acquireSyncLock(ctx, store.Path(), before.WorkspaceID, target.ID)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	defer lock.release()
+	before, err = store.LoadByName(ctx, workspaceName)
+	if err != nil {
+		return SyncResult{}, err
+	}
 	workspaceID := before.WorkspaceID
 	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync})
 	if err != nil {

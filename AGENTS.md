@@ -230,6 +230,10 @@ process behavior. Command packages own command-specific payloads. Sidecars do
 not signal or pause registry auto-sync. The daemon never invokes the project Git
 runner or changes project layouts.
 
+Registry exchange uses a separate cross-process lock keyed by workspace ID and
+peer ID. `internal/network.Sync` owns this lock for the full exchange so daemon
+and foreground registry sync cannot replace each other's staged imports.
+
 ### Amp Runners
 
 The Explorer manages detached Linux `amp --no-tui` processes without terminal
@@ -404,6 +408,8 @@ GitHub discovery prefers saved ws OAuth/PAT credentials and can fall back to gh.
 - `~/.local/state/ws/conflicts.json`: unresolved sync conflicts.
 - `~/.local/state/ws/<kind>/<sha>.toml`: command sidecars for `add`; legacy
   `create`, `bootstrap`, and `migrate` sidecars remain recognized during upgrades.
+- `$XDG_STATE_HOME/ws/registry.db.locks/sync-<sha>.lock`: cross-process
+  workspace-peer registry exchange locks.
 - `~/.local/state/ws/aliases.zsh`: generated shell aliases.
 - `~/.local/state/ws/metrics.json`: local-only bounded fixed-schema usage
   counters; never contains identifiers, arguments, diagnostics, or history.

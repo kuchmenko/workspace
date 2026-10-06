@@ -172,6 +172,10 @@ from removed create, bootstrap, and migrate commands are still recognized
 during upgrades. Sidecars do not signal or pause registry auto-sync. The daemon
 does not run project commands or change project layouts.
 
+Foreground and daemon registry exchanges use the same cross-process lock for a
+workspace-peer pair. A foreground exchange waits for an active daemon exchange
+and remains cancelable while waiting.
+
 ## Workspace Registry
 
 Named local workspaces are stored in `$XDG_STATE_HOME/ws/registry.db` and used
