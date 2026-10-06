@@ -6,11 +6,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
+	"reflect"
+	"slices"
 	"sort"
 	"sync/atomic"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/device"
 	"github.com/kuchmenko/workspace/internal/registry"
 )
@@ -41,7 +45,7 @@ type PeerEndpoint struct {
 	Endpoint string                `json:"endpoint"`
 }
 
-func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse, wake func(peerID, workspaceID string)) error {
+func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse, wake func(peerID, workspaceID string), changed func(workspaceID string, projects []string)) error {
 	switch request.Action {
 	case "status":
 		return nil
@@ -54,7 +58,7 @@ func handleWorkspaceRequest(ctx context.Context, store *registry.Store, peerID s
 	case "workspace.revisions":
 		return workspaceRevisions(ctx, store, peerID, request, response)
 	default:
-		return handleWorkspaceImportRequest(ctx, store, peerID, request, response)
+		return handleWorkspaceImportRequest(ctx, store, peerID, request, response, changed)
 	}
 }
 
@@ -72,7 +76,7 @@ func wakeWorkspace(ctx context.Context, store *registry.Store, peerID, workspace
 	return nil
 }
 
-func handleWorkspaceImportRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+func handleWorkspaceImportRequest(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse, changed func(workspaceID string, projects []string)) error {
 	switch request.Action {
 	case "workspace.import.begin":
 		return beginWorkspaceManifestImport(ctx, store, peerID, request, response)
@@ -85,7 +89,7 @@ func handleWorkspaceImportRequest(ctx context.Context, store *registry.Store, pe
 	case "workspace.import.batch":
 		return stageWorkspaceImport(ctx, store, peerID, request)
 	case "workspace.import.finish":
-		return finishWorkspaceImport(ctx, store, peerID, request, response)
+		return finishWorkspaceImport(ctx, store, peerID, request, response, changed)
 	case "workspace.import.abort":
 		return store.AbortRevisionImport(ctx, request.ImportID, peerID, request.WorkspaceID, request.Mode, request.ManifestHash)
 	default:
@@ -176,7 +180,7 @@ func stageWorkspaceImport(ctx context.Context, store *registry.Store, peerID str
 	return store.StageRevisionImport(ctx, request.ImportID, peerID, request.WorkspaceID, request.Mode, request.ManifestHash, request.Revisions)
 }
 
-func finishWorkspaceImport(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse) error {
+func finishWorkspaceImport(ctx context.Context, store *registry.Store, peerID string, request peerRequest, response *peerResponse, changed func(workspaceID string, projects []string)) error {
 	if request.Mode != registry.RevisionImportSync {
 		return errors.New("peer can finish only workspace sync imports")
 	}
@@ -200,9 +204,30 @@ func finishWorkspaceImport(ctx context.Context, store *registry.Store, peerID st
 		}
 	} else {
 		response.SyncStatus = acceptedSyncStatus(before.Head, after.Head, heads, conflicts)
+		if changed != nil && after.Head != before.Head {
+			changed(request.WorkspaceID, changedProjects(before.State, after.State))
+		}
 	}
 	response.Conflicts = conflicts
 	return nil
+}
+
+func changedProjects(before, after *config.Workspace) []string {
+	names := make(map[string]bool, len(before.Projects)+len(after.Projects))
+	for name := range before.Projects {
+		names[name] = true
+	}
+	for name := range after.Projects {
+		names[name] = true
+	}
+	changed := make([]string, 0, len(names))
+	for name := range maps.Keys(names) {
+		if !reflect.DeepEqual(before.Projects[name], after.Projects[name]) {
+			changed = append(changed, name)
+		}
+	}
+	slices.Sort(changed)
+	return changed
 }
 
 func acceptedSyncStatus(before, after string, incomingHeads []string, conflicts []registry.Conflict) string {

@@ -11,6 +11,8 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/github"
+	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/sidecar"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
@@ -197,17 +199,8 @@ func Register(opts Options, url string) (*RegisterResult, error) {
 }
 
 func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterResult, error) {
-	if err := ctx.Err(); err != nil {
+	if err := validateRegisterOptions(ctx, opts); err != nil {
 		return nil, err
-	}
-	if opts.WsRoot == "" {
-		return nil, errors.New("register: empty WsRoot")
-	}
-	if opts.Workspace == nil {
-		return nil, errors.New("register: nil Workspace")
-	}
-	if opts.Save == nil {
-		return nil, errors.New("register: nil Save")
 	}
 
 	name := opts.Name
@@ -245,16 +238,12 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 		Group:    group,
 	}
 
-	cloned := false
-	if !opts.NoClone {
-		_, err := git.CloneIntoLayoutContext(ctx, opts.WsRoot, name, &proj, git.CloneOptions{})
-		if errors.Is(err, git.ErrAlreadyCloned) {
-			_, err = git.ResumeCloneIntoLayout(opts.WsRoot, name, &proj)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("clone %s: %w", name, err)
-		}
-		cloned = true
+	mainPath, cloned, lock, err := prepareRegistrationClone(ctx, opts, name, &proj)
+	if err != nil {
+		return nil, err
+	}
+	if lock != nil {
+		defer func() { _ = lock.Release() }()
 	}
 
 	projectsWasNil := opts.Workspace.Projects == nil
@@ -269,13 +258,47 @@ func RegisterContext(ctx context.Context, opts Options, url string) (*RegisterRe
 			opts.Workspace.Projects = nil
 		}
 		if cloned {
-			mainPath := filepath.Join(opts.WsRoot, proj.Path)
 			return nil, fmt.Errorf("save workspace registry: %w; completed layout remains on disk at %s and %s", err, mainPath, filepath.Clean(mainPath+".bare"))
 		}
 		return nil, fmt.Errorf("save workspace registry: %w", err)
 	}
 
 	return &RegisterResult{Project: proj, Name: name, Cloned: cloned}, nil
+}
+
+func validateRegisterOptions(ctx context.Context, opts Options) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if opts.WsRoot == "" {
+		return errors.New("register: empty WsRoot")
+	}
+	if opts.Workspace == nil {
+		return errors.New("register: nil Workspace")
+	}
+	if opts.Save == nil {
+		return errors.New("register: nil Save")
+	}
+	return nil
+}
+
+func prepareRegistrationClone(ctx context.Context, opts Options, name string, project *config.Project) (string, bool, *repo.ProjectLock, error) {
+	mainPath, err := layout.ProjectPath(opts.WsRoot, project.Path)
+	if err != nil || opts.NoClone {
+		return mainPath, false, nil, err
+	}
+	lock, err := repo.AcquireProjectLock(mainPath)
+	if err != nil {
+		return "", false, nil, err
+	}
+	if _, err = git.CloneIntoLayoutContext(ctx, opts.WsRoot, name, project, git.CloneOptions{}); errors.Is(err, git.ErrAlreadyCloned) {
+		_, err = git.ResumeCloneIntoLayout(opts.WsRoot, name, project)
+	}
+	if err != nil {
+		_ = lock.Release()
+		return "", false, nil, fmt.Errorf("clone %s: %w", name, err)
+	}
+	return mainPath, true, lock, nil
 }
 
 func inferGroup(_ string, cat config.Category) string {

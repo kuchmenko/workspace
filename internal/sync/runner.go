@@ -10,6 +10,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/conflict"
 	"github.com/kuchmenko/workspace/internal/registry"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/sidecar"
 )
 
@@ -128,6 +129,12 @@ func (r *Runner) runPlannedProject(ctx context.Context, selection Selection, con
 		return false, false
 	}
 	report.start(Event{Project: planned.Name, Operation: "project-sync", TargetID: planned.OriginID}, onEvent)
+	lock, err := repo.AcquireProjectLock(planned.MainPath)
+	if err != nil {
+		r.addProjectSkip(report, planned.Name, SkipLocked, err.Error(), onEvent)
+		return false, false
+	}
+	defer func() { _ = lock.Release() }()
 	project, ok := ws.Projects[planned.Name]
 	expected := planned.Snapshot
 	if remote, changed := converted[planned.OriginID]; changed {

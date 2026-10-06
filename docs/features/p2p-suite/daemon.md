@@ -41,6 +41,7 @@ degraded.
 It reacts to:
 
 - a local workspace change;
+- a local network membership change;
 - a new domain record that needs delivery;
 - a change hint from another peer;
 - a secret request or response;
@@ -91,43 +92,38 @@ becomes an Activity item and waits for the existing resolution flow.
 After registry sync, the daemon keeps the workspace's published Git state
 available locally. It can:
 
-- clone a selected repository that is missing on this device;
+- clone every active repository that is missing on this device;
 - fetch refs and tags already published to the configured remote;
-- fast-forward a clean, behind-only main worktree;
+- create a missing worktree for a registered branch that exists on the remote;
+- fast-forward any clean, behind-only registered worktree;
 - record dirty, locked, diverged, or inaccessible repositories in Activity.
 
 This is how a Proxmox replica uses its broad repository credential. A restricted
 worker performs the same operations only for projects in its smaller workspace.
 
-The daemon does not convert Git remotes, push branches, push mirrors, merge,
-rebase, reset, force-update, or overwrite dirty worktrees in the background.
+The daemon does not convert Git remotes, push branches, push mirrors, perform a
+non-fast-forward merge, rebase, reset, force-update, delete local state, or
+overwrite dirty worktrees in the background.
 Local-only commits, unpublished refs, stashes, and dirty files do not reach the
 replica through GitHub. They belong to a later direct P2P Git/WIP design.
 
-Each device chooses a machine-local `git_mode` for every workspace. This setting
-is different from the replicated workspace access role named `replica`:
-
-- `git_mode=replica` clones and fetches published Git state, then safely
-  fast-forwards a clean, behind-only main worktree;
-- `git_mode=active` clones missing repositories and fetches published state, but does
-  not change an existing checkout in the background.
-
-Desktop, laptop, and worker nodes normally use `git_mode=active`. A Proxmox node
-without agents can use `git_mode=replica`. A local explicit sync may review and
-apply a safe fast-forward on an active device; a remote trigger cannot change
-that checkout.
+Every attached peer materializes active projects in that workspace. A worker
+with access to fewer projects uses a separate smaller workspace. Existing
+plain checkouts and repositories whose configured origin differs from the
+registry are left unchanged for explicit review.
 
 ## Triggering synchronization
 
 Mutating `ws` commands wake the daemon after committing local state. Registry
 head changes start workspace exchange. `ws worktree push` sends a small
-project-change hint immediately. The hint contains no Git data and only asks
-peers to check the project through its configured remote.
+project change through its branch metadata. A peer that imports that revision
+checks only projects whose metadata changed.
 
-Reconnect starts a comparison of registry heads and pending records. A periodic
-sweep catches plain Git pushes, remote changes made by CI or a web UI, lost
-hints, and work left incomplete by a crash. Hints make sync fast; startup and
-periodic comparisons make it reliable.
+Reconnect starts a comparison of registry heads and pending records. Startup
+and a slower Git repair sweep catch plain Git pushes, remote changes made by CI
+or a web UI, lost hints, and work left incomplete by a crash. The default Git
+repair interval is 15 minutes and can be changed independently from registry
+repair. Hints make `ws worktree push` fast; sweeps keep plain Git reliable.
 
 `ws sync` keeps its local foreground review, selection, remote-conversion,
 mirror, and cancellation behavior. It asks the daemon to exchange registry state
@@ -194,11 +190,15 @@ socket carries a small versioned request and event protocol. It is not exposed
 to the P2P network.
 
 For an ordinary local mutation, `ws` commits its registry transaction first and
-then sends the daemon a wake message with the workspace and observed revision.
-The message is only a hint; it does not carry the revision itself. If the daemon
-is unavailable, the local command still succeeds and reports that background
-sync is unavailable. Startup and periodic comparison find the committed change
-later.
+then sends the daemon a wake message with the workspace ID. A committed network
+membership change wakes all workspaces because peer authorization may have
+changed. The message is only a hint; it does not carry registry data. If the
+daemon is unavailable, the local command still succeeds. Startup and periodic
+comparison find the committed change later.
+
+The daemon remembers endpoints found by its latest discovery pass. A local wake
+uses those endpoints immediately instead of waiting for another mDNS window.
+The periodic pass refreshes the endpoint list and repairs missed wake messages.
 
 Network operations belong to the daemon. Commands such as `ws sync`, peer
 status, Activity watch, and secret request send a typed request through the

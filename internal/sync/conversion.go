@@ -7,11 +7,13 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/config"
 	"github.com/kuchmenko/workspace/internal/git"
+	"github.com/kuchmenko/workspace/internal/repo"
 )
 
 type appliedOrigin struct {
 	repository string
 	oldURL     string
+	lock       *repo.ProjectLock
 }
 
 func (r *Runner) applyProjectConversions(ctx context.Context, selection *Selection, ws *config.Workspace, report *Report, onEvent func(Event)) map[string]string {
@@ -56,6 +58,7 @@ func (r *Runner) saveProjectConversions(selection *Selection, ws *config.Workspa
 		r.addWorkspaceFailure(report, "save-conversions", err, onEvent)
 		return converted
 	}
+	releaseOriginLocks(applied)
 	for _, target := range selection.plan.Targets {
 		if candidate, ok := converted[target.ID]; ok {
 			r.addConversion(report, *selection, target.ID, candidate, ResultSuccess, "", onEvent)
@@ -85,17 +88,24 @@ func (r *Runner) applyProjectConversion(ctx context.Context, selection *Selectio
 	}
 	repository := conversionRepository(planned)
 	if repository != "" {
+		lock, err := repo.AcquireProjectLock(planned.MainPath)
+		if err != nil {
+			r.addConversion(report, *selection, target.ID, candidate, ResultSkipped, err.Error(), onEvent)
+			selection.ExcludeProject(target.Project)
+			return
+		}
 		expected := target.ConfigURL
 		if planned.LocalOrigin != "" {
 			expected = planned.LocalOrigin
 		}
 		old, err := applyRepositoryOrigin(repository, expected, candidate)
 		if err != nil {
+			_ = lock.Release()
 			r.addConversion(report, *selection, target.ID, candidate, ResultFailed, err.Error(), onEvent)
 			selection.ExcludeProject(target.Project)
 			return
 		}
-		*applied = append(*applied, appliedOrigin{repository: repository, oldURL: old})
+		*applied = append(*applied, appliedOrigin{repository: repository, oldURL: old, lock: lock})
 	}
 	originals[target.Project] = current
 	current.Remote = candidate
@@ -137,6 +147,13 @@ func applyRepositoryOrigin(repository, expected, candidate string) (string, erro
 func restoreOrigins(origins []appliedOrigin) {
 	for _, origin := range origins {
 		_ = git.SetRemoteURL(origin.repository, origin.oldURL)
+		_ = origin.lock.Release()
+	}
+}
+
+func releaseOriginLocks(origins []appliedOrigin) {
+	for _, origin := range origins {
+		_ = origin.lock.Release()
 	}
 }
 

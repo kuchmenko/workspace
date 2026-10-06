@@ -69,6 +69,7 @@ type ServeOptions struct {
 	DisableDiscovery bool
 	Ready            func(endpoint string)
 	WorkspaceWake    func(peerID, workspaceID string)
+	WorkspaceChanged func(workspaceID string, projects []string)
 }
 
 type PeerInfo struct {
@@ -372,7 +373,7 @@ func servePeerConnection(options ServeOptions, self registry.DeviceRecord, conne
 		writePeerResponse(connection, response)
 		return
 	}
-	if err = handleWorkspaceRequest(context.Background(), options.Store, peerID, request, &response, options.WorkspaceWake); err != nil {
+	if err = handleWorkspaceRequest(context.Background(), options.Store, peerID, request, &response, options.WorkspaceWake, options.WorkspaceChanged); err != nil {
 		response.Error = err.Error()
 	}
 	writePeerResponse(connection, response)

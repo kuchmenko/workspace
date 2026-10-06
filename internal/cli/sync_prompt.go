@@ -13,6 +13,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/registry"
+	"github.com/kuchmenko/workspace/internal/repo"
 )
 
 type promptAction struct {
@@ -120,10 +121,11 @@ func resolveOriginDivergenceTo(c conflict.Conflict, useLocal bool) error {
 	if err != nil {
 		return err
 	}
-	repository := layout.BarePath(mainPath)
-	if !git.IsRepo(repository) {
-		repository = mainPath
+	repository, lock, err := lockedOriginRepository(mainPath)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = lock.Release() }()
 	local, err := git.ConfiguredRemoteURL(repository, "origin")
 	if err != nil {
 		return fmt.Errorf("read origin in %s: %w", repository, err)
@@ -164,6 +166,18 @@ func resolveOriginDivergenceTo(c conflict.Conflict, useLocal bool) error {
 		return nil
 	}
 	return errors.Join(err, rollback())
+}
+
+func lockedOriginRepository(mainPath string) (string, *repo.ProjectLock, error) {
+	lock, err := repo.AcquireProjectLock(mainPath)
+	if err != nil {
+		return "", nil, err
+	}
+	repository := layout.BarePath(mainPath)
+	if !git.IsRepo(repository) {
+		repository = mainPath
+	}
+	return repository, lock, nil
 }
 
 func openShellAtWorktree(wtPath string) (bool, error) {

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/kuchmenko/workspace/internal/daemonipc"
 	"github.com/kuchmenko/workspace/internal/device"
 	peernetwork "github.com/kuchmenko/workspace/internal/network"
 	"github.com/kuchmenko/workspace/internal/registry"
@@ -24,6 +25,7 @@ type Options struct {
 	ListenAddress    string
 	DisableDiscovery bool
 	SyncInterval     time.Duration
+	GitSyncInterval  time.Duration
 	DiscoveryWindow  time.Duration
 	Ready            func(endpoint string)
 	Logf             func(format string, args ...any)
@@ -54,14 +56,28 @@ func Run(ctx context.Context, options Options) error {
 
 	runContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	scheduler := newScheduler(options)
+	materializer := newMaterializer(options)
+	scheduler := newScheduler(options, materializer)
+	localServer, err := daemonipc.Listen(options.Store.Path())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = localServer.Close() }()
+	localDone := make(chan error, 1)
+	go func() { localDone <- localServer.Serve(runContext, scheduler.trigger) }()
 	schedulerDone := make(chan struct{})
 	go func() {
 		defer close(schedulerDone)
 		scheduler.run(runContext)
 	}()
+	materializerDone := make(chan struct{})
+	go func() {
+		defer close(materializerDone)
+		materializer.run(runContext)
+	}()
+	materializer.triggerAll()
 
-	err := peernetwork.Serve(runContext, peernetwork.ServeOptions{
+	err = peernetwork.Serve(runContext, peernetwork.ServeOptions{
 		Store:            options.Store,
 		Identity:         options.Identity,
 		Name:             options.Name,
@@ -74,19 +90,27 @@ func Run(ctx context.Context, options Options) error {
 			}
 		},
 		WorkspaceWake: scheduler.wake,
+		WorkspaceChanged: func(workspaceID string, projects []string) {
+			for _, project := range projects {
+				materializer.trigger(workspaceID, project)
+			}
+		},
 	})
 	cancel()
 	<-schedulerDone
-	return err
+	<-materializerDone
+	return errors.Join(err, <-localDone)
 }
 
 type scheduler struct {
-	options  Options
-	triggers chan string
+	options   Options
+	git       *materializer
+	triggers  chan string
+	endpoints map[string]string
 }
 
-func newScheduler(options Options) *scheduler {
-	return &scheduler{options: options, triggers: make(chan string, 128)}
+func newScheduler(options Options, materializer *materializer) *scheduler {
+	return &scheduler{options: options, git: materializer, triggers: make(chan string, 128), endpoints: map[string]string{}}
 }
 
 func (scheduler *scheduler) wake(peerID, workspaceID string) {
@@ -169,14 +193,19 @@ func (scheduler *scheduler) sync(ctx context.Context, all bool, pending map[stri
 	if len(workspaces) == 0 {
 		return
 	}
-	peers, err := scheduler.options.Discover(ctx)
-	if err != nil {
-		scheduler.options.Logf("daemon: discover peers: %v", err)
-		return
+	for _, workspace := range workspaces {
+		scheduler.git.trigger(workspace.WorkspaceID, "")
 	}
-	endpoints := make(map[string]string, len(peers))
-	for _, peer := range peers {
-		endpoints[peer.Device.ID] = peer.Endpoint
+	if all || len(scheduler.endpoints) == 0 {
+		peers, err := scheduler.options.Discover(ctx)
+		if err != nil {
+			scheduler.options.Logf("daemon: discover peers: %v", err)
+			return
+		}
+		scheduler.endpoints = make(map[string]string, len(peers))
+		for _, peer := range peers {
+			scheduler.endpoints[peer.Device.ID] = peer.Endpoint
+		}
 	}
 	state, err := scheduler.options.Store.Network(ctx)
 	if err != nil {
@@ -186,7 +215,7 @@ func (scheduler *scheduler) sync(ctx context.Context, all bool, pending map[stri
 	devices := append([]registry.DeviceRecord(nil), state.Devices...)
 	sort.Slice(devices, func(left, right int) bool { return devices[left].ID < devices[right].ID })
 	for _, workspace := range workspaces {
-		scheduler.syncWorkspace(ctx, workspace, devices, endpoints)
+		scheduler.syncWorkspace(ctx, workspace, devices, scheduler.endpoints)
 	}
 }
 
@@ -223,16 +252,23 @@ func (scheduler *scheduler) syncWorkspace(ctx context.Context, workspace registr
 			continue
 		}
 		if localID < peer.ID {
-			result, err := peernetwork.Sync(ctx, workspace.Name, endpoints[peer.ID], peer, scheduler.options.Store, scheduler.options.Identity, scheduler.options.Name)
-			if err != nil {
-				scheduler.options.Logf("daemon: sync %s with %s: %v", workspace.Name, peer.Name, err)
-				continue
-			}
-			scheduler.options.Logf("daemon: sync %s with %s: %s", workspace.Name, peer.Name, result.Status)
+			scheduler.exchangeWorkspace(ctx, workspace, peer, endpoints[peer.ID])
 			continue
 		}
 		if err := peernetwork.WakeWorkspace(ctx, workspace.WorkspaceID, endpoints[peer.ID], peer, scheduler.options.Store, scheduler.options.Identity, scheduler.options.Name); err != nil {
 			scheduler.options.Logf("daemon: wake %s for %s: %v", peer.Name, workspace.Name, err)
 		}
+	}
+}
+
+func (scheduler *scheduler) exchangeWorkspace(ctx context.Context, workspace registry.Workspace, peer registry.DeviceRecord, endpoint string) {
+	result, err := peernetwork.Sync(ctx, workspace.Name, endpoint, peer, scheduler.options.Store, scheduler.options.Identity, scheduler.options.Name)
+	if err != nil {
+		scheduler.options.Logf("daemon: sync %s with %s: %v", workspace.Name, peer.Name, err)
+		return
+	}
+	scheduler.options.Logf("daemon: sync %s with %s: %s", workspace.Name, peer.Name, result.Status)
+	if result.Head != workspace.Head {
+		scheduler.trigger(workspace.WorkspaceID)
 	}
 }

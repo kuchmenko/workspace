@@ -56,7 +56,11 @@ func (store *Store) Resolve(ctx context.Context, name, path string, value json.R
 	if err := store.persistResolution(ctx, name, path, value, localActive); err != nil {
 		return Workspace{}, err
 	}
-	return store.LoadByName(ctx, name)
+	workspace, err := store.LoadByName(ctx, name)
+	if err == nil {
+		store.wakeDaemon(workspace.WorkspaceID)
+	}
+	return workspace, err
 }
 
 type resolution struct {

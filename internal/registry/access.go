@@ -144,59 +144,67 @@ func (store *Store) SetAccess(ctx context.Context, name string, policy AccessPol
 	if err != nil {
 		return Workspace{}, err
 	}
-	if err = store.persistAccess(ctx, name, policy, localActive); err != nil {
+	changed, err := store.persistAccess(ctx, name, policy, localActive)
+	if err != nil {
 		return Workspace{}, err
 	}
-	return store.LoadByName(ctx, name)
+	workspace, err := store.LoadByName(ctx, name)
+	if err == nil && changed {
+		store.wakeDaemon(workspace.WorkspaceID)
+	}
+	return workspace, err
 }
 
-func (store *Store) persistAccess(ctx context.Context, name string, policy AccessPolicy, localActive bool) error {
+func (store *Store) persistAccess(ctx context.Context, name string, policy AccessPolicy, localActive bool) (bool, error) {
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer func() { _ = tx.Rollback() }()
 	base, err := loadAccessBase(ctx, tx, name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err = requireNoAccessConflict(tx, base.workspaceID); err != nil {
-		return err
+		return false, err
 	}
 	if base.policy.Role(store.identity.ID(), localActive) != WorkspaceAdmin {
-		return errors.New("local device is not a workspace admin")
+		return false, errors.New("local device is not a workspace admin")
 	}
 	if equalPolicy(base.policy, policy) {
-		return nil
+		return false, nil
 	}
 	revision, epoch, err := store.makeAccessRevision(tx, base, policy)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err = insertRevision(tx, revision); err != nil {
-		return err
+		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE workspace_protocol SET epoch=?,head_id=? WHERE name=? AND head_id=?`, epoch, revision.ID, name, base.head)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
-		return errors.New("workspace changed during access update")
+		return false, errors.New("workspace changed during access update")
 	}
 	if err = replaceHeads(ctx, tx, base.workspaceID, []string{revision.ID}); err != nil {
-		return err
+		return false, err
 	}
 	if err = replaceConflicts(ctx, tx, base.workspaceID, revision.ID, revision.Conflicts); err != nil {
-		return err
+		return false, err
 	}
 	result, err = tx.ExecContext(ctx, `UPDATE workspaces SET revision=revision+1 WHERE name=? AND revision=?`, name, base.revision)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
-		return errors.New("workspace changed during access update")
+		return false, errors.New("workspace changed during access update")
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type accessBase struct {

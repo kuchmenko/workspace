@@ -34,6 +34,7 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 
 	endpoint := make(chan string, 1)
 	wakes := make(chan string, 1)
+	changedProjects := make(chan []string, 2)
 	serverOutcome := make(chan error, 1)
 	go func() {
 		serverOutcome <- Serve(ctx, ServeOptions{
@@ -41,6 +42,9 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
 			Ready:         func(address string) { endpoint <- address },
 			WorkspaceWake: func(_ string, workspaceID string) { wakes <- workspaceID },
+			WorkspaceChanged: func(_ string, projects []string) {
+				changedProjects <- projects
+			},
 		})
 	}()
 	address := <-endpoint
@@ -90,6 +94,22 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 	if archWorkspace.State.Aliases["from-asahi"] != "yes" {
 		t.Fatalf("Arch aliases = %#v", archWorkspace.State.Aliases)
+	}
+	if projects := <-changedProjects; len(projects) != 0 {
+		t.Fatalf("alias-only changed projects = %v", projects)
+	}
+	if _, err = asahiStore.Mutate(ctx, asahiRoot, func(workspace *config.Workspace) error {
+		workspace.Projects["app"] = config.Project{Remote: "git@example.com:owner/app.git", Path: "app", Status: config.StatusActive}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = Sync(ctx, "personal", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "pushed" {
+		t.Fatalf("Asahi project push result=%#v error=%v", result, err)
+	}
+	if projects := <-changedProjects; len(projects) != 1 || projects[0] != "app" {
+		t.Fatalf("project changes = %v", projects)
 	}
 	if _, err = archStore.Mutate(ctx, archRoot, func(workspace *config.Workspace) error {
 		workspace.Aliases["from-arch"] = "yes"

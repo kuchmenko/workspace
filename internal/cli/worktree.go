@@ -305,10 +305,15 @@ out-of-band creation; the user should re-register via ws worktree add).`,
 			if err != nil {
 				return err
 			}
-			proj, _, barePath, err := resolveProject(projectName)
+			proj, mainPath, barePath, err := resolveProject(projectName)
 			if err != nil {
 				return err
 			}
+			lock, err := repo.AcquireProjectLock(mainPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = lock.Release() }()
 
 			if proj.LookupBranch(branch) == nil {
 				return fmt.Errorf("branch %s has no [[branches]] entry in the workspace registry\n"+

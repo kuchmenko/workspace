@@ -29,6 +29,7 @@ const (
 	SkipExcluded    SkipReason = "excluded"
 	SkipPlanChanged SkipReason = "plan-changed"
 	SkipSidecar     SkipReason = "sidecar-active"
+	SkipLocked      SkipReason = "project-locked"
 	SkipCanceled    SkipReason = "canceled"
 	SkipState       SkipReason = "state"
 )

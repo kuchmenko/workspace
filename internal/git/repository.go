@@ -94,9 +94,14 @@ func FastForwardURLBranchContext(ctx context.Context, repoPath, remoteURL, branc
 	if err := FetchURLBranchContext(ctx, repoPath, remoteURL, branch); err != nil {
 		return err
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--ff-only", "refs/remotes/origin/"+branch).CombinedOutput()
+	return FastForwardRemoteBranchContext(ctx, repoPath, "origin", branch)
+}
+
+func FastForwardRemoteBranchContext(ctx context.Context, repoPath, remote, branch string) error {
+	ref := "refs/remotes/" + remote + "/" + branch
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "merge", "--ff-only", ref).CombinedOutput()
 	if err != nil {
-		return commandError(ctx, "git merge --ff-only origin/"+branch+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), err)
+		return commandError(ctx, "git merge --ff-only "+remote+"/"+branch+" in "+repoPath, RedactDiagnostic(string(out)), err)
 	}
 	return nil
 }

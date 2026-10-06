@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/kuchmenko/workspace/internal/config"
+	"github.com/kuchmenko/workspace/internal/daemonipc"
 	"github.com/kuchmenko/workspace/internal/device"
 	_ "modernc.org/sqlite"
 )
@@ -188,7 +190,9 @@ func (store *Store) Create(ctx context.Context, name, root string, state *config
 		return Workspace{}, err
 	}
 	state.RestoreRoot(canonical)
-	return Workspace{Name: name, Root: canonical, Revision: 1, WorkspaceID: workspaceID, Epoch: 1, Head: genesis.ID, State: state}, nil
+	workspace := Workspace{Name: name, Root: canonical, Revision: 1, WorkspaceID: workspaceID, Epoch: 1, Head: genesis.ID, State: state}
+	store.wakeDaemon(workspace.WorkspaceID)
+	return workspace, nil
 }
 
 func (store *Store) LoadByName(ctx context.Context, name string) (Workspace, error) {
@@ -286,7 +290,19 @@ func (store *Store) Update(ctx context.Context, name string, expectedRevision in
 	if err = store.persistUpdate(ctx, name, expectedRevision, body, snapshotBody, localActive, networkPresent); err != nil {
 		return Workspace{}, err
 	}
-	return store.LoadByName(ctx, name)
+	workspace, err := store.LoadByName(ctx, name)
+	if err == nil {
+		store.wakeDaemon(workspace.WorkspaceID)
+	}
+	return workspace, err
+}
+
+func (store *Store) wakeDaemon(workspaceID string) {
+	// The committed registry remains authoritative. This hint only removes the
+	// wait for the daemon's periodic repair pass.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_ = daemonipc.Wake(ctx, store.path, workspaceID)
 }
 
 func (store *Store) persistUpdate(ctx context.Context, name string, expectedRevision int64, body, snapshotBody []byte, localActive, networkPresent bool) error {

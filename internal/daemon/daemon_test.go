@@ -15,6 +15,11 @@ import (
 	"github.com/kuchmenko/workspace/internal/registry"
 )
 
+type daemonEndpoints struct {
+	sync.RWMutex
+	left, right string
+}
+
 func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	leftStore, leftIdentity := daemonTestStore(t)
 	rightStore, rightIdentity := daemonTestStore(t)
@@ -39,11 +44,7 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	type endpointState struct {
-		sync.RWMutex
-		left, right string
-	}
-	endpoints := &endpointState{}
+	endpoints := &daemonEndpoints{}
 	leftPeer := daemonNetworkDevice(t, leftStore, rightIdentity.ID())
 	rightPeer := daemonNetworkDevice(t, rightStore, leftIdentity.ID())
 	var leftLogs, rightLogs strings.Builder
@@ -54,7 +55,7 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	go func() {
 		leftDone <- Run(leftContext, Options{
 			Store: leftStore, Identity: leftIdentity, Name: "left", ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
-			SyncInterval: 50 * time.Millisecond,
+			SyncInterval: time.Hour,
 			Ready: func(endpoint string) {
 				endpoints.Lock()
 				endpoints.left = endpoint
@@ -79,7 +80,7 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	go func() {
 		rightDone <- Run(rightContext, Options{
 			Store: rightStore, Identity: rightIdentity, Name: "right", ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
-			SyncInterval: 50 * time.Millisecond,
+			SyncInterval: time.Hour,
 			Ready: func(endpoint string) {
 				endpoints.Lock()
 				endpoints.right = endpoint
@@ -101,6 +102,13 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 			},
 		})
 	}()
+	waitForDaemonEndpoints(t, ctx, endpoints)
+	waitForInitialDaemonSync(t, ctx, &logMu, &leftLogs, &rightLogs)
+	time.Sleep(2 * defaultDebounce)
+	logMu.Lock()
+	leftLogs.Reset()
+	rightLogs.Reset()
+	logMu.Unlock()
 
 	higherStore, higherRoot := rightStore, rightRoot
 	if leftIdentity.ID() > rightIdentity.ID() {
@@ -114,15 +122,14 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	}
 	waitForDaemonSync(t, ctx, leftStore, rightStore)
 
-	logMu.Lock()
-	lowerLog, higherLog := leftLogs.String(), rightLogs.String()
+	lowerLogs, higherLogs := &leftLogs, &rightLogs
 	if leftIdentity.ID() > rightIdentity.ID() {
-		lowerLog, higherLog = higherLog, lowerLog
+		lowerLogs, higherLogs = higherLogs, lowerLogs
 	}
+	waitForDaemonLog(t, ctx, &logMu, lowerLogs, "daemon: sync shared")
+	logMu.Lock()
+	higherLog := higherLogs.String()
 	logMu.Unlock()
-	if !strings.Contains(lowerLog, "daemon: sync shared") {
-		t.Fatalf("lower-ID daemon did not sync: %s", lowerLog)
-	}
 	if strings.Contains(higherLog, "daemon: sync shared") {
 		t.Fatalf("higher-ID daemon initiated sync: %s", higherLog)
 	}
@@ -134,6 +141,60 @@ func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	}
 	if err = <-rightDone; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func waitForDaemonLog(t *testing.T, ctx context.Context, mutex *sync.Mutex, log *strings.Builder, text string) {
+	t.Helper()
+	for {
+		mutex.Lock()
+		found := strings.Contains(log.String(), text)
+		mutex.Unlock()
+		if found {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("daemon log did not contain %q", text)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitForInitialDaemonSync(t *testing.T, ctx context.Context, mutex *sync.Mutex, logs ...*strings.Builder) {
+	t.Helper()
+	for {
+		mutex.Lock()
+		found := false
+		for _, log := range logs {
+			found = found || strings.Contains(log.String(), "daemon: sync shared")
+		}
+		mutex.Unlock()
+		if found {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("initial daemon sync did not finish")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func waitForDaemonEndpoints(t *testing.T, ctx context.Context, state *daemonEndpoints) {
+	t.Helper()
+	for {
+		state.RLock()
+		ready := state.left != "" && state.right != ""
+		state.RUnlock()
+		if ready {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("daemon endpoints were not ready")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

@@ -186,7 +186,11 @@ func (store *Store) ResolveAccessConflict(ctx context.Context, name, conflictID,
 	if err = tx.Commit(); err != nil {
 		return Workspace{}, err
 	}
-	return store.LoadByName(ctx, name)
+	workspace, err := store.LoadByName(ctx, name)
+	if err == nil {
+		store.wakeDaemon(workspace.WorkspaceID)
+	}
+	return workspace, err
 }
 
 type accessResolution struct {

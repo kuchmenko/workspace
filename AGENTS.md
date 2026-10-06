@@ -21,10 +21,10 @@ The core invariants are:
 2. **Named local workspaces.** Each SQLite workspace has a unique name and
    canonical root. Commands select the longest containing root unless an exact
    root is supplied. Explorer reads every workspace in the SQLite registry.
-3. **Foreground Git, continuous registry sync.** `ws sync` performs project Git
-   preflight, review, confirmation, execution, and summary. `ws daemon run`
-   continuously exchanges signed workspace registry revisions with trusted
-   peers. The daemon never invokes the project Git runner.
+3. **Reviewed foreground Git, safe background materialization.** `ws sync`
+   retains project Git preflight, review, confirmation, execution, and summary.
+   `ws daemon run` exchanges signed registry revisions and materializes active
+   projects from their published remotes without invoking the foreground runner.
 4. **No project branch auto-push to origin.** `ws sync` fetches project
    state and may fast-forward an eligible main worktree, but origin branch
    pushes are explicit through `ws worktree push` or plain `git push`.
@@ -227,8 +227,8 @@ would make execution race an in-progress operation.
 
 `internal/sidecar` centralizes path, lock, pid, load/save/delete, and stale
 process behavior. Command packages own command-specific payloads. Sidecars do
-not signal or pause registry auto-sync. The daemon never invokes the project Git
-runner or changes project layouts.
+not signal or pause registry auto-sync. Foreground commands and the daemon use
+the same cross-process project lock for Git writes.
 
 Registry exchange uses a separate cross-process lock keyed by workspace ID and
 peer ID. `internal/network.Sync` owns this lock for the full exchange so daemon
@@ -363,7 +363,7 @@ Workspace peer commands do not invoke project Git synchronization.
 
 | Command | Purpose |
 |---|---|
-| `ws daemon run` | Serve trusted peers and continuously synchronize signed workspace registry revisions. |
+| `ws daemon run` | Serve trusted peers, synchronize signed workspace registry revisions, and materialize published Git state. |
 
 ### Worktrees
 
@@ -415,8 +415,8 @@ GitHub discovery prefers saved ws OAuth/PAT credentials and can fall back to gh.
   counters; never contains identifiers, arguments, diagnostics, or history.
 
 `ws network serve` is a foreground listener without synchronization. `ws daemon
-run` owns the listener and in-memory registry scheduler. It keeps no durable job
-queue and performs no project Git operations.
+run` owns the listener, registry scheduler, and background Git materializer. It
+keeps no durable job queue; startup and periodic sweeps repair missed hints.
 
 ## Conventions
 
@@ -489,6 +489,8 @@ Current coverage locations include:
   authorization, deterministic merges, migration, and conflict resolution.
 - `internal/network/workspace_test.go`: authenticated workspace discovery,
   fetch, and bidirectional revision synchronization.
+- `internal/daemon/materialize_test.go`: background clone, worktree
+  materialization, safe fast-forward, and dirty/diverged preservation.
 - `internal/agent/workspaces_test.go`: multi-workspace explorer loading.
 
 Run everything with `go test ./...`. CI runs

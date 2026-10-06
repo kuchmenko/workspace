@@ -15,6 +15,7 @@ import (
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
 	"github.com/kuchmenko/workspace/internal/registry"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/testutil"
 )
 
@@ -73,6 +74,29 @@ func TestRunContextLeavesExcludedExistingAndMissingProjectsUntouched(t *testing.
 	}
 	if got := projectResultStatuses(report.Projects); !equalStrings(got, []string{"a-existing:skipped", "b-missing:skipped", "c-selected:success"}) {
 		t.Fatalf("project results = %v", got)
+	}
+}
+
+func TestRunContextSkipsProjectHeldByAnotherProcess(t *testing.T) {
+	root := newTestWorkspace(t)
+	workspace := &config.Workspace{Projects: map[string]config.Project{
+		"app": activeProject(testutil.InitFakeRemote(t, "locked", "main"), "app"),
+	}}
+	saveTestWorkspace(t, root, workspace)
+	lock, err := repo.AcquireProjectLock(filepath.Join(root, "app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Release() }()
+
+	plan := BuildPlan(root, workspace)
+	selection := NewSelection(plan, Probe(context.Background(), plan, nil))
+	report := newTestRunner(t, root).RunContext(context.Background(), selection, nil)
+	if len(report.Projects) != 1 || report.Projects[0].Status != ResultSkipped || report.Projects[0].Reason != SkipLocked {
+		t.Fatalf("project results = %#v", report.Projects)
+	}
+	if git.IsRepo(filepath.Join(root, "app")) {
+		t.Fatal("locked project was cloned")
 	}
 }
 

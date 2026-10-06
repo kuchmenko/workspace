@@ -78,6 +78,11 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 	if err != nil {
 		return nil, err
 	}
+	lock, err := AcquireProjectLock(mainPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = lock.Release() }()
 	if !git.HasFetchRefspec(barePath) {
 		_ = git.SetFetchRefspec(barePath)
 	}
@@ -97,7 +102,20 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 	if _, err := os.Stat(result.Path); err == nil {
 		return nil, fmt.Errorf("worktree path already exists: %s", result.Path)
 	}
-	createFrom := ""
+	createFrom, err := worktreeCreateFrom(options, project, branch, localExists, remoteExists, result)
+	if err != nil {
+		return nil, err
+	}
+	if err := git.WorktreeAdd(barePath, result.Path, branch, createFrom); err != nil {
+		return nil, err
+	}
+	if result.Source == "fetched" {
+		_ = git.SetBranchUpstream(result.Path, branch, "origin")
+	}
+	return result, nil
+}
+
+func worktreeCreateFrom(options WorktreeAddOptions, project config.Project, branch string, localExists, remoteExists bool, result *WorktreeAddResult) (string, error) {
 	switch {
 	case localExists:
 		result.Source = "local"
@@ -109,7 +127,6 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 		}
 	case remoteExists:
 		result.Source = "fetched"
-		createFrom = "origin/" + branch
 		if options.From != "" {
 			result.Warning = fmt.Sprintf("--from ignored: branch %s already exists on origin", branch)
 		}
@@ -119,17 +136,14 @@ func AddWorktreeCheckout(options WorktreeAddOptions) (*WorktreeAddResult, error)
 			result.Base = project.DefaultBranch
 		}
 		if result.Base == "" {
-			return nil, fmt.Errorf("project %s has no default_branch and --from was not given", options.Project)
+			return "", fmt.Errorf("project %s has no default_branch and --from was not given", options.Project)
 		}
-		createFrom = result.Base
+		return result.Base, nil
 	}
-	if err := git.WorktreeAdd(barePath, result.Path, branch, createFrom); err != nil {
-		return nil, err
+	if remoteExists && !localExists {
+		return "origin/" + branch, nil
 	}
-	if result.Source == "fetched" {
-		_ = git.SetBranchUpstream(result.Path, branch, "origin")
-	}
-	return result, nil
+	return "", nil
 }
 
 func RegisterWorktree(options WorktreeAddOptions, result *WorktreeAddResult) error {
@@ -167,32 +181,18 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 	if err != nil {
 		return result, err
 	}
+	lock, err := AcquireProjectLock(mainPath)
+	if err != nil {
+		return result, err
+	}
+	defer func() { _ = lock.Release() }()
 	wtPath, err := worktreeForBranch(barePath, options.Branch)
 	if err != nil {
 		return result, err
 	}
-	if wtPath == "" {
-		meta := project.LookupBranch(options.Branch)
-		if meta == nil || !slices.Contains(meta.Machines, options.Machine) {
-			return result, fmt.Errorf("no worktree on branch %s in project %s", options.Branch, options.Project)
-		}
-	} else {
-		if wtPath == mainPath {
-			return result, fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", options.Project, options.Branch, mainPath)
-		}
-		if !options.Force {
-			if git.IsDirty(wtPath) {
-				return result, fmt.Errorf("worktree %s is dirty; commit/stash or use --force", wtPath)
-			}
-			ahead, _, has := git.AheadBehind(wtPath, options.Branch)
-			if has && ahead > 0 {
-				return result, fmt.Errorf("branch %s has %d unpushed commits; push or use --force", options.Branch, ahead)
-			}
-		}
-		if err := git.WorktreeRemove(barePath, wtPath, options.Force); err != nil {
-			return result, err
-		}
-		result.Removed = true
+	result.Removed, err = removeWorktreeCheckout(options, project, mainPath, barePath, wtPath)
+	if err != nil {
+		return result, err
 	}
 	if changed, _ := project.ReleaseBranch(options.Branch, options.Machine); changed {
 		workspace.Projects[options.Project] = project
@@ -209,6 +209,32 @@ func RemoveWorktree(options WorktreeRemoveOptions) (WorktreeRemoveResult, error)
 		result.MetadataReleased = true
 	}
 	return result, nil
+}
+
+func removeWorktreeCheckout(options WorktreeRemoveOptions, project config.Project, mainPath, barePath, wtPath string) (bool, error) {
+	if wtPath == "" {
+		meta := project.LookupBranch(options.Branch)
+		if meta == nil || !slices.Contains(meta.Machines, options.Machine) {
+			return false, fmt.Errorf("no worktree on branch %s in project %s", options.Branch, options.Project)
+		}
+		return false, nil
+	}
+	if wtPath == mainPath {
+		return false, fmt.Errorf("refusing to remove main worktree of %s (branch %s is checked out at %s)", options.Project, options.Branch, mainPath)
+	}
+	if !options.Force {
+		if git.IsDirty(wtPath) {
+			return false, fmt.Errorf("worktree %s is dirty; commit/stash or use --force", wtPath)
+		}
+		ahead, _, has := git.AheadBehind(wtPath, options.Branch)
+		if has && ahead > 0 {
+			return false, fmt.Errorf("branch %s has %d unpushed commits; push or use --force", options.Branch, ahead)
+		}
+	}
+	if err := git.WorktreeRemove(barePath, wtPath, options.Force); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func loadWorktreeProject(root, name string, workspace *config.Workspace) (*config.Workspace, config.Project, string, string, error) {

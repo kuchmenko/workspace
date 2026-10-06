@@ -20,7 +20,7 @@ func newDaemonCmd() *cobra.Command {
 
 func newDaemonRunCmd() *cobra.Command {
 	var name, listen string
-	var interval, discoveryWindow time.Duration
+	var interval, gitInterval, discoveryWindow time.Duration
 	command := &cobra.Command{
 		Use:   "run",
 		Short: "Serve peers and synchronize workspace registries",
@@ -39,7 +39,7 @@ func newDaemonRunCmd() *cobra.Command {
 			defer stop()
 			return daemon.Run(ctx, daemon.Options{
 				Store: store, Identity: identity, Name: name, ListenAddress: listen,
-				SyncInterval: interval, DiscoveryWindow: discoveryWindow,
+				SyncInterval: interval, GitSyncInterval: gitInterval, DiscoveryWindow: discoveryWindow,
 				Ready: func(endpoint string) { fmt.Fprintf(command.OutOrStdout(), "Daemon available at %s.\n", endpoint) },
 				Logf:  func(format string, args ...any) { fmt.Fprintf(command.ErrOrStderr(), format+"\n", args...) },
 			})
@@ -48,6 +48,7 @@ func newDaemonRunCmd() *cobra.Command {
 	command.Flags().StringVar(&name, "name", "", "this device name (default: hostname)")
 	command.Flags().StringVar(&listen, "listen", peernetwork.DefaultListenAddress, "peer listen address")
 	command.Flags().DurationVar(&interval, "sync-interval", daemon.DefaultSyncInterval, "registry repair interval")
+	command.Flags().DurationVar(&gitInterval, "git-sync-interval", daemon.DefaultGitSyncInterval, "published Git state repair interval")
 	command.Flags().DurationVar(&discoveryWindow, "discovery-window", daemon.DefaultDiscoveryWindow, "peer discovery window")
 	return command
 }

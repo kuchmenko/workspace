@@ -9,6 +9,7 @@ import (
 
 	"github.com/kuchmenko/workspace/internal/git"
 	"github.com/kuchmenko/workspace/internal/layout"
+	"github.com/kuchmenko/workspace/internal/repo"
 	"github.com/kuchmenko/workspace/internal/tui"
 )
 
@@ -223,6 +224,11 @@ func refreshWorktreePublication(p *Project, wt *Worktree) (branchPublication, er
 	if p == nil || wt == nil || wt.Branch == "" {
 		return branchPublication{}, fmt.Errorf("worktree branch is unavailable")
 	}
+	lock, err := repo.AcquireProjectLock(p.Path)
+	if err != nil {
+		return branchPublication{}, err
+	}
+	defer func() { _ = lock.Release() }()
 	bare := layout.BarePath(p.Path)
 	remote, err := git.FetchRemoteBranch(bare, "origin", wt.Branch)
 	if err != nil {
@@ -269,13 +275,11 @@ func ArchiveWorktree(p *Project, wt *Worktree, root string, force bool) Worktree
 }
 
 func archiveWorktree(p *Project, wt *Worktree, root string, force bool, release func(string, string) error) WorktreeArchiveResult {
-	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, p, wt)
+	liveProject, liveWorktree, lock, err := lockLifecycleWorktree(root, p, wt)
 	if err != nil {
 		return WorktreeArchiveResult{Err: err}
 	}
-	if err := validateWorktreeTarget(liveProject, liveWorktree); err != nil {
-		return WorktreeArchiveResult{Err: err}
-	}
+	defer func() { _ = lock.Release() }()
 	if !force && worktreeDirty(liveWorktree) {
 		return WorktreeArchiveResult{Err: fmt.Errorf("cannot archive modified worktree")}
 	}
@@ -399,13 +403,11 @@ func DeleteWorktreeDestructive(p *Project, wt *Worktree, root string) WorktreeDe
 }
 
 func deleteWorktreeDestructive(p *Project, wt *Worktree, root string, release func(string, string) error) WorktreeDeleteResult {
-	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, p, wt)
+	liveProject, liveWorktree, lock, err := lockLifecycleWorktree(root, p, wt)
 	if err != nil {
 		return WorktreeDeleteResult{Message: "Checkout unchanged.", Detail: err.Error()}
 	}
-	if err := validateWorktreeTarget(liveProject, liveWorktree); err != nil {
-		return WorktreeDeleteResult{Message: "Checkout unchanged.", Detail: err.Error()}
-	}
+	defer func() { _ = lock.Release() }()
 	bare := layout.BarePath(liveProject.Path)
 	localOID := git.RevParse(bare, "refs/heads/"+liveWorktree.Branch)
 	if localOID == "" {
@@ -455,6 +457,25 @@ func deleteWorktreeDestructive(p *Project, wt *Worktree, root string, release fu
 	result.Message = "Checkout deleted; some branch state remains."
 	result.Detail = strings.Join(details, "; ")
 	return result
+}
+
+func lockLifecycleWorktree(root string, project *Project, worktree *Worktree) (*Project, *Worktree, *repo.ProjectLock, error) {
+	if project == nil {
+		return nil, nil, nil, errors.New("project is required")
+	}
+	lock, err := repo.AcquireProjectLock(project.Path)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	liveProject, liveWorktree, err := revalidateLifecycleWorktree(root, project, worktree)
+	if err == nil {
+		err = validateWorktreeTarget(liveProject, liveWorktree)
+	}
+	if err != nil {
+		_ = lock.Release()
+		return nil, nil, nil, err
+	}
+	return liveProject, liveWorktree, lock, nil
 }
 
 func revalidateLifecycleWorktree(root string, reviewedProject *Project, reviewedWorktree *Worktree) (*Project, *Worktree, error) {

@@ -667,6 +667,7 @@ func (store *Store) persistNetworkEvents(ctx context.Context, networkID string, 
 	if err = tx.Commit(); err != nil {
 		return err
 	}
+	store.wakeDaemon("")
 	if analysis.conflict != nil {
 		return ErrNetworkConflict
 	}

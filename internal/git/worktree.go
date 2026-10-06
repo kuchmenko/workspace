@@ -20,6 +20,10 @@ func WorktreeAdd(repoPath, wtPath, branch, createFromBase string) error {
 	return worktreeAddContext(context.Background(), repoPath, wtPath, branch, createFromBase)
 }
 
+func WorktreeAddContext(ctx context.Context, repoPath, wtPath, branch, createFromBase string) error {
+	return worktreeAddContext(ctx, repoPath, wtPath, branch, createFromBase)
+}
+
 func worktreeAddContext(ctx context.Context, repoPath, wtPath, branch, createFromBase string) error {
 	args := []string{"-C", repoPath, "worktree", "add"}
 	if createFromBase != "" {
