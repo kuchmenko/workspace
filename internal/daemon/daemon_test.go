@@ -20,6 +20,142 @@ type daemonEndpoints struct {
 	left, right string
 }
 
+func TestRegistryCyclesOnlyScheduleChangedProjects(t *testing.T) {
+	store, identity := daemonTestStore(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	state := &config.Workspace{
+		Meta: config.Meta{Version: 1},
+		Projects: map[string]config.Project{
+			"app":   {Remote: "https://github.com/example/app.git", Path: "app", Status: config.StatusActive},
+			"other": {Remote: "https://github.com/example/other.git", Path: "other", Status: config.StatusActive},
+		},
+		Aliases: map[string]string{},
+	}
+	workspace, err := store.Create(ctx, "shared", root, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := Options{
+		Store: store, Identity: identity, Name: "local", Logf: func(string, ...any) {},
+		Discover: func(context.Context) ([]peernetwork.PeerEndpoint, error) { return nil, nil },
+	}
+	materializer := newMaterializer(options)
+	scheduler := newScheduler(options, materializer)
+	scheduler.sync(ctx, true, nil)
+	initial := map[string]bool{}
+	for range 2 {
+		select {
+		case request := <-materializer.requests:
+			if request.workspaceID != workspace.WorkspaceID || request.project == "" {
+				t.Fatalf("startup request = %#v", request)
+			}
+			initial[request.project] = true
+		default:
+			t.Fatal("initial project was not scheduled")
+		}
+	}
+	if !initial["app"] || !initial["other"] {
+		t.Fatalf("initial projects = %v", initial)
+	}
+	assertNoGitRequest := func() {
+		t.Helper()
+		select {
+		case request := <-materializer.requests:
+			t.Fatalf("unexpected Git request: %#v", request)
+		default:
+		}
+	}
+	scheduler.sync(ctx, true, nil)
+	assertNoGitRequest()
+	if _, err = store.Mutate(ctx, root, func(state *config.Workspace) error {
+		state.Aliases["app-short"] = "app"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scheduler.sync(ctx, false, map[string]bool{workspace.WorkspaceID: true})
+	assertNoGitRequest()
+	if _, err = store.Mutate(ctx, root, func(state *config.Workspace) error {
+		project := state.Projects["app"]
+		project.Branches = []config.BranchMeta{{Name: "feat/published", LastPushedMachine: "local"}}
+		state.Projects["app"] = project
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scheduler.sync(ctx, false, map[string]bool{workspace.WorkspaceID: true})
+	select {
+	case request := <-materializer.requests:
+		if request != (materializeRequest{workspaceID: workspace.WorkspaceID, project: "app"}) {
+			t.Fatalf("changed project request = %#v", request)
+		}
+	default:
+		t.Fatal("changed project was not scheduled")
+	}
+	assertNoGitRequest()
+}
+
+func TestWorkspaceExchangeSchedulesPulledProject(t *testing.T) {
+	leftStore, leftIdentity := daemonTestStore(t)
+	rightStore, rightIdentity := daemonTestStore(t)
+	pairDaemonStores(t, leftStore, leftIdentity, rightStore, rightIdentity)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	state := &config.Workspace{Meta: config.Meta{Version: 1}, Projects: map[string]config.Project{
+		"app": {Remote: "https://github.com/example/app.git", Path: "app", Status: config.StatusActive},
+	}}
+	if _, err := leftStore.Create(ctx, "shared", leftRoot, state); err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{leftIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err := leftStore.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := leftStore.ExportFor(ctx, "shared", rightIdentity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rightStore.AttachFrom(ctx, "shared", rightRoot, bundle, leftIdentity.ID()); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := leftStore.LoadByName(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = rightStore.Mutate(ctx, rightRoot, func(state *config.Workspace) error {
+		project := state.Projects["app"]
+		project.DefaultBranch = "main"
+		state.Projects["app"] = project
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ready, done := make(chan string, 1), make(chan error, 1)
+	go func() {
+		done <- peernetwork.Serve(ctx, peernetwork.ServeOptions{
+			Store: rightStore, Identity: rightIdentity, Name: "right",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(endpoint string) { ready <- endpoint },
+		})
+	}()
+	defer func() { cancel(); <-done }()
+	options := Options{Store: leftStore, Identity: leftIdentity, Name: "left", Logf: func(string, ...any) {}}
+	materializer := newMaterializer(options)
+	scheduler := newScheduler(options, materializer)
+	scheduler.workspacesSeen[workspace.WorkspaceID] = workspace
+	scheduler.exchangeWorkspace(ctx, workspace, daemonNetworkDevice(t, leftStore, rightIdentity.ID()), <-ready)
+	select {
+	case request := <-materializer.requests:
+		if request != (materializeRequest{workspaceID: workspace.WorkspaceID, project: "app"}) {
+			t.Fatalf("pulled project request = %#v", request)
+		}
+	default:
+		t.Fatal("pulled project was not scheduled")
+	}
+}
+
 func TestRegistryAutoSyncUsesLowerDeviceIDInitiator(t *testing.T) {
 	leftStore, leftIdentity := daemonTestStore(t)
 	rightStore, rightIdentity := daemonTestStore(t)

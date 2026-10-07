@@ -254,14 +254,11 @@ func ensureMainWorktree(ctx context.Context, mainPath, barePath, branch string) 
 	if _, err := os.Stat(mainPath); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return git.ErrPathBlocked
 	}
-	if branch == "" {
+	if branch == "" || !git.HasRemoteBranch(barePath, "origin", branch) {
 		return git.ErrNeedsBootstrap
 	}
 	base := ""
 	if !git.HasBranch(barePath, branch) {
-		if !git.HasRemoteBranch(barePath, "origin", branch) {
-			return git.ErrNeedsBootstrap
-		}
 		base = "origin/" + branch
 	}
 	if err := git.WorktreeAddContext(ctx, barePath, mainPath, branch, base); err != nil {

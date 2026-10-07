@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"time"
 
@@ -103,14 +104,15 @@ func Run(ctx context.Context, options Options) error {
 }
 
 type scheduler struct {
-	options   Options
-	git       *materializer
-	triggers  chan string
-	endpoints map[string]string
+	options        Options
+	git            *materializer
+	triggers       chan string
+	endpoints      map[string]string
+	workspacesSeen map[string]registry.Workspace
 }
 
 func newScheduler(options Options, materializer *materializer) *scheduler {
-	return &scheduler{options: options, git: materializer, triggers: make(chan string, 128), endpoints: map[string]string{}}
+	return &scheduler{options: options, git: materializer, triggers: make(chan string, 128), endpoints: map[string]string{}, workspacesSeen: map[string]registry.Workspace{}}
 }
 
 func (scheduler *scheduler) wake(peerID, workspaceID string) {
@@ -194,7 +196,7 @@ func (scheduler *scheduler) sync(ctx context.Context, all bool, pending map[stri
 		return
 	}
 	for _, workspace := range workspaces {
-		scheduler.git.trigger(workspace.WorkspaceID, "")
+		scheduler.scheduleGitChanges(workspace)
 	}
 	if all || len(scheduler.endpoints) == 0 {
 		peers, err := scheduler.options.Discover(ctx)
@@ -217,6 +219,16 @@ func (scheduler *scheduler) sync(ctx context.Context, all bool, pending map[stri
 	for _, workspace := range workspaces {
 		scheduler.syncWorkspace(ctx, workspace, devices, scheduler.endpoints)
 	}
+}
+
+func (scheduler *scheduler) scheduleGitChanges(workspace registry.Workspace) {
+	previous := scheduler.workspacesSeen[workspace.WorkspaceID]
+	for name, project := range workspace.State.Projects {
+		if previous.State == nil || !reflect.DeepEqual(previous.State.Projects[name], project) {
+			scheduler.git.trigger(workspace.WorkspaceID, name)
+		}
+	}
+	scheduler.workspacesSeen[workspace.WorkspaceID] = workspace
 }
 
 func (scheduler *scheduler) workspaces(ctx context.Context, all bool, pending map[string]bool) ([]registry.Workspace, error) {
@@ -269,6 +281,9 @@ func (scheduler *scheduler) exchangeWorkspace(ctx context.Context, workspace reg
 	}
 	scheduler.options.Logf("daemon: sync %s with %s: %s", workspace.Name, peer.Name, result.Status)
 	if result.Head != workspace.Head {
+		if updated, loadErr := scheduler.options.Store.LoadByName(ctx, workspace.Name); loadErr == nil {
+			scheduler.scheduleGitChanges(updated)
+		}
 		scheduler.trigger(workspace.WorkspaceID)
 	}
 }

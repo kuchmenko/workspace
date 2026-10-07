@@ -112,6 +112,11 @@ with access to fewer projects uses a separate smaller workspace. Existing
 plain checkouts and repositories whose configured origin differs from the
 registry are left unchanged for explicit review.
 
+Recreating a missing main worktree requires the configured default branch to
+exist on the remote, even when a local branch with that name remains in the
+bare store. Unpublished local branches are preserved without creating a new
+checkout automatically.
+
 ## Triggering synchronization
 
 Mutating `ws` commands wake the daemon after committing local state. Registry
@@ -124,6 +129,10 @@ and a slower Git repair sweep catch plain Git pushes, remote changes made by CI
 or a web UI, lost hints, and work left incomplete by a crash. The default Git
 repair interval is 15 minutes and can be changed independently from registry
 repair. Hints make `ws worktree push` fast; sweeps keep plain Git reliable.
+
+Registry cycles compare project metadata and schedule Git work only for changed
+projects. An unchanged registry or an alias-only update does not start a Git
+pass. Full Git sweeps run at startup and on the separate Git repair timer.
 
 `ws sync` keeps its local foreground review, selection, remote-conversion,
 mirror, and cancellation behavior. It asks the daemon to exchange registry state

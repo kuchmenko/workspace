@@ -134,6 +134,28 @@ func TestMaterializerPreservesDivergedWorktree(t *testing.T) {
 	}
 }
 
+func TestMaterializerDoesNotRestoreUnpublishedMainBranch(t *testing.T) {
+	useTestGitEnvironment(t)
+	remote := testutil.InitFakeRemote(t, "app", "published")
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "app")
+	barePath := layout.BarePath(mainPath)
+	testutil.CloneBare(t, remote, barePath)
+	testutil.RunGit(t, barePath, "branch", "main", "published")
+	localHead := git.RevParse(barePath, "refs/heads/main")
+	project := config.Project{Remote: remote, Path: "app", Status: config.StatusActive, DefaultBranch: "main"}
+	materializer := &materializer{machine: "macos", logf: func(string, ...any) {}}
+	if _, err := materializer.materializeProject(context.Background(), root, "app", project); !errors.Is(err, git.ErrNeedsBootstrap) {
+		t.Fatalf("unpublished main error = %v", err)
+	}
+	if _, err := os.Stat(mainPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unpublished main checkout exists: %v", err)
+	}
+	if got := git.RevParse(barePath, "refs/heads/main"); got != localHead {
+		t.Fatalf("local main changed from %s to %s", localHead, got)
+	}
+}
+
 func TestMaterializerSkipsLockedProject(t *testing.T) {
 	useTestGitEnvironment(t)
 	root := t.TempDir()
