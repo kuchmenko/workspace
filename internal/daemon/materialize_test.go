@@ -58,7 +58,11 @@ func TestMaterializerFastForwardsCleanAndPreservesDirtyWorktree(t *testing.T) {
 	useTestGitEnvironment(t)
 	remote := testutil.InitFakeRemote(t, "app", "main")
 	seed := filepath.Join(filepath.Dir(remote), "seed")
-	root := t.TempDir()
+	testutil.RunGit(t, seed, "push", "origin", "main:feat/outside")
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(t.TempDir(), root); err != nil {
+		t.Fatal(err)
+	}
 	project := config.Project{Remote: remote, Path: "app", Status: config.StatusActive, DefaultBranch: "main"}
 	materializer := &materializer{machine: "macos", logf: func(string, ...any) {}}
 	if _, err := materializer.materializeProject(context.Background(), root, "app", project); err != nil {
@@ -66,15 +70,23 @@ func TestMaterializerFastForwardsCleanAndPreservesDirtyWorktree(t *testing.T) {
 	}
 	mainPath := filepath.Join(root, "app")
 	before := git.RevParse(mainPath, "HEAD")
+	outsidePath := filepath.Join(t.TempDir(), "outside")
+	testutil.RunGit(t, layout.BarePath(mainPath), "worktree", "add", outsidePath, "feat/outside")
 
 	writeCommit(t, seed, "remote.txt", "second\n", "second")
-	testutil.RunGit(t, seed, "push", "origin", "main")
+	testutil.RunGit(t, seed, "push", "origin", "main", "main:feat/outside")
 	if _, err := materializer.materializeProject(context.Background(), root, "app", project); err != nil {
 		t.Fatal(err)
 	}
 	after := git.RevParse(mainPath, "HEAD")
 	if after == before || after != git.RevParse(seed, "HEAD") {
 		t.Fatalf("clean worktree HEAD = %s, before = %s, remote = %s", after, before, git.RevParse(seed, "HEAD"))
+	}
+	if got := git.RevParse(outsidePath, "HEAD"); got != before {
+		t.Fatalf("outside worktree moved from %s to %s", before, got)
+	}
+	if got := git.RevParse(outsidePath, "origin/feat/outside"); got != after {
+		t.Fatalf("outside branch was not fetched: got %s, want %s", got, after)
 	}
 
 	testutil.AddDirty(t, mainPath)
@@ -88,6 +100,59 @@ func TestMaterializerFastForwardsCleanAndPreservesDirtyWorktree(t *testing.T) {
 	}
 	if !git.IsDirty(mainPath) {
 		t.Fatal("dirty worktree was modified or cleaned")
+	}
+}
+
+func TestMaterializerRejectsUnsafeRepositoryLayoutBeforeFetch(t *testing.T) {
+	for _, scenario := range []string{"outside-bare-store", "unrelated-checkout", "plain-checkout"} {
+		t.Run(scenario, func(t *testing.T) {
+			useTestGitEnvironment(t)
+			remote := testutil.InitFakeRemote(t, "app", "main")
+			seed := filepath.Join(filepath.Dir(remote), "seed")
+			root := t.TempDir()
+			mainPath := filepath.Join(root, "app")
+			barePath := layout.BarePath(mainPath)
+			outside := t.TempDir()
+			outsideMain := filepath.Join(outside, "main")
+			storePath := barePath
+			if scenario == "outside-bare-store" {
+				storePath = filepath.Join(outside, "app.bare")
+			}
+			testutil.CloneBare(t, remote, storePath)
+			testutil.RunGit(t, storePath, "worktree", "add", outsideMain, "main")
+			switch scenario {
+			case "outside-bare-store":
+				if err := os.Symlink(storePath, barePath); err != nil {
+					t.Fatal(err)
+				}
+				testutil.RunGit(t, storePath, "worktree", "add", "-b", "workspace-local", mainPath, "main")
+			case "unrelated-checkout":
+				otherStore := filepath.Join(outside, "other.bare")
+				testutil.CloneBare(t, remote, otherStore)
+				testutil.RunGit(t, otherStore, "worktree", "add", mainPath, "main")
+			default:
+				testutil.RunGit(t, root, "clone", remote, mainPath)
+			}
+			before := git.RevParse(outsideMain, "HEAD")
+			mainBefore := git.RevParse(mainPath, "HEAD")
+			remoteBefore := git.RevParse(storePath, "refs/remotes/origin/main")
+			writeCommit(t, seed, "published.txt", "published\n", "published")
+			testutil.RunGit(t, seed, "push", "origin", "main")
+			project := config.Project{Remote: remote, Path: "app", Status: config.StatusActive, DefaultBranch: "main"}
+			materializer := &materializer{machine: "macos", logf: func(string, ...any) {}}
+			if _, err := materializer.materializeProject(context.Background(), root, "app", project); err == nil {
+				t.Error("unsafe layout was accepted")
+			}
+			if got := git.RevParse(outsideMain, "HEAD"); got != before {
+				t.Errorf("outside checkout moved from %s to %s", before, got)
+			}
+			if got := git.RevParse(mainPath, "HEAD"); got != mainBefore {
+				t.Errorf("main checkout moved from %s to %s", mainBefore, got)
+			}
+			if got := git.RevParse(storePath, "refs/remotes/origin/main"); got != remoteBefore {
+				t.Errorf("unsafe store was fetched: before %s, after %s", remoteBefore, got)
+			}
+		})
 	}
 }
 

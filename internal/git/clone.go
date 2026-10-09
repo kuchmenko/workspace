@@ -111,8 +111,7 @@ func ResumeCloneIntoLayout(wsRoot, name string, proj *config.Project) (*CloneRes
 	if err != nil || origin != proj.Remote {
 		return nil, ErrAlreadyCloned
 	}
-	commonDir, err := gitCommonDir(mainPath)
-	if err != nil || !samePath(commonDir, barePath) {
+	if !IsWorktreeOf(mainPath, barePath) {
 		return nil, ErrAlreadyCloned
 	}
 	branch, err := CurrentBranch(mainPath)
@@ -124,6 +123,11 @@ func ResumeCloneIntoLayout(wsRoot, name string, proj *config.Project) (*CloneRes
 	}
 	proj.DefaultBranch = branch
 	return &CloneResult{Project: name, BarePath: barePath, MainWorktree: mainPath, DefaultBranch: branch}, nil
+}
+
+func IsWorktreeOf(worktreePath, barePath string) bool {
+	commonDir, err := gitCommonDir(worktreePath)
+	return err == nil && samePath(commonDir, barePath)
 }
 
 func gitCommonDir(repoPath string) (string, error) {

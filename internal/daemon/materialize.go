@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -200,7 +201,7 @@ func (materializer *materializer) materializeProject(ctx context.Context, root, 
 	if err != nil {
 		return nil, err
 	}
-	if err = materializer.fastForwardWorktrees(ctx, barePath); err != nil {
+	if err = materializer.fastForwardWorktrees(ctx, root, barePath); err != nil {
 		return nil, err
 	}
 	if metadataChanged || changed {
@@ -209,14 +210,28 @@ func (materializer *materializer) materializeProject(ctx context.Context, root, 
 	return nil, nil
 }
 
-func (materializer *materializer) prepareRepository(ctx context.Context, root, name, mainPath string, project *config.Project) (string, string, bool, error) {
-	barePath := layout.BarePath(mainPath)
-	metadataChanged := false
-	var err error
-	if _, err = os.Stat(barePath); errors.Is(err, os.ErrNotExist) {
-		if _, mainErr := os.Stat(mainPath); mainErr == nil || !errors.Is(mainErr, os.ErrNotExist) {
-			return "", "", false, git.ErrNeedsMigration
+func validateMaterializationLayout(root, mainPath, projectPath string) (string, error) {
+	barePath, err := layout.ProjectPath(root, layout.BarePath(filepath.Clean(projectPath)))
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(mainPath); err == nil {
+		if !git.IsWorktreeOf(mainPath, barePath) {
+			return "", git.ErrNeedsMigration
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	return barePath, nil
+}
+
+func (materializer *materializer) prepareRepository(ctx context.Context, root, name, mainPath string, project *config.Project) (string, string, bool, error) {
+	barePath, err := validateMaterializationLayout(root, mainPath, project.Path)
+	if err != nil {
+		return "", "", false, err
+	}
+	metadataChanged := false
+	if _, err = os.Stat(barePath); errors.Is(err, os.ErrNotExist) {
 		result, cloneErr := git.CloneIntoLayoutContext(ctx, root, name, project, git.CloneOptions{Logf: materializer.logf})
 		if cloneErr != nil {
 			return "", "", false, cloneErr
@@ -330,12 +345,27 @@ func (materializer *materializer) addBranchWorktree(ctx context.Context, mainPat
 	return path, nil
 }
 
-func (materializer *materializer) fastForwardWorktrees(ctx context.Context, barePath string) error {
+func (materializer *materializer) fastForwardWorktrees(ctx context.Context, root, barePath string) error {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
 	worktrees, err := git.WorktreeList(barePath)
 	if err != nil {
 		return err
 	}
 	for _, worktree := range worktrees {
+		path, pathErr := filepath.EvalSymlinks(worktree.Path)
+		if pathErr != nil {
+			continue
+		}
+		relative, pathErr := filepath.Rel(root, path)
+		if pathErr != nil {
+			continue
+		}
+		if _, pathErr = layout.ProjectPath(root, relative); pathErr != nil || !git.IsWorktreeOf(path, barePath) {
+			continue
+		}
 		if err = fastForwardWorktree(ctx, worktree); err != nil {
 			return err
 		}
