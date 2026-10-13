@@ -11,9 +11,11 @@ Confirm the same verification number on both sides. Keep `ws network serve`
 running on devices that should be reachable. The stable default TCP port is
 `17337`.
 
-For continuous registry synchronization, run `ws daemon run` instead of
-`ws network serve`. The daemon owns the same peer listener and periodically
-repairs registry differences. It does not fetch, push, or modify Git projects.
+For background synchronization, use `ws daemon install` instead of
+`ws network serve`, or `ws daemon run` for a foreground daemon. It owns the same
+peer listener, exchanges registry revisions, and prepares published Git state
+from configured remotes. It never pushes project branches or overwrites dirty
+checkouts. See [daemon setup and logs](reference.md#daemon).
 
 Pairing establishes device identity and transport trust only. It does not make
 any workspace visible.
@@ -66,12 +68,18 @@ ws workspace sync personal
 Or keep it automatic on every participating device:
 
 ```sh
-ws daemon run
+ws daemon install --name your-device-name
 ```
 
 For each device pair, only the peer with the lower stable device ID starts the
 bidirectional exchange. The other peer sends an authenticated wake hint. A
 one-minute periodic pass repairs missed hints and offline intervals.
+
+The daemon clones missing active repositories and creates worktrees only for
+published registered branches. `ws worktree push` wakes peers through branch
+metadata; ordinary `git push` changes are found by the separate 15-minute Git
+repair pass. Clean behind-only checkouts fast-forward. Dirty files, stashes,
+and unpushed commits stay on the originating machine.
 
 The command pushes and pulls signed registry revisions through authenticated
 TLS. Repeated transfers are idempotent. Independent changes merge

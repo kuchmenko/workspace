@@ -5,10 +5,10 @@ projects across multiple machines.
 
 SQLite at `$XDG_STATE_HOME/ws/registry.db` is the runtime authority for
 named local workspaces, and per-feature worktrees carry explicit branch
-metadata. `workspace.toml` is import/export interchange only. Project Git
-synchronization happens only when you run `ws sync`; branch pushes remain
-a deliberate user action. A daemon can continuously exchange signed workspace
-registry revisions without touching Git repositories.
+metadata. `workspace.toml` is import/export interchange only. `ws sync` offers
+reviewed foreground Git synchronization. The daemon exchanges signed registry
+revisions and prepares published repositories and worktrees in the background.
+Branch pushes remain a deliberate user action.
 
 ## Install
 
@@ -25,6 +25,20 @@ gh repo clone kuchmenko/workspace
 cd workspace
 just install            # binary lands at ~/.local/bin/ws
 ```
+
+Enable background sync on Linux or macOS after reviewing your registered
+workspaces:
+
+```sh
+ws daemon install --name archlinux  # use your device's name on each machine
+ws daemon uninstall                # stop and remove the service; keep your data
+```
+
+Installation starts sync for every registered workspace and clones missing
+active projects. It uses a systemd user service on Linux or a LaunchAgent on
+macOS; no sudo is needed. Run it from the installed binary, not a temporary
+build. After replacing the binary, repeat the install command with the same
+device name to restart the service. See [daemon setup and logs](docs/reference.md#daemon).
 
 ## Quick start
 
@@ -63,12 +77,14 @@ ws workspace available
 ws workspace attach personal --root ~/dev
 ws sync
 
-# Keep later registry changes synchronized
-ws daemon run
+# Keep registry and published Git state synchronized at login
+ws daemon install
 ```
 
-This exchanges signed SQLite registry revisions only. Workspace roots remain
-machine-local; repositories, worktrees, files, and credentials are not sent.
+Peer registry exchange sends signed SQLite revisions only. The daemon then
+fetches published Git state from each configured remote. Workspace roots and
+credentials remain machine-local. Dirty files, stashes, and unpushed commits
+are not transferred.
 
 For everyday navigation, run bare `ws` in a terminal. It opens the
 [Explorer TUI](docs/explorer.md) across every registered workspace and
@@ -101,8 +117,8 @@ worktree.
 
 - Auto-push project branches to origin. Origin pushes are explicit
   (`ws worktree push` or plain `git push`).
-- Synchronize project Git in the background. `ws daemon run` synchronizes only
-  signed workspace registry state; run `ws sync` for Git operations.
+- Transfer dirty files, stashes, or unpushed commits between machines. Background
+  Git sync only materializes published state from configured remotes.
 - Run `merge`, `rebase`, `reset`, `force`, or project-branch `push`
   inside a project repo. Unsafe states become skips or conflicts.
 - Synthesize a `wt/<machine>/<topic>` namespace. Branches use
@@ -118,5 +134,6 @@ multi-machine sync model assumes one human, several machines.
 
 `ws sync` exchanges registry state with trusted peers before and after its
 project Git operations. `ws workspace sync` runs only the registry exchange.
-`ws daemon run` keeps the peer listener available and repeats that registry
-exchange without invoking project Git synchronization.
+`ws daemon run` keeps the peer listener available, repeats that registry
+exchange, and safely materializes published Git state. `ws daemon install`
+keeps it running through your user service manager.

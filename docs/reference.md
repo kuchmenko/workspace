@@ -193,16 +193,54 @@ around project Git synchronization.
 
 ```sh
 ws daemon run \
+  [--name device-name] \
   [--listen :17337] \
   [--sync-interval 1m] \
+  [--git-sync-interval 15m] \
   [--discovery-window 1.5s]
+ws daemon install [--name device-name]
+ws daemon uninstall
 ```
 
 Runs the trusted-peer listener and continuously exchanges authorized signed
 workspace registry revisions. The lower stable device ID initiates each
 bidirectional peer exchange; the other peer sends an authenticated wake hint.
 The daemon keeps its scheduler in memory and uses periodic passes for recovery.
-It never invokes project Git synchronization.
+It clones missing active projects, creates worktrees for published registered
+branches, and fast-forwards clean behind-only checkouts. Dirty, ahead, diverged,
+busy, plain, origin-mismatched, and out-of-workspace checkouts are left alone.
+The daemon never pushes branches or mirrors, resets, rebases, deletes project
+data, or invokes the foreground sync runner.
+
+`install` registers the current executable as a user service, enables login
+startup, and starts it with the default intervals. Running it again updates
+the service and restarts the daemon. Use the installed binary at a permanent
+path and stop any manually started daemon holding port 17337 first. The default
+device name is the hostname; use `--name` to keep your existing peer name.
+The service retains the installation's PATH and XDG config/state/data paths.
+Git credentials must work noninteractively in the service's session; the
+installer does not copy credentials or save a temporary SSH agent socket.
+
+On Linux the unit is `~/.config/systemd/user/ws-daemon.service`:
+
+```sh
+systemctl --user status ws-daemon.service
+journalctl --user -u ws-daemon.service -f
+```
+
+On macOS the LaunchAgent is
+`~/Library/LaunchAgents/com.kuchmenko.ws.daemon.plist`:
+
+```sh
+launchctl print gui/$(id -u)/com.kuchmenko.ws.daemon
+tail -f "${XDG_STATE_HOME:-$HOME/.local/state}/ws/daemon.log"
+```
+
+`uninstall` stops the managed daemon and removes only the service file and
+its startup registration. It keeps workspaces, repositories, credentials,
+logs, and the CLI binary. Repeating uninstall is safe. Neither command requires
+sudo or changes system-wide services. Login startup is not boot-before-login;
+Linux administrators can separately enable user lingering when needed.
 
 ## Authentication
 
