@@ -16,7 +16,7 @@ func TestCloneIntoLayout_HappyPath(t *testing.T) {
 	remote := testutil.InitFakeRemote(t, "myapp", "main")
 
 	proj := &config.Project{
-		Remote: remote,
+		Remote: "file://" + remote,
 		Path:   "personal/myapp",
 		Status: config.StatusActive,
 	}
@@ -66,6 +66,18 @@ func TestCloneIntoLayout_HappyPath(t *testing.T) {
 	wantRefspec := "+refs/heads/*:refs/remotes/origin/*"
 	if gotRefspec != wantRefspec {
 		t.Errorf("remote.origin.fetch = %q, want %q", gotRefspec, wantRefspec)
+	}
+	if got := testutil.RunGit(t, main, "rev-parse", "--abbrev-ref", "@{u}"); got != "origin/main" {
+		t.Errorf("upstream = %q, want origin/main", got)
+	}
+	wantCommit := testutil.RunGit(t, remote, "rev-parse", "refs/heads/main")
+	for _, ref := range []string{"HEAD", "@{u}"} {
+		if got := testutil.RunGit(t, main, "rev-parse", ref); got != wantCommit {
+			t.Errorf("%s = %s, want source commit %s", ref, got, wantCommit)
+		}
+	}
+	if got := testutil.RunGit(t, main, "status", "--porcelain"); got != "" {
+		t.Errorf("main worktree is dirty: %s", got)
 	}
 }
 
@@ -135,20 +147,32 @@ func TestCloneIntoLayoutRejectsEscapingSymlinkBeforeMutation(t *testing.T) {
 
 func TestCloneIntoLayout_DefaultBranchPreSet(t *testing.T) {
 	wsRoot := t.TempDir()
-	remote := testutil.InitFakeRemote(t, "myapp", "main")
+	remote := testutil.InitFakeRemote(t, "myapp", "trunk")
+	wantCommit := testutil.RunGit(t, remote, "rev-parse", "refs/heads/trunk")
+	tree := testutil.RunGit(t, remote, "rev-parse", "HEAD^{tree}")
+	otherCommit := testutil.RunGit(t, remote, "commit-tree", tree, "-p", wantCommit, "-m", "other branch")
+	testutil.RunGit(t, remote, "update-ref", "refs/heads/main", otherCommit)
 
 	proj := &config.Project{
 		Remote:        remote,
 		Path:          "myapp",
 		Status:        config.StatusActive,
-		DefaultBranch: "main",
+		DefaultBranch: "trunk",
 		// explicit
 	}
 	res, err := git.CloneIntoLayout(wsRoot, "myapp", proj, git.CloneOptions{})
 	if err != nil {
 		t.Fatalf("CloneIntoLayout: %v", err)
 	}
-	if res.DefaultBranch != "main" {
-		t.Errorf("DefaultBranch = %s, want main", res.DefaultBranch)
+	if res.DefaultBranch != "trunk" {
+		t.Errorf("DefaultBranch = %s, want trunk", res.DefaultBranch)
+	}
+	if got := testutil.RunGit(t, res.MainWorktree, "rev-parse", "--abbrev-ref", "@{u}"); got != "origin/trunk" {
+		t.Errorf("upstream = %q, want origin/trunk", got)
+	}
+	for _, ref := range []string{"HEAD", "@{u}"} {
+		if got := testutil.RunGit(t, res.MainWorktree, "rev-parse", ref); got != wantCommit {
+			t.Errorf("%s = %s, want trunk source commit %s", ref, got, wantCommit)
+		}
 	}
 }

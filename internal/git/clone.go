@@ -152,7 +152,7 @@ func cloneAndMaterializeContext(ctx context.Context, name string, proj *config.P
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	defaultBranch, err := initBareLayout(name, proj, barePath, opts)
+	defaultBranch, err := initBareLayout(ctx, name, proj, barePath, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -223,9 +223,12 @@ func preflightLayout(barePath, mainPath string) error {
 	return ErrPathBlocked
 }
 
-func initBareLayout(name string, proj *config.Project, barePath string, opts CloneOptions) (string, error) {
+func initBareLayout(ctx context.Context, name string, proj *config.Project, barePath string, opts CloneOptions) (string, error) {
 	if err := SetFetchRefspec(barePath); err != nil {
 		return "", fmt.Errorf("set fetch refspec: %w", err)
+	}
+	if err := FetchContext(ctx, barePath); err != nil {
+		return "", fmt.Errorf("populate origin refs: %w", err)
 	}
 	for mirror, url := range proj.Mirrors {
 		if err := EnsureMirrorRemote(barePath, mirror, url); err != nil {
