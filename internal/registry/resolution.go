@@ -24,7 +24,7 @@ func (store *Store) Conflicts(ctx context.Context, name string) ([]Conflict, err
 	var conflicts []Conflict
 	for rows.Next() {
 		var conflict Conflict
-		if err = rows.Scan(&conflict.Path, &conflict.Base, &conflict.Left, &conflict.Right); err != nil {
+		if err = rows.Scan(&conflict.Path, (*[]byte)(&conflict.Base), (*[]byte)(&conflict.Left), (*[]byte)(&conflict.Right)); err != nil {
 			return nil, err
 		}
 		conflicts = append(conflicts, conflict)
@@ -181,7 +181,7 @@ func unresolvedConflicts(ctx context.Context, tx *sql.Tx, workspaceID, revisionI
 	var conflicts []Conflict
 	for rows.Next() {
 		var conflict Conflict
-		if err = rows.Scan(&conflict.Path, &conflict.Base, &conflict.Left, &conflict.Right); err != nil {
+		if err = rows.Scan(&conflict.Path, (*[]byte)(&conflict.Base), (*[]byte)(&conflict.Left), (*[]byte)(&conflict.Right)); err != nil {
 			return nil, err
 		}
 		conflicts = append(conflicts, conflict)

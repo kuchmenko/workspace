@@ -275,6 +275,36 @@ func TestStoresConvergeAcrossFastForwardDivergenceAndConflict(t *testing.T) {
 	if err != nil || len(conflicts) != 0 || rightResolved.State.Aliases["editor"] != "nano" {
 		t.Fatalf("replicated resolution workspace=%#v conflicts=%#v error=%v", rightResolved, conflicts, err)
 	}
+
+	for _, key := range []string{"new-editor", "new-shell"} {
+		updateAlias(t, left, leftRoot, key, "left")
+		updateAlias(t, right, rightRoot, key, "right")
+	}
+	rightBundle, err = right.Export(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = left.Integrate(ctx, "shared", rightBundle); err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err = left.Conflicts(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conflicts) != 2 || len(conflicts[0].Base) != 0 || len(conflicts[1].Base) != 0 {
+		t.Fatalf("new-key conflicts = %#v", conflicts)
+	}
+	resolved, err = left.Resolve(ctx, "shared", "/aliases/new-editor", []byte(`"right"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflicts, err = left.Conflicts(ctx, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State.Aliases["new-editor"] != "right" || len(conflicts) != 1 || conflicts[0].Path != "/aliases/new-shell" || len(conflicts[0].Base) != 0 || string(conflicts[0].Left) != `"left"` || string(conflicts[0].Right) != `"right"` {
+		t.Fatalf("partial resolution workspace=%#v conflicts=%#v", resolved, conflicts)
+	}
 }
 
 func TestThreeStoresPreserveConflictAcrossUnrelatedMerge(t *testing.T) {
