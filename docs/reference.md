@@ -236,6 +236,20 @@ launchctl print gui/$(id -u)/com.kuchmenko.ws.daemon
 tail -f "${XDG_STATE_HOME:-$HOME/.local/state}/ws/daemon.log"
 ```
 
+macOS discovery uses the system `/usr/bin/dns-sd` Bonjour tool. The `ws`
+process owns its advertisement and stops discovery processes when their
+discovery window ends or the command is canceled.
+
+On macOS 15 and later, user LaunchAgents need Local Network permission for
+outgoing peer connections. Check System Settings > Privacy & Security > Local
+Network and allow `ws` if it is listed. A successful command from Terminal or
+SSH does not prove the LaunchAgent has permission: those contexts are exempt.
+Incoming TCP connections do not require this permission. If the agent reports
+"no route to host" while the same command works in Terminal, inspect network
+policy as well as routing; that error alone does not identify the cause.
+See Apple's [local network privacy guidance](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
+The installer does not change privacy settings or grant permission.
+
 `uninstall` stops the managed daemon and removes only the service file and
 its startup registration. It keeps workspaces, repositories, credentials,
 logs, and the CLI binary. Repeating uninstall is safe. Neither command requires

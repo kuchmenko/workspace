@@ -15,38 +15,26 @@ const pairingService = "_ws-pair._tcp"
 const peerService = "_ws-peer._tcp"
 
 type advertisement struct {
-	server *zeroconf.Server
+	close func()
 }
 
 func advertisePair(instance, code string, port int) (*advertisement, error) {
-	server, err := zeroconf.Register(instance, pairingService, "local.", port, []string{"v=1", "invitation=" + invitationID(code)}, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &advertisement{server: server}, nil
+	return advertiseService(instance, pairingService, port, []string{"v=1", "invitation=" + invitationID(code)})
 }
 
 func advertisePeer(instance, id string, port int) (*advertisement, error) {
-	server, err := zeroconf.Register(instance, peerService, "local.", port, []string{"v=1", "id=" + id}, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &advertisement{server: server}, nil
+	return advertiseService(instance, peerService, port, []string{"v=1", "id=" + id})
 }
 
 func (advertisement *advertisement) Close() {
-	advertisement.server.Shutdown()
+	advertisement.close()
 }
 
 func discoverPair(ctx context.Context, code string) (string, error) {
 	browseContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	resolver, err := zeroconf.NewResolver()
+	entries, err := browseServices(browseContext, pairingService)
 	if err != nil {
-		return "", err
-	}
-	entries := make(chan *zeroconf.ServiceEntry)
-	if err = resolver.Browse(browseContext, pairingService, "local.", entries); err != nil {
 		return "", err
 	}
 	for entry := range entries {
@@ -92,12 +80,8 @@ func invitationID(code string) string {
 func discoverPeers(ctx context.Context) (map[string][]string, error) {
 	browseContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	resolver, err := zeroconf.NewResolver()
+	entries, err := browseServices(browseContext, peerService)
 	if err != nil {
-		return normalizePeerDiscovery(ctx, nil, err)
-	}
-	entries := make(chan *zeroconf.ServiceEntry)
-	if err = resolver.Browse(browseContext, peerService, "local.", entries); err != nil {
 		return normalizePeerDiscovery(ctx, nil, err)
 	}
 	peers := map[string][]string{}
