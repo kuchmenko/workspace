@@ -141,6 +141,78 @@ func TestWorkspaceFetchAndBidirectionalSync(t *testing.T) {
 	}
 }
 
+// When both sides already share the same single head and epoch, Sync returns
+// before any import, so stored history is not re-authorized on idle syncs. A
+// stored proof with an unknown author key proves the import path was skipped.
+// Like a full exchange, an idle sync reports only conflicts it created, not
+// conflicts left over from earlier syncs.
+func TestWorkspaceSyncSkipsExchangeWhenHeadsMatch(t *testing.T) {
+	archStore, archIdentity, asahiStore, asahiIdentity := pairedTestStores(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	archRoot := t.TempDir()
+	created, err := archStore.Create(ctx, "personal", archRoot, &config.Workspace{Meta: config.Meta{Version: 1}, Groups: map[string]config.Group{}, Projects: map[string]config.Project{}, Aliases: map[string]string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := registry.AccessPolicy{Mode: registry.AccessAll, DefaultRole: registry.WorkspaceWriter, Roles: map[string]string{archIdentity.ID(): registry.WorkspaceAdmin}}
+	if _, err = archStore.SetAccess(ctx, "personal", policy); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := make(chan string, 1)
+	serverOutcome := make(chan error, 1)
+	go func() {
+		serverOutcome <- Serve(ctx, ServeOptions{
+			Store: archStore, Identity: archIdentity, Name: "arch",
+			ListenAddress: "127.0.0.1:0", DisableDiscovery: true,
+			Ready: func(address string) { endpoint <- address },
+		})
+	}()
+	address := <-endpoint
+	arch := mustNetworkDevice(t, ctx, asahiStore, archIdentity.ID())
+	source := AvailableWorkspace{WorkspaceSummary: registry.WorkspaceSummary{Name: "personal", WorkspaceID: created.WorkspaceID}, DeviceID: arch.ID, DeviceName: arch.Name, Endpoint: address}
+	if _, err = Attach(ctx, source, asahiStore, asahiIdentity, "asahi", "personal", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Sync(ctx, "personal", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "unchanged" {
+		t.Fatalf("matching heads sync result=%#v error=%v", result, err)
+	}
+	if _, err = archStore.Mutate(ctx, archRoot, func(workspace *config.Workspace) error {
+		workspace.Aliases["from-arch"] = "yes"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err = Sync(ctx, "personal", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "pulled" {
+		t.Fatalf("diverged heads sync result=%#v error=%v", result, err)
+	}
+	path, found := networkTestStorePaths.Load(asahiStore)
+	if !found {
+		t.Fatal("asahi registry path is unavailable")
+	}
+	database, err := sql.Open("sqlite", path.(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if _, err = database.ExecContext(ctx, `UPDATE revision_proofs SET public_key=X'00'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO workspace_conflicts(workspace_id,revision_id,path,left_value,right_value) VALUES(?,?,?,?,?)`, created.WorkspaceID, result.Head, "/aliases/old", []byte(`"left"`), []byte(`"right"`)); err != nil {
+		t.Fatal(err)
+	}
+	result, err = Sync(ctx, "personal", address, arch, asahiStore, asahiIdentity, "asahi")
+	if err != nil || result.Status != "unchanged" {
+		t.Fatalf("idle sync re-verified stored history: result=%#v error=%v", result, err)
+	}
+	cancel()
+	if err = <-serverOutcome; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkspaceWakeRejectsPeerWithoutWorkspaceAccess(t *testing.T) {
 	store, _, _, peerIdentity := pairedTestStores(t)
 	ctx := context.Background()

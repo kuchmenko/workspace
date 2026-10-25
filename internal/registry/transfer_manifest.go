@@ -100,6 +100,27 @@ func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspa
 	return manifest, nil
 }
 
+func (store *Store) SyncUnchanged(ctx context.Context, name, peerID string, remote RevisionManifest) (bool, error) {
+	workspace, err := store.LoadByName(ctx, name)
+	if err != nil {
+		return false, err
+	}
+	if remote.WorkspaceID != workspace.WorkspaceID || remote.Epoch != workspace.Epoch || len(remote.Heads) != 1 {
+		return false, nil
+	}
+	heads, err := store.loadHeads(ctx, workspace.WorkspaceID)
+	if err != nil || len(heads) != 1 || heads[0] != remote.Heads[0] {
+		return false, err
+	}
+	var pending bool
+	err = store.db.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM workspace_access_conflicts WHERE workspace_id=?
+		UNION ALL
+		SELECT 1 FROM workspace_quarantine WHERE workspace_id=? AND source_device_id=?
+	)`, workspace.WorkspaceID, workspace.WorkspaceID, peerID).Scan(&pending)
+	return err == nil && !pending, err
+}
+
 func loadRevisionInventory(ctx context.Context, reader sqlReader, workspaceID string, ids []string) ([]RevisionInventory, error) {
 	inventory := make([]RevisionInventory, 0, len(ids))
 	for _, id := range ids {

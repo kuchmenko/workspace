@@ -101,6 +101,67 @@ func TestManifestWireBytesMatchEncodedRevisions(t *testing.T) {
 	}
 }
 
+// Skipping is safe only when a full exchange could not change anything: one
+// shared head, the same epoch, and no access conflict or quarantine that a
+// full exchange would clear.
+func TestSyncUnchangedOnlyForMatchingSingleHeadWithoutPendingState(t *testing.T) {
+	ctx := context.Background()
+	const peerID = "peer"
+	otherHead := strings.Repeat("f", 64)
+	tests := map[string]struct {
+		setup  func(t *testing.T, store *Store, remote *RevisionManifest)
+		expect bool
+	}{
+		"matching": {setup: func(*testing.T, *Store, *RevisionManifest) {}, expect: true},
+		"other workspace": {setup: func(_ *testing.T, _ *Store, remote *RevisionManifest) {
+			remote.WorkspaceID = "other"
+		}, expect: false},
+		"other epoch": {setup: func(_ *testing.T, _ *Store, remote *RevisionManifest) {
+			remote.Epoch++
+		}, expect: false},
+		"other head": {setup: func(_ *testing.T, _ *Store, remote *RevisionManifest) {
+			remote.Heads = []string{otherHead}
+		}, expect: false},
+		"several heads": {setup: func(t *testing.T, store *Store, remote *RevisionManifest) {
+			execTestSQL(t, store, `INSERT INTO workspace_heads(workspace_id,revision_id) VALUES(?,?)`, remote.WorkspaceID, otherHead)
+			remote.Heads = append(remote.Heads, otherHead)
+		}, expect: false},
+		"quarantine from peer": {setup: func(t *testing.T, store *Store, remote *RevisionManifest) {
+			execTestSQL(t, store, `INSERT INTO workspace_quarantine(workspace_id,source_device_id,head_id,epoch,reason,received_at) VALUES(?,?,?,?,?,?)`, remote.WorkspaceID, peerID, otherHead, remote.Epoch, "stale", "now")
+		}, expect: false},
+		"access conflict": {setup: func(t *testing.T, store *Store, remote *RevisionManifest) {
+			execTestSQL(t, store, `INSERT INTO workspace_access_conflicts(workspace_id,conflict_id,base_revision_id) VALUES(?,?,?)`, remote.WorkspaceID, "conflict", remote.Heads[0])
+		}, expect: false},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			store := openTestStore(t)
+			if _, err := store.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+				t.Fatal(err)
+			}
+			remote, err := store.Manifest(ctx, "shared")
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.setup(t, store, &remote)
+			unchanged, err := store.SyncUnchanged(ctx, "shared", peerID, remote)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if unchanged != test.expect {
+				t.Fatalf("SyncUnchanged=%t, want %t", unchanged, test.expect)
+			}
+		})
+	}
+}
+
+func execTestSQL(t *testing.T, store *Store, query string, args ...any) {
+	t.Helper()
+	if _, err := store.db.Exec(query, args...); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRevisionManifestImportRejectsMalformedAndOutOfOrderPages(t *testing.T) {
 	ctx := context.Background()
 	source, target := pairedRegistryStores(t)

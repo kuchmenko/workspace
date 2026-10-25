@@ -328,24 +328,25 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 		return SyncResult{}, err
 	}
 	workspaceID := before.WorkspaceID
-	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync})
+	remoteManifest, err := requestSyncInventory(ctx, endpoint, target, store, identity, name, workspaceID)
 	if err != nil {
 		return SyncResult{}, err
 	}
-	if response.WorkspaceMissing {
-		return SyncResult{}, UnavailableError{err: errors.New("peer has not attached the workspace")}
+	unchanged, err := store.SyncUnchanged(ctx, workspaceName, target.ID, remoteManifest)
+	if err != nil {
+		return SyncResult{}, err
 	}
-	if response.Manifest == nil {
-		return SyncResult{}, errors.New("peer returned incomplete workspace inventory")
+	if unchanged {
+		return SyncResult{Workspace: workspaceName, Device: target.Name, Status: "unchanged", Head: before.Head}, nil
 	}
-	localImportID, err := store.BeginSyncImportPage(ctx, workspaceName, target.ID, *response.Manifest)
+	localImportID, err := store.BeginSyncImportPage(ctx, workspaceName, target.ID, remoteManifest)
 	if err != nil {
 		return SyncResult{}, err
 	}
 	localPlan := registry.RevisionImportPlan{ID: localImportID}
 	localComplete := false
 	defer abortLocalRevisionImportUnlessComplete(store, target.ID, workspaceID, &localPlan, &localComplete)
-	localPlan, err = appendRemoteManifestPages(ctx, endpoint, target, store, identity, name, registry.RevisionImportSync, localImportID, *response.Manifest)
+	localPlan, err = appendRemoteManifestPages(ctx, endpoint, target, store, identity, name, registry.RevisionImportSync, localImportID, remoteManifest)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -363,6 +364,20 @@ func Sync(ctx context.Context, workspaceName, endpoint string, target registry.D
 	remoteComplete = true
 	status := completedSyncStatus(before.Head, after.Head, finished.SyncStatus, conflicts, finished.Conflicts)
 	return SyncResult{Workspace: workspaceName, Device: target.Name, Status: status, Head: after.Head, Conflicts: conflicts}, nil
+}
+
+func requestSyncInventory(ctx context.Context, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name, workspaceID string) (registry.RevisionManifest, error) {
+	response, err := requestPeer(ctx, endpoint, target, store, identity, name, peerRequest{Version: 1, Action: "workspace.inventory", WorkspaceID: workspaceID, Mode: registry.RevisionImportSync})
+	if err != nil {
+		return registry.RevisionManifest{}, err
+	}
+	if response.WorkspaceMissing {
+		return registry.RevisionManifest{}, UnavailableError{err: errors.New("peer has not attached the workspace")}
+	}
+	if response.Manifest == nil {
+		return registry.RevisionManifest{}, errors.New("peer returned incomplete workspace inventory")
+	}
+	return *response.Manifest, nil
 }
 
 func WakeWorkspace(ctx context.Context, workspaceID, endpoint string, target registry.DeviceRecord, store *registry.Store, identity device.Identity, name string) error {
