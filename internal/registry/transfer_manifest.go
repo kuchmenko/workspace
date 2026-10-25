@@ -40,7 +40,7 @@ func (store *Store) Manifest(ctx context.Context, name string) (RevisionManifest
 	if err != nil {
 		return RevisionManifest{}, err
 	}
-	return store.workspaceManifest(ctx, workspace, false)
+	return store.workspaceManifestPage(ctx, workspace, "", 0)
 }
 
 func (store *Store) ManifestFor(ctx context.Context, name, peerID string) (RevisionManifest, error) {
@@ -48,7 +48,7 @@ func (store *Store) ManifestFor(ctx context.Context, name, peerID string) (Revis
 	if err != nil {
 		return RevisionManifest{}, err
 	}
-	return store.workspaceManifest(ctx, workspace, true)
+	return store.workspaceManifestPage(ctx, workspace, "", 0)
 }
 
 func (store *Store) ManifestPageFor(ctx context.Context, name, peerID, after string) (RevisionManifest, error) {
@@ -63,14 +63,10 @@ func (store *Store) ManifestPageForLimit(ctx context.Context, name, peerID, afte
 	if err != nil {
 		return RevisionManifest{}, err
 	}
-	return store.workspaceManifestPage(ctx, workspace, true, after, limit)
+	return store.workspaceManifestPage(ctx, workspace, after, limit)
 }
 
-func (store *Store) workspaceManifest(ctx context.Context, workspace Workspace, shareable bool) (RevisionManifest, error) {
-	return store.workspaceManifestPage(ctx, workspace, shareable, "", 0)
-}
-
-func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspace, shareable bool, after string, limit int) (RevisionManifest, error) {
+func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspace, after string, limit int) (RevisionManifest, error) {
 	tx, err := store.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return RevisionManifest{}, err
@@ -85,7 +81,7 @@ func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspa
 		return RevisionManifest{}, err
 	}
 	manifest := RevisionManifest{WorkspaceID: workspace.WorkspaceID, Epoch: workspace.Epoch, Heads: heads, Revisions: make([]RevisionInventory, 0, len(ids)), Next: next}
-	manifest.Revisions, err = loadRevisionInventory(ctx, tx, workspace.WorkspaceID, ids, shareable)
+	manifest.Revisions, err = loadRevisionInventory(ctx, tx, workspace.WorkspaceID, ids)
 	if err != nil {
 		return RevisionManifest{}, err
 	}
@@ -103,17 +99,12 @@ func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspa
 	return manifest, nil
 }
 
-func loadRevisionInventory(ctx context.Context, reader sqlReader, workspaceID string, ids []string, shareable bool) ([]RevisionInventory, error) {
+func loadRevisionInventory(ctx context.Context, reader sqlReader, workspaceID string, ids []string) ([]RevisionInventory, error) {
 	inventory := make([]RevisionInventory, 0, len(ids))
 	for _, id := range ids {
 		revision, loadErr := loadRevisionByID(ctx, reader, workspaceID, id)
 		if loadErr != nil {
 			return nil, loadErr
-		}
-		if shareable {
-			if loadErr = validateShareableSnapshot(revision.Snapshot); loadErr != nil {
-				return nil, loadErr
-			}
 		}
 		body, marshalErr := json.Marshal(revision)
 		if marshalErr != nil {

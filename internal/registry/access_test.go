@@ -477,6 +477,49 @@ func TestWorkspaceSharingRejectsCredentialBearingRemotes(t *testing.T) {
 	}
 }
 
+// The manifest carries only revision IDs and sizes, so it must not pay for
+// decoding every snapshot on each sync. Snapshot content reaches a peer only
+// through RevisionsFor, which still rejects credential-bearing remotes.
+func TestManifestSkipsSnapshotDecodingWhileRevisionsForRejectsCredentials(t *testing.T) {
+	ctx := context.Background()
+	left, right := pairedRegistryStores(t)
+	if _, err := left.Create(ctx, "shared", t.TempDir(), testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{left.identity.ID(): WorkspaceAdmin}}
+	if _, err := left.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := left.ManifestFor(ctx, "shared", right.identity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	undecodable := manifest.Revisions[0].ID
+	if _, err = left.db.ExecContext(ctx, `UPDATE revisions SET snapshot=? WHERE id=?`, []byte(`not a snapshot`), undecodable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.ManifestFor(ctx, "shared", right.identity.ID()); err != nil {
+		t.Fatalf("manifest decoded snapshots: %v", err)
+	}
+	state := testWorkspace()
+	state.Projects["private"] = config.Project{
+		Remote:   "https://user:secret@example.com/private.git",
+		Path:     "private",
+		Status:   config.StatusActive,
+		Category: config.CategoryPersonal,
+	}
+	leaking, err := encodeSnapshot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.db.ExecContext(ctx, `UPDATE revisions SET snapshot=? WHERE id=?`, leaking, undecodable); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = left.RevisionsFor(ctx, "shared", right.identity.ID(), []string{undecodable}); err == nil {
+		t.Fatal("credential-bearing snapshot was sent")
+	}
+}
+
 func TestConcurrentWorkspaceAccessChangesPersistAndResolve(t *testing.T) {
 	tests := []struct {
 		name  string

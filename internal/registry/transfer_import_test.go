@@ -44,7 +44,7 @@ func TestWorkspaceManifestPagesHistoryBeyondTenThousandRevisions(t *testing.T) {
 	var revisions []RevisionInventory
 	after := ""
 	for {
-		page, pageErr := store.workspaceManifestPage(ctx, workspace, false, after, maxRevisionManifestPage)
+		page, pageErr := store.workspaceManifestPage(ctx, workspace, after, maxRevisionManifestPage)
 		if pageErr != nil {
 			t.Fatal(pageErr)
 		}
