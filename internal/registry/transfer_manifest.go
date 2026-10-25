@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -102,15 +103,17 @@ func (store *Store) workspaceManifestPage(ctx context.Context, workspace Workspa
 func loadRevisionInventory(ctx context.Context, reader sqlReader, workspaceID string, ids []string) ([]RevisionInventory, error) {
 	inventory := make([]RevisionInventory, 0, len(ids))
 	for _, id := range ids {
-		revision, loadErr := loadRevisionByID(ctx, reader, workspaceID, id)
+		revision, snapshotBytes, loadErr := loadRevisionMetadata(ctx, reader, workspaceID, id)
 		if loadErr != nil {
 			return nil, loadErr
 		}
+		revision.Snapshot = []byte{}
 		body, marshalErr := json.Marshal(revision)
 		if marshalErr != nil {
 			return nil, marshalErr
 		}
-		inventory = append(inventory, RevisionInventory{ID: id, WireBytes: int64(len(body))})
+		wireBytes := len(body) + base64.StdEncoding.EncodedLen(snapshotBytes)
+		inventory = append(inventory, RevisionInventory{ID: id, WireBytes: int64(wireBytes)})
 	}
 	return inventory, nil
 }
@@ -154,29 +157,39 @@ func revisionIDsPage(ctx context.Context, reader sqlReader, workspaceID, after s
 }
 
 func loadRevisionByID(ctx context.Context, reader sqlReader, workspaceID, id string) (Revision, error) {
-	var revision Revision
-	var conflicts, access []byte
-	revision.WorkspaceID = workspaceID
-	err := reader.QueryRowContext(ctx, `SELECT id,epoch,kind,snapshot,conflicts,access,network_head FROM revisions WHERE id=? AND workspace_id=?`, id, workspaceID).Scan(&revision.ID, &revision.Epoch, &revision.Kind, &revision.Snapshot, &conflicts, &access, &revision.NetworkHead)
+	revision, _, err := loadRevisionMetadata(ctx, reader, workspaceID, id)
 	if err != nil {
 		return Revision{}, err
 	}
+	err = reader.QueryRowContext(ctx, `SELECT snapshot FROM revisions WHERE id=? AND workspace_id=?`, id, workspaceID).Scan(&revision.Snapshot)
+	return revision, err
+}
+
+func loadRevisionMetadata(ctx context.Context, reader sqlReader, workspaceID, id string) (Revision, int, error) {
+	var revision Revision
+	var snapshotBytes int
+	var conflicts, access []byte
+	revision.WorkspaceID = workspaceID
+	err := reader.QueryRowContext(ctx, `SELECT id,epoch,kind,length(snapshot),conflicts,access,network_head FROM revisions WHERE id=? AND workspace_id=?`, id, workspaceID).Scan(&revision.ID, &revision.Epoch, &revision.Kind, &snapshotBytes, &conflicts, &access, &revision.NetworkHead)
+	if err != nil {
+		return Revision{}, 0, err
+	}
 	if err = json.Unmarshal(conflicts, &revision.Conflicts); err != nil {
-		return Revision{}, err
+		return Revision{}, 0, err
 	}
 	if len(access) > 0 && string(access) != "null" {
 		var policy AccessPolicy
 		if err = json.Unmarshal(access, &policy); err != nil {
-			return Revision{}, err
+			return Revision{}, 0, err
 		}
 		revision.Access = &policy
 	}
 	revision.Parents, err = loadParentsFrom(ctx, reader, id)
 	if err != nil {
-		return Revision{}, err
+		return Revision{}, 0, err
 	}
 	revision.Proofs, err = loadProofsFrom(ctx, reader, id)
-	return revision, err
+	return revision, snapshotBytes, err
 }
 
 func (store *Store) RevisionsFor(ctx context.Context, name, peerID string, ids []string) ([]Revision, error) {

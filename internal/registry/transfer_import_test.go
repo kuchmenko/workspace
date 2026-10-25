@@ -62,6 +62,45 @@ func TestWorkspaceManifestPagesHistoryBeyondTenThousandRevisions(t *testing.T) {
 	}
 }
 
+// Peers reject a revision whose encoded size differs from the manifest, so the
+// manifest size must match revisionWireBytes byte for byte. Alias values of
+// different lengths cover every base64 padding case of the snapshot.
+func TestManifestWireBytesMatchEncodedRevisions(t *testing.T) {
+	ctx := context.Background()
+	left, right := pairedRegistryStores(t)
+	root := t.TempDir()
+	if _, err := left.Create(ctx, "shared", root, testWorkspace()); err != nil {
+		t.Fatal(err)
+	}
+	policy := AccessPolicy{Mode: AccessAll, DefaultRole: WorkspaceWriter, Roles: map[string]string{left.identity.ID(): WorkspaceAdmin}}
+	if _, err := left.SetAccess(ctx, "shared", policy); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"a", "ab", "abc"} {
+		updateAlias(t, left, root, "editor", value)
+	}
+	manifest, err := left.ManifestFor(ctx, "shared", right.identity.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Revisions) != 5 {
+		t.Fatalf("manifest revisions=%d", len(manifest.Revisions))
+	}
+	for _, item := range manifest.Revisions {
+		revision, loadErr := loadRevisionByID(ctx, left.db, manifest.WorkspaceID, item.ID)
+		if loadErr != nil {
+			t.Fatal(loadErr)
+		}
+		expected, sizeErr := revisionWireBytes(revision)
+		if sizeErr != nil {
+			t.Fatal(sizeErr)
+		}
+		if item.WireBytes != expected {
+			t.Errorf("revision %s wire bytes=%d, want %d", item.ID, item.WireBytes, expected)
+		}
+	}
+}
+
 func TestRevisionManifestImportRejectsMalformedAndOutOfOrderPages(t *testing.T) {
 	ctx := context.Background()
 	source, target := pairedRegistryStores(t)
