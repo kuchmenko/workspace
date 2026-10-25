@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -213,34 +214,79 @@ func FetchRemoteContext(ctx context.Context, repoPath, remote string) error {
 }
 
 func FetchURLContext(ctx context.Context, repoPath, remoteURL string) error {
-	refspec := "+refs/heads/*:refs/remotes/origin/*"
-	out, err := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", "--no-tags", remoteURL, refspec).CombinedOutput()
+	remoteOutput, err := remoteCommand(ctx, "-C", repoPath, "ls-remote", "--heads", "--tags", "--refs", remoteURL).CombinedOutput()
 	if err != nil {
-		return commandError(ctx, "git fetch "+RedactRemote(remoteURL)+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), err)
+		return commandError(ctx, "list refs from "+RedactRemote(remoteURL), RedactDiagnostic(string(remoteOutput), remoteURL), err)
 	}
-	return fetchNewTags(ctx, repoPath, remoteURL)
+	localOutput, err := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/origin", "refs/tags").Output()
+	if err != nil {
+		return commandError(ctx, "list local refs in "+repoPath, "", err)
+	}
+	remote, local := parseRefs(string(remoteOutput)), parseRefs(string(localOutput))
+	if remoteBranchesChanged(local, remote) {
+		out, fetchErr := remoteCommand(ctx, "-C", repoPath, "fetch", "--prune", "--no-tags", remoteURL, standardFetchRefspec).CombinedOutput()
+		if fetchErr != nil {
+			return commandError(ctx, "git fetch "+RedactRemote(remoteURL)+" in "+repoPath, RedactDiagnostic(string(out), remoteURL), fetchErr)
+		}
+	}
+	return fetchMissingTags(ctx, repoPath, remoteURL, missingTags(local, remote))
+}
+
+func parseRefs(output string) map[string]string {
+	refs := map[string]string{}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.HasPrefix(fields[1], "refs/") {
+			refs[fields[1]] = fields[0]
+		}
+	}
+	return refs
+}
+
+func remoteBranchesChanged(local, remote map[string]string) bool {
+	unmatched := 0
+	for ref := range local {
+		if strings.HasPrefix(ref, "refs/remotes/origin/") && ref != "refs/remotes/origin/HEAD" {
+			unmatched++
+		}
+	}
+	for ref, object := range remote {
+		branch, isBranch := strings.CutPrefix(ref, "refs/heads/")
+		if !isBranch {
+			continue
+		}
+		if local["refs/remotes/origin/"+branch] != object {
+			return true
+		}
+		unmatched--
+	}
+	return unmatched != 0
+}
+
+func missingTags(local, remote map[string]string) []string {
+	var missing []string
+	for ref := range remote {
+		if _, found := local[ref]; !found && strings.HasPrefix(ref, "refs/tags/") {
+			missing = append(missing, ref)
+		}
+	}
+	slices.Sort(missing)
+	return missing
 }
 
 func fetchNewTags(ctx context.Context, repoPath, remote string) error {
-	localOutput, err := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--format=%(refname)", "refs/tags").Output()
+	localOutput, err := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--format=%(objectname) %(refname)", "refs/tags").Output()
 	if err != nil {
 		return commandError(ctx, "list local tags in "+repoPath, "", err)
-	}
-	local := make(map[string]bool)
-	for _, ref := range strings.Fields(string(localOutput)) {
-		local[ref] = true
 	}
 	remoteOutput, err := remoteCommand(ctx, "-C", repoPath, "ls-remote", "--tags", "--refs", remote).CombinedOutput()
 	if err != nil {
 		return commandError(ctx, "list tags from "+RedactRemote(remote), RedactDiagnostic(string(remoteOutput), remote), err)
 	}
-	var missing []string
-	for _, line := range strings.Split(strings.TrimSpace(string(remoteOutput)), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && strings.HasPrefix(fields[1], "refs/tags/") && !local[fields[1]] {
-			missing = append(missing, fields[1])
-		}
-	}
+	return fetchMissingTags(ctx, repoPath, remote, missingTags(parseRefs(string(localOutput)), parseRefs(string(remoteOutput))))
+}
+
+func fetchMissingTags(ctx context.Context, repoPath, remote string, missing []string) error {
 	for start := 0; start < len(missing); start += 128 {
 		end := min(start+128, len(missing))
 		arguments := []string{"-C", repoPath, "fetch", "--no-tags", remote}

@@ -196,6 +196,60 @@ func testFetchIgnoresMovedUpstreamTag(t *testing.T, fetch func(context.Context, 
 	}
 }
 
+// FetchURLContext lists remote refs first and fetches only when they differ,
+// so an idle background cycle makes one network call per project. git fetch
+// always writes FETCH_HEAD, so its absence proves no fetch ran.
+func TestFetchURLSkipsFetchWhenRemoteRefsAreUnchanged(t *testing.T) {
+	remote := testutil.InitFakeRemote(t, "project", "main")
+	seed := filepath.Join(t.TempDir(), "seed")
+	testutil.RunGit(t, filepath.Dir(seed), "clone", remote, seed)
+	testutil.RunGit(t, seed, "push", "origin", "main:feature")
+	repository := filepath.Join(t.TempDir(), "project.bare")
+	testutil.CloneBare(t, remote, repository)
+	if err := git.SetFetchRefspec(repository); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := git.FetchURLContext(ctx, repository, remote); err != nil {
+		t.Fatal(err)
+	}
+	fetchHead := filepath.Join(repository, "FETCH_HEAD")
+	if err := os.Remove(fetchHead); err != nil {
+		t.Fatal(err)
+	}
+	if err := git.FetchURLContext(ctx, repository, remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fetchHead); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unchanged remote still ran git fetch: %v", err)
+	}
+
+	testutil.RunGit(t, repository, "tag", "local-only")
+	testutil.RunGit(t, seed, "commit", "--allow-empty", "-m", "next")
+	newHead := git.RevParse(seed, "HEAD")
+	testutil.RunGit(t, seed, "push", "origin", "main", "main:added", ":feature")
+	testutil.RunGit(t, seed, "tag", "release")
+	testutil.RunGit(t, seed, "push", "origin", "refs/tags/release")
+	if err := git.FetchURLContext(ctx, repository, remote); err != nil {
+		t.Fatal(err)
+	}
+	if got := git.RevParse(repository, "refs/remotes/origin/main"); got != newHead {
+		t.Fatalf("origin/main = %s, want %s", got, newHead)
+	}
+	if got := git.RevParse(repository, "refs/remotes/origin/added"); got != newHead {
+		t.Fatalf("origin/added = %s, want %s", got, newHead)
+	}
+	if got := git.RevParse(repository, "refs/remotes/origin/feature"); got != "" {
+		t.Fatalf("deleted origin/feature still resolves to %s", got)
+	}
+	if got := git.RevParse(repository, "refs/tags/release"); got != newHead {
+		t.Fatalf("release tag = %s, want %s", got, newHead)
+	}
+	if git.RevParse(repository, "refs/tags/local-only") == "" {
+		t.Fatal("local-only tag was removed")
+	}
+}
+
 func TestURLNetworkOperationsIgnoreChangedOriginConfig(t *testing.T) {
 	frozen := testutil.InitFakeRemote(t, "frozen", "main")
 	redirected := testutil.InitFakeRemote(t, "redirected", "main")
